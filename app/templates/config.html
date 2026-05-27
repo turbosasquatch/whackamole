@@ -4,7 +4,7 @@
 <section class="toolbar">
   <div>
     <h1>Settings</h1>
-    <p class="muted">Saved API keys are encrypted and shown only as saved/not saved.</p>
+    <p class="muted">Saved API keys and tokens are encrypted and shown only as saved/not saved.</p>
   </div>
   <div class="button-row">
     <form method="post" action="/config/probe">
@@ -88,6 +88,20 @@
       Path mappings
       <textarea name="path_mappings" rows="5">{{ path_mappings }}</textarea>
     </label>
+  </section>
+
+  <section>
+    <h2>Whackamole API</h2>
+    <div class="form-grid">
+      <label>
+        API bearer token {% if secrets.whackamole_api_token %}<span class="saved">saved</span>{% endif %}
+        <input name="whackamole_api_token" type="password" autocomplete="new-password" placeholder="{% if secrets.whackamole_api_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_whackamole_api_token" type="checkbox">
+        Clear saved Whackamole API token
+      </label>
+    </div>
   </section>
 
   <section>

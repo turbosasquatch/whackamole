@@ -138,20 +138,35 @@ class Database:
                 (now, limit),
             ).fetchall()
 
-    def list_items(self, statuses: Iterable[str], limit: int = 100) -> List[sqlite3.Row]:
+    def list_items(self, statuses: Iterable[str], limit: int = 100, offset: int = 0) -> List[sqlite3.Row]:
         values = list(statuses)
+        offset = max(0, int(offset or 0))
         if not values:
             with self.connect() as conn:
                 return conn.execute(
-                    "SELECT * FROM items ORDER BY updated_at DESC LIMIT ?",
-                    (limit,),
+                    "SELECT * FROM items ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
                 ).fetchall()
         placeholders = ",".join("?" for _ in values)
         with self.connect() as conn:
             return conn.execute(
-                f"SELECT * FROM items WHERE status IN ({placeholders}) ORDER BY updated_at DESC LIMIT ?",
-                values + [limit],
+                f"SELECT * FROM items WHERE status IN ({placeholders}) ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                values + [limit, offset],
             ).fetchall()
+
+    def count_items(self, statuses: Iterable[str]) -> int:
+        values = list(statuses)
+        if not values:
+            with self.connect() as conn:
+                row = conn.execute("SELECT COUNT(*) AS count FROM items").fetchone()
+                return int(row["count"])
+        placeholders = ",".join("?" for _ in values)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM items WHERE status IN ({placeholders})",
+                values,
+            ).fetchone()
+            return int(row["count"])
 
     def status_counts(self) -> Dict[str, int]:
         with self.connect() as conn:

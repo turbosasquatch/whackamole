@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import os
 import time
+from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette import status
@@ -66,6 +67,70 @@ def _row_dict(row: Any) -> Dict[str, Any]:
     item["arr_result"] = arr_result
     item["arr_summary"] = _arr_summary(arr_result)
     return item
+
+
+def _json_object(value: Any) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _api_item_summary(row: Any) -> Dict[str, Any]:
+    item = _row_dict(row)
+    return {
+        "id": item["id"],
+        "instance_id": item["instance_id"],
+        "hash": item["hash"],
+        "name": item["name"],
+        "category": item["category"],
+        "tags": item["tags"],
+        "content_path": item["content_path"],
+        "mapped_path": item["mapped_path"],
+        "status": item["status"],
+        "verdict": item["verdict"],
+        "reason": item["reason"],
+        "size": item["size"],
+        "added_on": item["added_on"],
+        "completion_on": item["completion_on"],
+        "discovered_at": item["discovered_at"],
+        "updated_at": item["updated_at"],
+        "last_checked_at": item["last_checked_at"],
+        "next_check_at": item["next_check_at"],
+        "attempt_count": item["attempt_count"],
+        "baseline": bool(item["baseline"]),
+        "ignored_reason": item["ignored_reason"],
+        "tracker_results": item["tracker_results"],
+        "tracker_summary": item["tracker_summary"],
+        "arr_summary": item["arr_summary"],
+    }
+
+
+def _api_item_detail(row: Any) -> Dict[str, Any]:
+    item = _row_dict(row)
+    summary = _api_item_summary(row)
+    raw_torrent = _json_object(item.get("raw_torrent"))
+    ua = {
+        "session_id": item["ua_session_id"],
+        "args": item["ua_args"],
+        "log": item["ua_log"],
+        "tracker_results": item["tracker_results"],
+        "tracker_summary": item["tracker_summary"],
+    }
+    arr = item["arr_result"]
+    summary.update(
+        {
+            "raw_torrent": raw_torrent,
+            "ua": ua,
+            "arr": arr,
+            "checks": {
+                "ua": ua,
+                "arr": arr,
+            },
+        }
+    )
+    return summary
 
 
 def _tracker_result_groups(value: Any, verdict: Any = "") -> Dict[str, List[str]]:
@@ -127,11 +192,7 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
 
 
 def _arr_result(value: Any) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(value or "{}")
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return _json_object(value)
 
 
 def _arr_summary(result: Dict[str, Any]) -> str:
@@ -163,6 +224,7 @@ def _as_int(value: Any, default: int, minimum: Optional[int] = None) -> int:
 
 def _secret_state(secrets: SecretStore) -> Dict[str, bool]:
     return {
+        "whackamole_api_token": secrets.has("whackamole_api_token"),
         "qui_api_key": secrets.has("qui_api_key"),
         "ua_bearer_token": secrets.has("ua_bearer_token"),
         "sonarr_api_key": secrets.has("sonarr_api_key"),
@@ -293,6 +355,8 @@ async def save_config(
     easycross_url: str = Form(""),
     easycross_api_key: str = Form(""),
     clear_easycross_api_key: Optional[str] = Form(None),
+    whackamole_api_token: str = Form(""),
+    clear_whackamole_api_token: Optional[str] = Form(None),
 ) -> HTMLResponse:
     manager: ConfigManager = request.app.state.config_manager
     secrets: SecretStore = request.app.state.secrets
@@ -339,6 +403,7 @@ async def save_config(
     _update_secret(secrets, "sonarr_api_key", sonarr_api_key, clear_sonarr_api_key)
     _update_secret(secrets, "radarr_api_key", radarr_api_key, clear_radarr_api_key)
     _update_secret(secrets, "easycross_api_key", easycross_api_key, clear_easycross_api_key)
+    _update_secret(secrets, "whackamole_api_token", whackamole_api_token, clear_whackamole_api_token)
 
     manager.save(cfg)
     return templates.TemplateResponse("config.html", _config_context(request, message="Settings saved."))
@@ -411,6 +476,49 @@ async def api_status(request: Request) -> JSONResponse:
     )
 
 
+@app.get("/api/items")
+async def api_items(
+    request: Request,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    include_details: bool = Query(False),
+) -> JSONResponse:
+    _require_api_auth(request)
+    statuses = _parse_status_filter(status_filter)
+    rows = request.app.state.db.list_items(statuses, limit=limit, offset=offset)
+    serializer = _api_item_detail if include_details else _api_item_summary
+    return JSONResponse(
+        {
+            "items": [serializer(row) for row in rows],
+            "count": len(rows),
+            "total": request.app.state.db.count_items(statuses),
+            "limit": limit,
+            "offset": offset,
+            "status": statuses,
+            "include_details": include_details,
+        }
+    )
+
+
+@app.get("/api/items/{item_id}")
+async def api_item_detail(request: Request, item_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    return JSONResponse(_api_item_detail(row))
+
+
+@app.get("/api/items/{item_id}/log")
+async def api_item_log(request: Request, item_id: int) -> PlainTextResponse:
+    _require_api_auth(request)
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    return PlainTextResponse(str(row["ua_log"] or ""), media_type="text/plain")
+
+
 def _update_secret(secrets: SecretStore, name: str, value: str, clear: Optional[str]) -> None:
     if clear == "on":
         secrets.clear(name)
@@ -422,3 +530,27 @@ def _short_error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
     return str(exc)[:240]
+
+
+def _require_api_auth(request: Request) -> None:
+    expected = request.app.state.secrets.get("whackamole_api_token")
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Whackamole API token is not configured",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token or not compare_digest(token, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def _parse_status_filter(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]

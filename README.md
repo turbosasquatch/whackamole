@@ -57,6 +57,21 @@ Use [unraid/whackamole.xml](unraid/whackamole.xml) as the Docker template. Once 
 
 Leave API key fields blank after saving to keep the encrypted stored values.
 
+## JSON API
+
+Detailed item APIs are read-only and require the Whackamole API bearer token from Settings. `/api/status` stays unauthenticated and only returns lightweight service/configured-state booleans.
+
+```bash
+curl -H "Authorization: Bearer <whackamole-token>" \
+  "http://unraid-ip:8383/api/items?status=candidate&limit=50"
+```
+
+Endpoints:
+
+- `GET /api/items` returns paginated check summaries. Query params: `status`, `limit`, `offset`, `include_details`.
+- `GET /api/items/{id}` returns the full check record, including raw QUI metadata, UA log, tracker buckets, and Arr decisions.
+- `GET /api/items/{id}/log` returns the UA log as `text/plain`.
+
 ## Local Development
 
 ```bash
