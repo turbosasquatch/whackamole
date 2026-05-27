@@ -6,6 +6,7 @@ import time
 from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import httpx
@@ -29,8 +30,6 @@ from app.database import Database
 from app.inventory import (
     PRIMARY_TRACKERS,
     coverage_for_item,
-    coverage_index,
-    filter_inventory_rows,
     item_inventory_meta,
     missing_primary_trackers,
 )
@@ -272,9 +271,13 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
     }
 
 
-def _coverage_index(db: Database) -> Dict[str, List[Dict[str, Any]]]:
-    rows = db.list_items([], limit=100000)
-    return coverage_index([dict(row) for row in rows])
+def _coverage_for_rows(db: Database, rows: Sequence[Any]) -> Dict[str, List[Dict[str, Any]]]:
+    group_keys = [str(dict(row).get("inventory_group_key") or item_inventory_meta(dict(row)).get("group_key") or "") for row in rows]
+    return db.coverage_for_group_keys(group_keys)
+
+
+def _coverage_for_row(db: Database, row: Any) -> Dict[str, List[Dict[str, Any]]]:
+    return _coverage_for_rows(db, [row])
 
 
 def _filtered_rows(
@@ -286,19 +289,37 @@ def _filtered_rows(
     missing: Optional[Iterable[str]] = None,
     hide_any_primary: bool = False,
 ) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
-    coverage = _coverage_index(db)
-    needs_inventory_filter = (
-        (media or "all").lower() not in {"", "all"}
-        or bool(missing)
-        or hide_any_primary
-    )
-    if not needs_inventory_filter:
-        return db.list_items(statuses, limit=limit, offset=offset), db.count_items(statuses), coverage
+    rows = db.list_items_filtered(statuses, limit=limit, offset=offset, media=media, missing=missing, hide_any_primary=hide_any_primary)
+    total = db.count_items_filtered(statuses, media=media, missing=missing, hide_any_primary=hide_any_primary)
+    return rows, total, _coverage_for_rows(db, rows)
 
-    rows = db.list_items(statuses, limit=100000)
-    filtered = filter_inventory_rows([dict(row) for row in rows], coverage, media, missing, hide_any_primary)
-    total = len(filtered)
-    return filtered[offset : offset + limit], total, coverage
+
+def _dashboard_url(
+    view: str,
+    page: int = 1,
+    media: str = "all",
+    missing: Optional[Iterable[str]] = None,
+    hide_any_primary: bool = False,
+    message: str = "",
+) -> str:
+    params: Dict[str, Any] = {"view": view, "page": max(1, page)}
+    if view == "baseline":
+        if media and media != "all":
+            params["media"] = media
+        selected_missing = [tracker for tracker in (missing or []) if tracker]
+        if selected_missing:
+            params["missing"] = selected_missing
+        if hide_any_primary:
+            params["hide_any_primary"] = "true"
+    if message:
+        params["message"] = message
+    return f"/?{urlencode(params, doseq=True)}"
+
+
+def _safe_local_redirect(value: str, fallback: str) -> str:
+    if value.startswith("/") and not value.startswith("//"):
+        return value
+    return fallback
 
 
 @asynccontextmanager
@@ -306,6 +327,7 @@ async def lifespan(app: FastAPI):
     app.state.config_manager = ConfigManager(_config_dir())
     app.state.secrets = SecretStore(_config_dir())
     app.state.db = Database(str(Path(_config_dir()) / "whackamole.db"))
+    app.state.db.backfill_inventory_columns()
     app.state.service = WhackamoleService(app.state.config_manager, app.state.secrets, app.state.db)
     app.state.service.start()
     try:
@@ -325,6 +347,8 @@ async def dashboard(
     media: str = "all",
     missing: Optional[List[str]] = Query(None),
     hide_any_primary: bool = False,
+    page: int = Query(1, ge=1),
+    message: str = "",
 ) -> HTMLResponse:
     groups = {
         "active": ["queued", "deferred", "checking", "error"],
@@ -338,35 +362,49 @@ async def dashboard(
     }
     selected = view if view in groups else "active"
     missing_values = missing or []
-    limit = 5000 if selected in {"baseline", "inventory"} else 150
-    if selected == "baseline":
-        rows, filtered_total, coverage = _filtered_rows(
-            request.app.state.db,
-            groups[selected],
-            limit=limit,
-            media=media,
-            missing=missing_values,
-            hide_any_primary=hide_any_primary,
-        )
-    else:
-        coverage = _coverage_index(request.app.state.db)
-        rows = request.app.state.db.list_items(groups[selected], limit=limit)
-        filtered_total = request.app.state.db.count_items(groups[selected])
+    limit = 100 if selected in {"baseline", "inventory"} else 150
+    offset = (page - 1) * limit
+    filter_media = media if selected == "baseline" else "all"
+    filter_missing = missing_values if selected == "baseline" else []
+    filter_hide_any = hide_any_primary if selected == "baseline" else False
+    rows, filtered_total, coverage = _filtered_rows(
+        request.app.state.db,
+        groups[selected],
+        limit=limit,
+        offset=offset,
+        media=filter_media,
+        missing=filter_missing,
+        hide_any_primary=filter_hide_any,
+    )
     context = {
         "request": request,
         "items": [_row_dict(row, coverage) for row in rows],
         "view": selected,
         "counts": request.app.state.db.status_counts(),
         "service": request.app.state.service.snapshot(),
+        "message": message,
         "primary_trackers": PRIMARY_TRACKERS,
         "baseline_filters": {
-            "media": media,
+            "media": filter_media,
             "missing": [tracker.upper() for tracker in missing_values],
-            "hide_any_primary": hide_any_primary,
+            "hide_any_primary": filter_hide_any,
             "filtered_total": filtered_total,
             "displayed": len(rows),
             "limit": limit,
         },
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "offset": offset,
+            "total": filtered_total,
+            "start": offset + 1 if filtered_total else 0,
+            "end": offset + len(rows),
+            "prev_url": _dashboard_url(selected, page - 1, filter_media, missing_values, filter_hide_any) if page > 1 else "",
+            "next_url": _dashboard_url(selected, page + 1, filter_media, missing_values, filter_hide_any)
+            if offset + len(rows) < filtered_total
+            else "",
+        },
+        "current_url": _dashboard_url(selected, page, filter_media, missing_values, filter_hide_any),
     }
     return templates.TemplateResponse("dashboard.html", context)
 
@@ -384,16 +422,38 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
         "item.html",
         {
             "request": request,
-            "item": _row_dict(row, _coverage_index(request.app.state.db)),
+            "item": _row_dict(row, _coverage_for_row(request.app.state.db, row)),
             "service": request.app.state.service.snapshot(),
         },
     )
 
 
 @app.post("/items/{item_id}/recheck")
-async def recheck_item(item_id: int) -> RedirectResponse:
+async def recheck_item(item_id: int, return_to: str = Form("")) -> RedirectResponse:
     app.state.db.requeue(item_id)
-    return RedirectResponse(url=f"/items/{item_id}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/baseline/recheck-filtered")
+async def recheck_filtered_baseline(
+    media: str = Form("all"),
+    missing: Optional[List[str]] = Form(None),
+    hide_any_primary: Optional[str] = Form(None),
+) -> RedirectResponse:
+    missing_values = missing or []
+    hide_any = hide_any_primary == "true"
+    queued = app.state.db.bulk_requeue_baseline_filtered(media=media, missing=missing_values, hide_any_primary=hide_any)
+    return RedirectResponse(
+        url=_dashboard_url(
+            "baseline",
+            page=1,
+            media=media,
+            missing=missing_values,
+            hide_any_primary=hide_any,
+            message=f"Queued {queued} item{'s' if queued != 1 else ''}.",
+        ),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/items/{item_id}/ignore")
@@ -608,7 +668,7 @@ async def api_item_detail(request: Request, item_id: int) -> JSONResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return JSONResponse(_api_item_detail(_row_dict(row, _coverage_index(request.app.state.db))))
+    return JSONResponse(_api_item_detail(_row_dict(row, _coverage_for_row(request.app.state.db, row))))
 
 
 @app.get("/api/items/{item_id}/log")

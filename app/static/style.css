@@ -592,6 +592,10 @@ textarea:focus {
   gap: 12px;
 }
 
+.baseline-filters .bulk-action {
+  margin-top: 10px;
+}
+
 .baseline-filters fieldset {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -608,6 +612,14 @@ textarea:focus {
   font-size: 12px;
   font-weight: 800;
   padding: 0 4px;
+}
+
+.pagination {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 
 @media (max-width: 860px) {

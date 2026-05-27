@@ -69,6 +69,8 @@ Use the Baseline view filters to narrow the backlog:
 
 The `Inventory` tab shows captured cross-seed/upload rows themselves for audit.
 
+Baseline and Inventory views are paginated so large libraries stay responsive. On the Baseline view, `Run check on found set` queues every row matching the current filters; normal UA job spacing and concurrency limits still control how quickly those checks run.
+
 ## JSON API
 
 Detailed item APIs are read-only and require the Whackamole API bearer token from Settings. `/api/status` stays unauthenticated and only returns lightweight service/configured-state booleans.

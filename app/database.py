@@ -4,7 +4,9 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from app.inventory import build_inventory_meta, item_inventory_meta, sort_coverage_values
 
 
 class Database:
@@ -65,6 +67,24 @@ class Database:
             )
             self._ensure_column(conn, "items", "arr_results", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_meta", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "items", "inventory_group_key", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "items", "inventory_media_type", "TEXT NOT NULL DEFAULT 'unknown'")
+            self._ensure_column(conn, "items", "inventory_tracker_key", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "items", "inventory_tracker_label", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "items", "inventory_tracker_primary", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "items", "inventory_is_cross_seed", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "items", "inventory_is_upload", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "items", "inventory_is_support", "INTEGER NOT NULL DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status_updated ON items(status, updated_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_items_inventory_group ON items(inventory_group_key)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_items_inventory_group_tracker "
+                "ON items(inventory_group_key, inventory_tracker_key, inventory_tracker_primary)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_items_status_media_group "
+                "ON items(status, inventory_media_type, inventory_group_key, updated_at DESC)"
+            )
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -83,6 +103,31 @@ class Database:
                 (key, value),
             )
 
+    def backfill_inventory_columns(self) -> int:
+        if self.get_kv("inventory_columns_backfilled_v1") == "true":
+            return 0
+        updated = 0
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM items").fetchall()
+            for row in rows:
+                meta = item_inventory_meta(dict(row))
+                conn.execute(
+                    """
+                    UPDATE items
+                    SET inventory_meta = ?, inventory_group_key = ?, inventory_media_type = ?,
+                        inventory_tracker_key = ?, inventory_tracker_label = ?, inventory_tracker_primary = ?,
+                        inventory_is_cross_seed = ?, inventory_is_upload = ?, inventory_is_support = ?
+                    WHERE id = ?
+                    """,
+                    (*_inventory_values(meta), row["id"]),
+                )
+                updated += 1
+            conn.execute(
+                "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("inventory_columns_backfilled_v1", "true"),
+            )
+        return updated
+
     def item_exists(self, instance_id: int, torrent_hash: str) -> bool:
         with self.connect() as conn:
             row = conn.execute(
@@ -90,6 +135,18 @@ class Database:
                 (instance_id, torrent_hash),
             ).fetchone()
             return row is not None
+
+    def existing_hashes(self, instance_id: int, hashes: Iterable[str]) -> set[str]:
+        values = [str(value) for value in hashes if str(value)]
+        if not values:
+            return set()
+        placeholders = ",".join("?" for _ in values)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT hash FROM items WHERE instance_id = ? AND hash IN ({placeholders})",
+                [instance_id] + values,
+            ).fetchall()
+            return {str(row["hash"]) for row in rows}
 
     def insert_discovered(
         self,
@@ -102,15 +159,19 @@ class Database:
         now = int(time.time())
         torrent_hash = str(torrent.get("hash"))
         content_path = str(torrent.get("content_path") or torrent.get("contentPath") or "")
+        meta = inventory_meta or build_inventory_meta(torrent)
         encoded_torrent = json.dumps(torrent)
-        encoded_meta = json.dumps(inventory_meta or {})
+        encoded_meta = json.dumps(meta)
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO items(
                     instance_id, hash, name, category, tags, content_path, status, size,
-                    added_on, completion_on, discovered_at, updated_at, raw_torrent, inventory_meta, baseline
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    added_on, completion_on, discovered_at, updated_at, raw_torrent, inventory_meta,
+                    inventory_group_key, inventory_media_type, inventory_tracker_key,
+                    inventory_tracker_label, inventory_tracker_primary, inventory_is_cross_seed,
+                    inventory_is_upload, inventory_is_support, baseline
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instance_id,
@@ -127,13 +188,17 @@ class Database:
                     now,
                     encoded_torrent,
                     encoded_meta,
+                    *_inventory_values(meta)[1:],
                     1 if baseline else 0,
                 ),
             )
             conn.execute(
                 """
                 UPDATE items
-                SET category = ?, tags = ?, content_path = ?, raw_torrent = ?, inventory_meta = ?
+                SET category = ?, tags = ?, content_path = ?, raw_torrent = ?, inventory_meta = ?,
+                    inventory_group_key = ?, inventory_media_type = ?, inventory_tracker_key = ?,
+                    inventory_tracker_label = ?, inventory_tracker_primary = ?,
+                    inventory_is_cross_seed = ?, inventory_is_upload = ?, inventory_is_support = ?
                 WHERE instance_id = ? AND hash = ?
                 """,
                 (
@@ -142,6 +207,7 @@ class Database:
                     content_path,
                     encoded_torrent,
                     encoded_meta,
+                    *_inventory_values(meta)[1:],
                     instance_id,
                     torrent_hash,
                 ),
@@ -149,11 +215,15 @@ class Database:
 
     def sync_torrent_metadata(self, instance_id: int, torrent: Dict[str, Any], inventory_meta: Optional[Any] = None) -> None:
         content_path = str(torrent.get("content_path") or torrent.get("contentPath") or "")
+        meta = inventory_meta or build_inventory_meta(torrent)
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE items
-                SET category = ?, tags = ?, content_path = ?, raw_torrent = ?, inventory_meta = ?
+                SET category = ?, tags = ?, content_path = ?, raw_torrent = ?, inventory_meta = ?,
+                    inventory_group_key = ?, inventory_media_type = ?, inventory_tracker_key = ?,
+                    inventory_tracker_label = ?, inventory_tracker_primary = ?,
+                    inventory_is_cross_seed = ?, inventory_is_upload = ?, inventory_is_support = ?
                 WHERE instance_id = ? AND hash = ?
                 """,
                 (
@@ -161,11 +231,139 @@ class Database:
                     str(torrent.get("tags") or ""),
                     content_path,
                     json.dumps(torrent),
-                    json.dumps(inventory_meta or {}),
+                    json.dumps(meta),
+                    *_inventory_values(meta)[1:],
                     instance_id,
                     str(torrent.get("hash")),
                 ),
             )
+
+    def list_items_filtered(
+        self,
+        statuses: Iterable[str],
+        limit: int = 100,
+        offset: int = 0,
+        media: str = "all",
+        missing: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+    ) -> List[sqlite3.Row]:
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary)
+        offset = max(0, int(offset or 0))
+        with self.connect() as conn:
+            return conn.execute(
+                f"SELECT * FROM items AS i {where_sql} ORDER BY i.updated_at DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+
+    def count_items_filtered(
+        self,
+        statuses: Iterable[str],
+        media: str = "all",
+        missing: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+    ) -> int:
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary)
+        with self.connect() as conn:
+            row = conn.execute(f"SELECT COUNT(*) AS count FROM items AS i {where_sql}", params).fetchone()
+            return int(row["count"])
+
+    def coverage_for_group_keys(self, group_keys: Iterable[str]) -> Dict[str, List[Dict[str, Any]]]:
+        values = [str(value) for value in dict.fromkeys(group_keys) if str(value)]
+        if not values:
+            return {}
+        placeholders = ",".join("?" for _ in values)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT inventory_group_key, inventory_tracker_key, inventory_tracker_label, inventory_tracker_primary
+                FROM items
+                WHERE inventory_group_key IN ({placeholders})
+                  AND inventory_tracker_key <> ''
+                """,
+                values,
+            ).fetchall()
+        grouped: Dict[str, List[Dict[str, Any]]] = {value: [] for value in values}
+        seen: set[Tuple[str, str]] = set()
+        for row in rows:
+            group_key = str(row["inventory_group_key"] or "")
+            tracker_key = str(row["inventory_tracker_key"] or "")
+            dedupe_key = (group_key, tracker_key)
+            if not group_key or not tracker_key or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            grouped.setdefault(group_key, []).append(
+                {
+                    "key": tracker_key,
+                    "label": str(row["inventory_tracker_label"] or tracker_key),
+                    "primary": bool(row["inventory_tracker_primary"]),
+                }
+            )
+        return {key: sort_coverage_values(value) for key, value in grouped.items()}
+
+    def bulk_requeue_baseline_filtered(
+        self,
+        media: str = "all",
+        missing: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+    ) -> int:
+        where_sql, params = self._filtered_where(["baseline"], media, missing, hide_any_primary)
+        now = int(time.time())
+        with self.connect() as conn:
+            rows = conn.execute(f"SELECT i.id FROM items AS i {where_sql}", params).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                UPDATE items
+                SET status = 'queued', verdict = '', reason = 'Bulk recheck requested from baseline filtered set',
+                    arr_results = '{{}}', next_check_at = NULL, updated_at = ?
+                WHERE id IN ({placeholders})
+                """,
+                [now] + ids,
+            )
+            return len(ids)
+
+    def _filtered_where(
+        self,
+        statuses: Iterable[str],
+        media: str = "all",
+        missing: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+    ) -> Tuple[str, List[Any]]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        values = list(statuses)
+        if values:
+            placeholders = ",".join("?" for _ in values)
+            clauses.append(f"i.status IN ({placeholders})")
+            params.extend(values)
+        media = (media or "all").lower()
+        if media not in {"", "all"}:
+            clauses.append("i.inventory_media_type = ?")
+            params.append(media)
+        selected_missing = [str(value).upper() for value in (missing or []) if str(value).upper()]
+        if selected_missing:
+            placeholders = ",".join("?" for _ in selected_missing)
+            clauses.append(
+                "NOT EXISTS ("
+                "SELECT 1 FROM items AS c "
+                "WHERE c.inventory_group_key = i.inventory_group_key "
+                "AND c.inventory_tracker_key IN (" + placeholders + ")"
+                ")"
+            )
+            params.extend(selected_missing)
+        if hide_any_primary:
+            clauses.append(
+                "NOT EXISTS ("
+                "SELECT 1 FROM items AS c "
+                "WHERE c.inventory_group_key = i.inventory_group_key "
+                "AND c.inventory_tracker_primary = 1"
+                ")"
+            )
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where_sql, params
 
     def count_active_queue(self) -> int:
         with self.connect() as conn:
@@ -296,3 +494,19 @@ class Database:
                 "UPDATE items SET status = 'ignored', ignored_reason = ?, updated_at = ? WHERE id = ?",
                 (reason, now, item_id),
             )
+
+
+def _inventory_values(meta: Any) -> Tuple[str, str, str, str, str, int, int, int, int]:
+    payload = meta if isinstance(meta, dict) else {}
+    tracker = payload.get("tracker") if isinstance(payload.get("tracker"), dict) else {}
+    return (
+        json.dumps(payload),
+        str(payload.get("group_key") or ""),
+        str(payload.get("media_type") or "unknown"),
+        str(tracker.get("key") or ""),
+        str(tracker.get("label") or tracker.get("key") or ""),
+        1 if tracker.get("primary") else 0,
+        1 if payload.get("is_cross_seed") else 0,
+        1 if payload.get("is_upload") else 0,
+        1 if payload.get("is_support") else 0,
+    )

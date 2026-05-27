@@ -42,7 +42,9 @@ def build_inventory_meta(torrent: Mapping[str, Any]) -> Dict[str, Any]:
 
     return {
         "version": 1,
-        "group_key": release_group_key(str(torrent.get("name") or torrent.get("content_path") or "")),
+        "group_key": release_group_key(
+            str(torrent.get("name") or torrent.get("content_path") or torrent.get("contentPath") or "")
+        ),
         "media_type": media_type,
         "is_episode": media_type == "episode",
         "is_cross_seed": is_cross_seed,
@@ -54,6 +56,18 @@ def build_inventory_meta(torrent: Mapping[str, Any]) -> Dict[str, Any]:
 
 def item_inventory_meta(item: Mapping[str, Any]) -> Dict[str, Any]:
     stored = _jsonish_dict(item.get("inventory_meta"))
+    column_meta = inventory_meta_from_columns(item)
+    has_column_meta = bool(column_meta.get("group_key") or column_meta.get("tracker") or column_meta.get("is_support"))
+    if stored:
+        if not has_column_meta:
+            return stored
+        merged = {**stored, **{key: value for key, value in column_meta.items() if value not in ("", {}, None)}}
+        if not isinstance(merged.get("tracker"), dict) or not merged.get("tracker"):
+            merged["tracker"] = column_meta.get("tracker") or {}
+        return merged
+    if has_column_meta:
+        return column_meta
+
     raw = _jsonish_dict(item.get("raw_torrent"))
     torrent = {
         **raw,
@@ -63,14 +77,32 @@ def item_inventory_meta(item: Mapping[str, Any]) -> Dict[str, Any]:
         "content_path": item.get("content_path") or raw.get("content_path"),
     }
     derived = build_inventory_meta(torrent)
-    if not stored:
-        return derived
-    merged = {**derived, **stored}
-    if not isinstance(merged.get("tracker"), dict) or not merged.get("tracker"):
-        merged["tracker"] = derived["tracker"]
-    if not merged.get("group_key"):
-        merged["group_key"] = derived["group_key"]
-    return merged
+    return derived
+
+
+def inventory_meta_from_columns(item: Mapping[str, Any]) -> Dict[str, Any]:
+    tracker_key = str(item.get("inventory_tracker_key") or "")
+    tracker_label = str(item.get("inventory_tracker_label") or tracker_key)
+    tracker = {}
+    if tracker_key:
+        tracker = {
+            "key": tracker_key,
+            "label": tracker_label,
+            "primary": bool(item.get("inventory_tracker_primary")),
+        }
+    is_cross_seed = bool(item.get("inventory_is_cross_seed"))
+    is_upload = bool(item.get("inventory_is_upload"))
+    is_support = bool(item.get("inventory_is_support")) or is_cross_seed or is_upload
+    return {
+        "version": 1,
+        "group_key": str(item.get("inventory_group_key") or ""),
+        "media_type": str(item.get("inventory_media_type") or "unknown"),
+        "is_episode": str(item.get("inventory_media_type") or "") == "episode",
+        "is_cross_seed": is_cross_seed,
+        "is_upload": is_upload,
+        "is_support": is_support,
+        "tracker": tracker,
+    }
 
 
 def coverage_index(rows: Iterable[Mapping[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -99,6 +131,10 @@ def coverage_for_item(item: Mapping[str, Any], index: Mapping[str, List[Dict[str
 def missing_primary_trackers(coverage: Sequence[Mapping[str, Any]]) -> List[str]:
     present = {str(item.get("key") or "") for item in coverage if item.get("primary")}
     return [tracker for tracker in PRIMARY_TRACKERS if tracker not in present]
+
+
+def sort_coverage_values(values: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return _sort_coverage(values)
 
 
 def filter_inventory_rows(

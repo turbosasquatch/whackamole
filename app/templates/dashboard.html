@@ -40,6 +40,10 @@
   {% endfor %}
 </section>
 
+{% if message %}
+  <p class="notice">{{ message }}</p>
+{% endif %}
+
 {% if view == "baseline" %}
   <section class="baseline-filters">
     <form method="get" action="/">
@@ -69,8 +73,18 @@
       <button class="button small" type="submit">Apply</button>
       <a class="button small secondary" href="/?view=baseline">Reset</a>
     </form>
+    <form method="post" action="/baseline/recheck-filtered" class="bulk-action">
+      <input type="hidden" name="media" value="{{ baseline_filters.media }}">
+      {% for tracker in baseline_filters.missing %}
+        <input type="hidden" name="missing" value="{{ tracker }}">
+      {% endfor %}
+      {% if baseline_filters.hide_any_primary %}
+        <input type="hidden" name="hide_any_primary" value="true">
+      {% endif %}
+      <button class="button small" type="submit">Run check on found set</button>
+    </form>
     <p class="muted">
-      Showing {{ baseline_filters.displayed }} of {{ baseline_filters.filtered_total }} matching baseline item{{ "" if baseline_filters.filtered_total == 1 else "s" }}.
+      Showing {{ pagination.start }}-{{ pagination.end }} of {{ baseline_filters.filtered_total }} matching baseline item{{ "" if baseline_filters.filtered_total == 1 else "s" }}.
     </p>
   </section>
 {% endif %}
@@ -133,6 +147,7 @@
             <a class="button small" href="/items/{{ item.id }}">Open</a>
             {% if item.status == "baseline" %}
               <form method="post" action="/items/{{ item.id }}/recheck">
+                <input type="hidden" name="return_to" value="{{ current_url }}">
                 <button class="button small secondary" type="submit">Run check</button>
               </form>
             {% endif %}
@@ -146,4 +161,16 @@
     </tbody>
   </table>
 </section>
+
+{% if pagination.prev_url or pagination.next_url %}
+  <nav class="pagination" aria-label="Pagination">
+    {% if pagination.prev_url %}
+      <a class="button small secondary" href="{{ pagination.prev_url }}">Previous</a>
+    {% endif %}
+    <span class="muted">Page {{ pagination.page }}</span>
+    {% if pagination.next_url %}
+      <a class="button small secondary" href="{{ pagination.next_url }}">Next</a>
+    {% endif %}
+  </nav>
+{% endif %}
 {% endblock %}

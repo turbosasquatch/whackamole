@@ -55,57 +55,98 @@ class WhackamoleService:
     async def poll_once(self) -> None:
         cfg = self.config_manager.load()
         client = QuiClient(cfg, self.secrets.get("qui_api_key"))
-        torrents = await client.list_torrents()
         baseline_done = self.db.get_kv("baseline_done") == "true"
         inventory_done = self.db.get_kv("inventory_done") == "true"
+        full_inventory_done = self.db.get_kv("inventory_full_crawl_v2_done") == "true"
+        full_crawl = not full_inventory_done
         baseline_mode = (not baseline_done and not cfg.watch.process_existing_on_first_run) or (
             baseline_done and not inventory_done
+        ) or (
+            baseline_done and full_crawl
         )
 
         active_count = self.db.count_active_queue()
-        for torrent in torrents:
-            if not is_completed_torrent(torrent):
-                continue
-            torrent_hash = str(torrent.get("hash"))
-            content_path = torrent.get("content_path") or torrent.get("contentPath")
-            if not torrent_hash or not content_path:
-                continue
-            inventory_meta = build_inventory_meta(torrent)
-            if self.db.item_exists(cfg.qui.instance_id, torrent_hash):
-                self.db.sync_torrent_metadata(cfg.qui.instance_id, torrent, inventory_meta)
-                continue
-            if is_inventory_support(inventory_meta) or not is_watchable_torrent(torrent, cfg.watch):
+        page = 0
+        limit = max(1, cfg.qui.page_limit)
+        fetched = 0
+        seen_hashes = set()
+        while True:
+            data = await client.list_torrents_page(page=page, limit=limit)
+            torrents = data.get("torrents", [])
+            torrents = torrents if isinstance(torrents, list) else []
+            hashes = [str(torrent.get("hash") or "") for torrent in torrents if str(torrent.get("hash") or "")]
+            existing_hashes = self.db.existing_hashes(cfg.qui.instance_id, hashes)
+            page_had_new_hash = False
+
+            for torrent in torrents:
+                torrent_hash = str(torrent.get("hash") or "")
+                if not torrent_hash or torrent_hash in seen_hashes:
+                    continue
+                seen_hashes.add(torrent_hash)
+                is_existing = torrent_hash in existing_hashes
+                if not is_existing:
+                    page_had_new_hash = True
+                if is_existing and not full_crawl:
+                    continue
+                if not is_completed_torrent(torrent):
+                    continue
+                content_path = torrent.get("content_path") or torrent.get("contentPath")
+                if not content_path:
+                    continue
+                inventory_meta = build_inventory_meta(torrent)
+                if is_existing:
+                    self.db.sync_torrent_metadata(cfg.qui.instance_id, torrent, inventory_meta)
+                    continue
+                if is_inventory_support(inventory_meta) or not is_watchable_torrent(torrent, cfg.watch):
+                    self.db.insert_discovered(
+                        cfg.qui.instance_id,
+                        torrent,
+                        status="inventory",
+                        baseline=True,
+                        inventory_meta=inventory_meta,
+                    )
+                    continue
+                if baseline_mode:
+                    self.db.insert_discovered(
+                        cfg.qui.instance_id,
+                        torrent,
+                        status="baseline",
+                        baseline=True,
+                        inventory_meta=inventory_meta,
+                    )
+                    continue
+                status = "queued" if active_count < cfg.safety.max_queue_size else "deferred"
                 self.db.insert_discovered(
                     cfg.qui.instance_id,
                     torrent,
-                    status="inventory",
-                    baseline=True,
+                    status=status,
+                    baseline=False,
                     inventory_meta=inventory_meta,
                 )
-                continue
-            if baseline_mode:
-                self.db.insert_discovered(
-                    cfg.qui.instance_id,
-                    torrent,
-                    status="baseline",
-                    baseline=True,
-                    inventory_meta=inventory_meta,
-                )
-                continue
-            status = "queued" if active_count < cfg.safety.max_queue_size else "deferred"
-            self.db.insert_discovered(
-                cfg.qui.instance_id,
-                torrent,
-                status=status,
-                baseline=False,
-                inventory_meta=inventory_meta,
-            )
-            active_count += 1
+                active_count += 1
+
+            fetched += len(torrents)
+            has_more_known = "hasMore" in data
+            has_more = bool(data.get("hasMore"))
+            total = int(data.get("total") or 0)
+            page += 1
+            if not torrents:
+                break
+            if not full_crawl and not page_had_new_hash:
+                break
+            if total and fetched >= total:
+                break
+            if has_more_known and not has_more:
+                break
+            if not has_more_known and len(torrents) < limit:
+                break
 
         if not baseline_done:
             self.db.set_kv("baseline_done", "true")
         if not inventory_done:
             self.db.set_kv("inventory_done", "true")
+        if full_crawl:
+            self.db.set_kv("inventory_full_crawl_v2_done", "true")
 
     async def run_due_jobs(self) -> None:
         cfg = self.config_manager.load()
