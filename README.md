@@ -4,6 +4,8 @@ Whackamole watches completed torrents from [autobrr/qui](https://github.com/auto
 
 This first build is deliberately recommendation-only: it does not upload anything for you.
 
+Whackamole treats Upload Assistant as the authority for tracker decisions. A tracker in the missing/upload-worthy bucket means UA passed that tracker after its rule and dupe checks; a tracker in the dupe or skipped buckets means UA blocked it for that reason.
+
 ## Safety Rails
 
 - First run baselines existing completed torrents by default.

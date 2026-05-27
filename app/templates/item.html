@@ -63,7 +63,42 @@
       <dt>Reason</dt>
       <dd>{{ item.reason or "-" }}</dd>
       <dt>Trackers</dt>
-      <dd>{{ item.tracker_results | join(", ") if item.tracker_results else "-" }}</dd>
+      <dd>
+        {% set buckets = [
+          ("passed", "Missing/upload-worthy", "UA says this content passed checks and looks worth uploading."),
+          ("dupe", "Potential dupes", "UA found similar or matching content."),
+          ("skipped", "Skipped", "UA skipped these trackers because of tracker-specific conditions."),
+          ("error", "Errors", "UA or Whackamole could not complete checking.")
+        ] %}
+        <div class="tracker-buckets">
+          {% for key, label, help_text in buckets %}
+            {% set trackers = item.tracker_buckets.get(key, []) %}
+            {% if trackers %}
+              <div class="tracker-bucket">
+                <strong>{{ label }}</strong>
+                <span>{{ help_text }}</span>
+                <ul>
+                  {% for tracker in trackers %}
+                    <li>
+                      <span class="tracker-name">{{ tracker.name }}</span>
+                      {% if tracker.links %}
+                        <span class="tracker-links">
+                          {% for link in tracker.links %}
+                            <a href="{{ link.url }}" target="_blank" rel="noreferrer">{{ link.label }}</a>
+                          {% endfor %}
+                        </span>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          {% endfor %}
+          {% if not item.tracker_summary %}
+            <span class="muted">-</span>
+          {% endif %}
+        </div>
+      </dd>
       <dt>Attempts</dt>
       <dd>{{ item.attempt_count }}</dd>
       <dt>Next check</dt>

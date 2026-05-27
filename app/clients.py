@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.config import AppConfig
+from app.ua_logs import normalize_ua_event_line
 
 
 class QuiClient:
@@ -82,14 +83,11 @@ class UploadAssistantClient:
             ) as response:
                 response.raise_for_status()
                 async for raw_line in response.aiter_lines():
-                    line = raw_line.strip()
+                    line = normalize_ua_event_line(raw_line)
                     if not line:
                         continue
-                    if line.startswith("data:"):
-                        line = line[5:].strip()
                     lines.append(line)
         return "\n".join(lines)
 
     def _headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.bearer_token or ''}"}
-

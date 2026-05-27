@@ -164,7 +164,7 @@ class Database:
         mapped_path: str = "",
         ua_args: str = "",
         ua_log: str = "",
-        tracker_results: Optional[List[str]] = None,
+        tracker_results: Optional[Any] = None,
         next_check_at: Optional[int] = None,
         increment_attempt: bool = False,
     ) -> None:

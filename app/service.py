@@ -114,7 +114,14 @@ class WhackamoleService:
         try:
             mapped_path = map_path(item["content_path"], cfg.path_mappings)
         except ValueError as exc:
-            self.db.update_status(item_id, "error", "path_mapping", str(exc), increment_attempt=True)
+            self.db.update_status(
+                item_id,
+                "error",
+                "path_mapping",
+                str(exc),
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["Path mapping"]},
+                increment_attempt=True,
+            )
             return
 
         ua_args = "--site-check -ua -sda"
@@ -133,6 +140,7 @@ class WhackamoleService:
                 mapped_path=mapped_path,
                 ua_args=ua_args,
                 ua_log=str(exc),
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
                 next_check_at=next_check,
                 increment_attempt=True,
             )
@@ -147,6 +155,7 @@ class WhackamoleService:
                 mapped_path=mapped_path,
                 ua_args=ua_args,
                 ua_log=str(exc),
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
                 next_check_at=next_check,
                 increment_attempt=True,
             )
@@ -161,7 +170,7 @@ class WhackamoleService:
             mapped_path=mapped_path,
             ua_args=ua_args,
             ua_log=log,
-            tracker_results=reduction.trackers,
+            tracker_results=reduction.tracker_results,
             next_check_at=None,
             increment_attempt=True,
         )

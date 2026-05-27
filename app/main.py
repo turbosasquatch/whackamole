@@ -25,7 +25,9 @@ from app.config import (
     parse_path_mappings,
 )
 from app.database import Database
+from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
+from app.tracker_links import tracker_links
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -57,16 +59,70 @@ def _config_dir() -> str:
 
 def _row_dict(row: Any) -> Dict[str, Any]:
     item = dict(row)
-    item["tracker_results"] = _json_list(item.get("tracker_results"))
+    tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
+    item["tracker_results"] = tracker_groups
+    item["tracker_buckets"] = _tracker_bucket_items(tracker_groups)
+    item["tracker_summary"] = _tracker_summary(tracker_groups)
     return item
 
 
-def _json_list(value: Any) -> List[str]:
+def _tracker_result_groups(value: Any, verdict: Any = "") -> Dict[str, List[str]]:
+    groups: Dict[str, List[str]] = {bucket: [] for bucket in TRACKER_BUCKETS}
     try:
         parsed = json.loads(value or "[]")
     except (TypeError, json.JSONDecodeError):
-        return []
-    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+        parsed = []
+
+    if isinstance(parsed, dict):
+        raw_groups = parsed.get("groups") if isinstance(parsed.get("groups"), dict) else parsed
+        for bucket in TRACKER_BUCKETS:
+            values = raw_groups.get(bucket, [])
+            if isinstance(values, list):
+                groups[bucket] = [str(item) for item in values if str(item).strip()]
+        return groups
+
+    if isinstance(parsed, list):
+        legacy_bucket = _legacy_tracker_bucket(str(verdict or ""))
+        groups[legacy_bucket] = [str(item) for item in parsed if str(item).strip()]
+    return groups
+
+
+def _legacy_tracker_bucket(verdict: str) -> str:
+    if verdict == "dupe":
+        return "dupe"
+    if verdict == "skipped":
+        return "skipped"
+    if verdict in {"error", "http_error", "ua_error", "path_mapping"}:
+        return "error"
+    return "passed"
+
+
+def _tracker_bucket_items(groups: Dict[str, List[str]]) -> Dict[str, List[Dict[str, Any]]]:
+    return {
+        bucket: [
+            {
+                "name": tracker,
+                "links": tracker_links(tracker),
+            }
+            for tracker in groups.get(bucket, [])
+        ]
+        for bucket in TRACKER_BUCKETS
+    }
+
+
+def _tracker_summary(groups: Dict[str, List[str]]) -> str:
+    labels = {
+        "passed": "Missing/upload-worthy",
+        "dupe": "Dupes",
+        "skipped": "Skipped",
+        "error": "Errors",
+    }
+    parts = [
+        f"{labels[bucket]}: {', '.join(groups[bucket])}"
+        for bucket in TRACKER_BUCKETS
+        if groups.get(bucket)
+    ]
+    return " | ".join(parts)
 
 
 def _as_int(value: Any, default: int, minimum: Optional[int] = None) -> int:

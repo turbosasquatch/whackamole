@@ -135,6 +135,13 @@ h2 {
   font-size: 12px;
 }
 
+.tracker-summary {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+  max-width: 54ch;
+}
+
 .alert,
 .notice {
   border: 1px solid;
@@ -361,6 +368,60 @@ dd {
   overflow: auto;
   padding: 14px;
   white-space: pre-wrap;
+}
+
+.tracker-buckets {
+  display: grid;
+  gap: 10px;
+}
+
+.tracker-bucket {
+  background: #f8f7f3;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.tracker-bucket span {
+  color: var(--muted);
+}
+
+.tracker-bucket ul {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tracker-bucket li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tracker-name {
+  color: var(--ink) !important;
+  font-weight: 800;
+}
+
+.tracker-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tracker-links a {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
 }
 
 .settings {
