@@ -10,7 +10,8 @@ from app.arr_compare import compare_item_with_arr
 from app.clients import QuiClient, UploadAssistantClient
 from app.config import ConfigManager, SecretStore
 from app.database import Database
-from app.filters import is_watchable_torrent
+from app.filters import is_completed_torrent, is_watchable_torrent
+from app.inventory import build_inventory_meta, is_inventory_support
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
 
@@ -56,24 +57,55 @@ class WhackamoleService:
         client = QuiClient(cfg, self.secrets.get("qui_api_key"))
         torrents = await client.list_torrents()
         baseline_done = self.db.get_kv("baseline_done") == "true"
-        baseline_mode = not baseline_done and not cfg.watch.process_existing_on_first_run
+        inventory_done = self.db.get_kv("inventory_done") == "true"
+        baseline_mode = (not baseline_done and not cfg.watch.process_existing_on_first_run) or (
+            baseline_done and not inventory_done
+        )
 
         active_count = self.db.count_active_queue()
         for torrent in torrents:
-            if not is_watchable_torrent(torrent, cfg.watch):
+            if not is_completed_torrent(torrent):
                 continue
             torrent_hash = str(torrent.get("hash"))
+            content_path = torrent.get("content_path") or torrent.get("contentPath")
+            if not torrent_hash or not content_path:
+                continue
+            inventory_meta = build_inventory_meta(torrent)
             if self.db.item_exists(cfg.qui.instance_id, torrent_hash):
+                self.db.sync_torrent_metadata(cfg.qui.instance_id, torrent, inventory_meta)
+                continue
+            if is_inventory_support(inventory_meta) or not is_watchable_torrent(torrent, cfg.watch):
+                self.db.insert_discovered(
+                    cfg.qui.instance_id,
+                    torrent,
+                    status="inventory",
+                    baseline=True,
+                    inventory_meta=inventory_meta,
+                )
                 continue
             if baseline_mode:
-                self.db.insert_discovered(cfg.qui.instance_id, torrent, status="baseline", baseline=True)
+                self.db.insert_discovered(
+                    cfg.qui.instance_id,
+                    torrent,
+                    status="baseline",
+                    baseline=True,
+                    inventory_meta=inventory_meta,
+                )
                 continue
             status = "queued" if active_count < cfg.safety.max_queue_size else "deferred"
-            self.db.insert_discovered(cfg.qui.instance_id, torrent, status=status, baseline=False)
+            self.db.insert_discovered(
+                cfg.qui.instance_id,
+                torrent,
+                status=status,
+                baseline=False,
+                inventory_meta=inventory_meta,
+            )
             active_count += 1
 
         if not baseline_done:
             self.db.set_kv("baseline_done", "true")
+        if not inventory_done:
+            self.db.set_kv("inventory_done", "true")
 
     async def run_due_jobs(self) -> None:
         cfg = self.config_manager.load()
@@ -99,6 +131,8 @@ class WhackamoleService:
             "last_ua_job_started_at": int(self._last_ua_job_started_at or 0),
             "last_service_error": self.db.get_kv("last_service_error") or "",
             "baseline_done": self.db.get_kv("baseline_done") == "true",
+            "inventory_done": self.db.get_kv("inventory_done") == "true",
+            "inventory_count": self.db.count_items([]),
         }
 
     async def _run_item(self, item_id: int) -> None:

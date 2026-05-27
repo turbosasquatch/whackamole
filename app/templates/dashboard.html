@@ -23,6 +23,7 @@
     ("blocked", "Blocked", ["blocked"]),
     ("manual", "Manual Review", ["manual_review"]),
     ("baseline", "Baseline", ["baseline"]),
+    ("inventory", "Inventory", ["inventory"]),
     ("ignored", "Ignored", ["ignored"]),
     ("all", "All", [])
   ] %}
@@ -39,6 +40,41 @@
   {% endfor %}
 </section>
 
+{% if view == "baseline" %}
+  <section class="baseline-filters">
+    <form method="get" action="/">
+      <input type="hidden" name="view" value="baseline">
+      <label>
+        Media
+        <select name="media">
+          {% set media_options = [("all", "All"), ("movie", "Movies"), ("tv", "TV shows"), ("episode", "Episodes")] %}
+          {% for value, label in media_options %}
+            <option value="{{ value }}" {% if baseline_filters.media == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <fieldset>
+        <legend>Missing tracker coverage</legend>
+        {% for tracker in primary_trackers %}
+          <label class="checkbox">
+            <input name="missing" value="{{ tracker }}" type="checkbox" {% if tracker in baseline_filters.missing %}checked{% endif %}>
+            {{ tracker }}
+          </label>
+        {% endfor %}
+      </fieldset>
+      <label class="checkbox">
+        <input name="hide_any_primary" value="true" type="checkbox" {% if baseline_filters.hide_any_primary %}checked{% endif %}>
+        Hide any item with primary tracker coverage
+      </label>
+      <button class="button small" type="submit">Apply</button>
+      <a class="button small secondary" href="/?view=baseline">Reset</a>
+    </form>
+    <p class="muted">
+      Showing {{ baseline_filters.displayed }} of {{ baseline_filters.filtered_total }} matching baseline item{{ "" if baseline_filters.filtered_total == 1 else "s" }}.
+    </p>
+  </section>
+{% endif %}
+
 <section class="table-wrap">
   <table>
     <thead>
@@ -46,6 +82,7 @@
         <th>Name</th>
         <th>Status</th>
         <th>Verdict</th>
+        <th>Coverage</th>
         <th>Category</th>
         <th>Size</th>
         <th>Updated</th>
@@ -75,6 +112,18 @@
             {% endif %}
           </td>
           <td>
+            <div class="coverage-badges">
+              {% for tracker in item.coverage %}
+                <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
+              {% else %}
+                <span class="muted">-</span>
+              {% endfor %}
+            </div>
+            {% if item.missing_primary_trackers %}
+              <div class="muted">Missing: {{ item.missing_primary_trackers | join(", ") }}</div>
+            {% endif %}
+          </td>
+          <td>
             {{ item.category or "-" }}
             {% if item.tags %}<div class="muted">{{ item.tags }}</div>{% endif %}
           </td>
@@ -82,11 +131,16 @@
           <td>{{ item.updated_at | datetime }}</td>
           <td class="actions">
             <a class="button small" href="/items/{{ item.id }}">Open</a>
+            {% if item.status == "baseline" %}
+              <form method="post" action="/items/{{ item.id }}/recheck">
+                <button class="button small secondary" type="submit">Run check</button>
+              </form>
+            {% endif %}
           </td>
         </tr>
       {% else %}
         <tr>
-          <td colspan="7" class="empty">No items in this view.</td>
+          <td colspan="8" class="empty">No items in this view.</td>
         </tr>
       {% endfor %}
     </tbody>

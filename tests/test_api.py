@@ -109,6 +109,50 @@ def test_items_api_can_include_full_details(tmp_path, monkeypatch):
         assert API_TOKEN not in response.text
 
 
+def test_items_api_filters_by_inventory_coverage(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "source",
+                "name": "Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "",
+                "content_path": "/media/torrents/tv/Example.Show.S01E01.1080p.WEB-DL-GRP.mkv",
+                "progress": 1,
+            },
+            status="baseline",
+            baseline=True,
+        )
+        db.insert_discovered(
+            1,
+            {
+                "hash": "dp-cross",
+                "name": "Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv.cross",
+                "tags": "cross-seed",
+                "save_path": "/media/torrents/cross-seeds/DarkPeers",
+                "content_path": "/media/torrents/cross-seeds/DarkPeers/Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "progress": 1,
+            },
+            status="inventory",
+            baseline=True,
+        )
+
+        hidden = client.get("/api/items?status=baseline&missing=DP", headers=_auth_headers())
+        visible = client.get("/api/items?status=baseline&missing=IHD&media=episode", headers=_auth_headers())
+
+        assert hidden.status_code == 200
+        assert hidden.json()["total"] == 0
+        assert visible.status_code == 200
+        item = visible.json()["items"][0]
+        assert visible.json()["total"] == 1
+        assert item["coverage"][0]["key"] == "DP"
+        assert item["missing_primary_trackers"] == ["ULCX", "IHD"]
+
+
 def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

@@ -29,9 +29,11 @@ class QuiClient:
             data = response.json()
             return data if isinstance(data, list) else []
 
-    async def list_torrents(self) -> List[Dict[str, Any]]:
+    async def list_torrents_page(self, page: int = 0, limit: Optional[int] = None) -> Dict[str, Any]:
+        page_limit = limit or self.config.qui.page_limit
         params = {
-            "limit": str(max(1, self.config.qui.page_limit)),
+            "limit": str(max(1, page_limit)),
+            "page": str(max(0, page)),
             "sort": "added_on",
             "order": "desc",
         }
@@ -43,8 +45,35 @@ class QuiClient:
             )
             response.raise_for_status()
             data = response.json()
-            torrents = data.get("torrents", []) if isinstance(data, dict) else []
-            return torrents if isinstance(torrents, list) else []
+            return data if isinstance(data, dict) else {"torrents": data if isinstance(data, list) else []}
+
+    async def list_torrents(self) -> List[Dict[str, Any]]:
+        limit = max(1, self.config.qui.page_limit)
+        page = 0
+        torrents: List[Dict[str, Any]] = []
+        seen_hashes = set()
+        while True:
+            data = await self.list_torrents_page(page=page, limit=limit)
+            rows = data.get("torrents", [])
+            rows = rows if isinstance(rows, list) else []
+            for row in rows:
+                torrent_hash = str(row.get("hash") or "")
+                if torrent_hash and torrent_hash in seen_hashes:
+                    continue
+                if torrent_hash:
+                    seen_hashes.add(torrent_hash)
+                torrents.append(row)
+
+            total = int(data.get("total") or 0)
+            has_more = bool(data.get("hasMore"))
+            page += 1
+            if not rows:
+                break
+            if total and len(torrents) >= total:
+                break
+            if not has_more and len(rows) < limit:
+                break
+        return torrents
 
     def _headers(self) -> Dict[str, str]:
         return {"X-API-Key": self.api_key or ""}

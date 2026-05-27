@@ -10,7 +10,7 @@ Whackamole treats Upload Assistant as the authority for tracker eligibility and 
 
 - First run baselines existing completed torrents by default.
 - Completed torrents are deduped by QUI instance ID and torrent hash.
-- Categories containing `cross` and tags containing `cross-seed` are excluded by default.
+- QUI cross-seeds and uploads are captured as inventory, not queued for UA checks.
 - Only one Upload Assistant job runs at a time by default.
 - Arr comparisons are serialized and have a hard timeout.
 - Upload Assistant job starts are spaced by at least 120 seconds by default.
@@ -57,6 +57,18 @@ Use [unraid/whackamole.xml](unraid/whackamole.xml) as the Docker template. Once 
 
 Leave API key fields blank after saving to keep the encrypted stored values.
 
+## Baseline Inventory
+
+Whackamole paginates through QUI and stores completed source torrents, cross-seeds, and uploads. Cross-seeds/uploads are used as tracker coverage signals on the dashboard. DP, ULCX, and IHD are highlighted as primary trackers; other detected trackers are shown as secondary coverage.
+
+Use the Baseline view filters to narrow the backlog:
+
+- Media type: all, movie, TV/season pack, or episode.
+- Missing tracker coverage: hide rows that already have selected primary tracker coverage.
+- Hide any primary coverage: show only rows with no DP/ULCX/IHD coverage.
+
+The `Inventory` tab shows captured cross-seed/upload rows themselves for audit.
+
 ## JSON API
 
 Detailed item APIs are read-only and require the Whackamole API bearer token from Settings. `/api/status` stays unauthenticated and only returns lightweight service/configured-state booleans.
@@ -68,7 +80,7 @@ curl -H "Authorization: Bearer <whackamole-token>" \
 
 Endpoints:
 
-- `GET /api/items` returns paginated check summaries. Query params: `status`, `limit`, `offset`, `include_details`.
+- `GET /api/items` returns paginated check summaries. Query params: `status`, `limit`, `offset`, `include_details`, `media`, `missing`, `hide_any_primary`.
 - `GET /api/items/{id}` returns the full check record, including raw QUI metadata, UA log, tracker buckets, and Arr decisions.
 - `GET /api/items/{id}/log` returns the UA log as `text/plain`.
 

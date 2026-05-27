@@ -6,7 +6,7 @@ import time
 from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
@@ -26,6 +26,14 @@ from app.config import (
     parse_path_mappings,
 )
 from app.database import Database
+from app.inventory import (
+    PRIMARY_TRACKERS,
+    coverage_for_item,
+    coverage_index,
+    filter_inventory_rows,
+    item_inventory_meta,
+    missing_primary_trackers,
+)
 from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
 
@@ -57,16 +65,28 @@ def _config_dir() -> str:
     return os.getenv("WHACKAMOLE_CONFIG_DIR", "/config")
 
 
-def _row_dict(row: Any) -> Dict[str, Any]:
+def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     item = dict(row)
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
     arr_result = _arr_result(item.get("arr_results"))
+    inventory_meta = item_inventory_meta(item)
+    item_coverage = coverage_for_item(item, coverage or {})
     item["tracker_results"] = tracker_groups
     item["tracker_buckets"] = _tracker_bucket_items(tracker_groups)
     item["tracker_summary"] = _tracker_summary(tracker_groups)
     item["arr_result"] = arr_result
     item["arr_summary"] = _arr_summary(arr_result)
+    item["inventory_meta"] = inventory_meta
+    item["coverage"] = item_coverage
+    item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
     return item
+
+
+def _normalized_item(row: Any) -> Dict[str, Any]:
+    item = dict(row)
+    if "coverage" in item and "inventory_meta" in item and isinstance(item.get("tracker_results"), dict):
+        return item
+    return _row_dict(row)
 
 
 def _json_object(value: Any) -> Dict[str, Any]:
@@ -78,7 +98,7 @@ def _json_object(value: Any) -> Dict[str, Any]:
 
 
 def _api_item_summary(row: Any) -> Dict[str, Any]:
-    item = _row_dict(row)
+    item = _normalized_item(row)
     return {
         "id": item["id"],
         "instance_id": item["instance_id"],
@@ -104,11 +124,14 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "tracker_results": item["tracker_results"],
         "tracker_summary": item["tracker_summary"],
         "arr_summary": item["arr_summary"],
+        "inventory_meta": item["inventory_meta"],
+        "coverage": item["coverage"],
+        "missing_primary_trackers": item["missing_primary_trackers"],
     }
 
 
 def _api_item_detail(row: Any) -> Dict[str, Any]:
-    item = _row_dict(row)
+    item = _normalized_item(row)
     summary = _api_item_summary(row)
     raw_torrent = _json_object(item.get("raw_torrent"))
     ua = {
@@ -249,6 +272,35 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
     }
 
 
+def _coverage_index(db: Database) -> Dict[str, List[Dict[str, Any]]]:
+    rows = db.list_items([], limit=100000)
+    return coverage_index([dict(row) for row in rows])
+
+
+def _filtered_rows(
+    db: Database,
+    statuses: Sequence[str],
+    limit: int,
+    offset: int = 0,
+    media: str = "all",
+    missing: Optional[Iterable[str]] = None,
+    hide_any_primary: bool = False,
+) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
+    coverage = _coverage_index(db)
+    needs_inventory_filter = (
+        (media or "all").lower() not in {"", "all"}
+        or bool(missing)
+        or hide_any_primary
+    )
+    if not needs_inventory_filter:
+        return db.list_items(statuses, limit=limit, offset=offset), db.count_items(statuses), coverage
+
+    rows = db.list_items(statuses, limit=100000)
+    filtered = filter_inventory_rows([dict(row) for row in rows], coverage, media, missing, hide_any_primary)
+    total = len(filtered)
+    return filtered[offset : offset + limit], total, coverage
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.config_manager = ConfigManager(_config_dir())
@@ -267,24 +319,54 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, view: str = "active") -> HTMLResponse:
+async def dashboard(
+    request: Request,
+    view: str = "active",
+    media: str = "all",
+    missing: Optional[List[str]] = Query(None),
+    hide_any_primary: bool = False,
+) -> HTMLResponse:
     groups = {
         "active": ["queued", "deferred", "checking", "error"],
         "candidates": ["candidate"],
         "blocked": ["blocked"],
         "manual": ["manual_review"],
         "baseline": ["baseline"],
+        "inventory": ["inventory"],
         "ignored": ["ignored"],
         "all": [],
     }
     selected = view if view in groups else "active"
-    rows = request.app.state.db.list_items(groups[selected], limit=150)
+    missing_values = missing or []
+    limit = 5000 if selected in {"baseline", "inventory"} else 150
+    if selected == "baseline":
+        rows, filtered_total, coverage = _filtered_rows(
+            request.app.state.db,
+            groups[selected],
+            limit=limit,
+            media=media,
+            missing=missing_values,
+            hide_any_primary=hide_any_primary,
+        )
+    else:
+        coverage = _coverage_index(request.app.state.db)
+        rows = request.app.state.db.list_items(groups[selected], limit=limit)
+        filtered_total = request.app.state.db.count_items(groups[selected])
     context = {
         "request": request,
-        "items": [_row_dict(row) for row in rows],
+        "items": [_row_dict(row, coverage) for row in rows],
         "view": selected,
         "counts": request.app.state.db.status_counts(),
         "service": request.app.state.service.snapshot(),
+        "primary_trackers": PRIMARY_TRACKERS,
+        "baseline_filters": {
+            "media": media,
+            "missing": [tracker.upper() for tracker in missing_values],
+            "hide_any_primary": hide_any_primary,
+            "filtered_total": filtered_total,
+            "displayed": len(rows),
+            "limit": limit,
+        },
     }
     return templates.TemplateResponse("dashboard.html", context)
 
@@ -300,7 +382,11 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
         )
     return templates.TemplateResponse(
         "item.html",
-        {"request": request, "item": _row_dict(row), "service": request.app.state.service.snapshot()},
+        {
+            "request": request,
+            "item": _row_dict(row, _coverage_index(request.app.state.db)),
+            "service": request.app.state.service.snapshot(),
+        },
     )
 
 
@@ -483,20 +569,35 @@ async def api_items(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     include_details: bool = Query(False),
+    media: str = Query("all"),
+    missing: Optional[List[str]] = Query(None),
+    hide_any_primary: bool = Query(False),
 ) -> JSONResponse:
     _require_api_auth(request)
     statuses = _parse_status_filter(status_filter)
-    rows = request.app.state.db.list_items(statuses, limit=limit, offset=offset)
+    missing_values = missing or []
+    rows, total, coverage = _filtered_rows(
+        request.app.state.db,
+        statuses,
+        limit=limit,
+        offset=offset,
+        media=media,
+        missing=missing_values,
+        hide_any_primary=hide_any_primary,
+    )
     serializer = _api_item_detail if include_details else _api_item_summary
     return JSONResponse(
         {
-            "items": [serializer(row) for row in rows],
+            "items": [serializer(_row_dict(row, coverage)) for row in rows],
             "count": len(rows),
-            "total": request.app.state.db.count_items(statuses),
+            "total": total,
             "limit": limit,
             "offset": offset,
             "status": statuses,
             "include_details": include_details,
+            "media": media,
+            "missing": [tracker.upper() for tracker in missing_values],
+            "hide_any_primary": hide_any_primary,
         }
     )
 
@@ -507,7 +608,7 @@ async def api_item_detail(request: Request, item_id: int) -> JSONResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return JSONResponse(_api_item_detail(row))
+    return JSONResponse(_api_item_detail(_row_dict(row, _coverage_index(request.app.state.db))))
 
 
 @app.get("/api/items/{item_id}/log")

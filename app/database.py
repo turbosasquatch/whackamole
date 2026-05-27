@@ -55,6 +55,7 @@ class Database:
                     ua_log TEXT NOT NULL DEFAULT '',
                     tracker_results TEXT NOT NULL DEFAULT '[]',
                     arr_results TEXT NOT NULL DEFAULT '{}',
+                    inventory_meta TEXT NOT NULL DEFAULT '{}',
                     raw_torrent TEXT NOT NULL DEFAULT '{}',
                     ignored_reason TEXT NOT NULL DEFAULT '',
                     baseline INTEGER NOT NULL DEFAULT 0,
@@ -63,6 +64,7 @@ class Database:
                 """
             )
             self._ensure_column(conn, "items", "arr_results", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "items", "inventory_meta", "TEXT NOT NULL DEFAULT '{}'")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -89,31 +91,79 @@ class Database:
             ).fetchone()
             return row is not None
 
-    def insert_discovered(self, instance_id: int, torrent: Dict[str, Any], status: str, baseline: bool) -> None:
+    def insert_discovered(
+        self,
+        instance_id: int,
+        torrent: Dict[str, Any],
+        status: str,
+        baseline: bool,
+        inventory_meta: Optional[Any] = None,
+    ) -> None:
         now = int(time.time())
+        torrent_hash = str(torrent.get("hash"))
+        content_path = str(torrent.get("content_path") or torrent.get("contentPath") or "")
+        encoded_torrent = json.dumps(torrent)
+        encoded_meta = json.dumps(inventory_meta or {})
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO items(
                     instance_id, hash, name, category, tags, content_path, status, size,
-                    added_on, completion_on, discovered_at, updated_at, raw_torrent, baseline
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    added_on, completion_on, discovered_at, updated_at, raw_torrent, inventory_meta, baseline
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instance_id,
-                    str(torrent.get("hash")),
+                    torrent_hash,
                     str(torrent.get("name") or ""),
                     str(torrent.get("category") or ""),
                     str(torrent.get("tags") or ""),
-                    str(torrent.get("content_path") or ""),
+                    content_path,
                     status,
                     int(torrent.get("size") or torrent.get("total_size") or 0),
                     int(torrent.get("added_on") or 0),
                     int(torrent.get("completion_on") or 0),
                     now,
                     now,
-                    json.dumps(torrent),
+                    encoded_torrent,
+                    encoded_meta,
                     1 if baseline else 0,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE items
+                SET category = ?, tags = ?, content_path = ?, raw_torrent = ?, inventory_meta = ?
+                WHERE instance_id = ? AND hash = ?
+                """,
+                (
+                    str(torrent.get("category") or ""),
+                    str(torrent.get("tags") or ""),
+                    content_path,
+                    encoded_torrent,
+                    encoded_meta,
+                    instance_id,
+                    torrent_hash,
+                ),
+            )
+
+    def sync_torrent_metadata(self, instance_id: int, torrent: Dict[str, Any], inventory_meta: Optional[Any] = None) -> None:
+        content_path = str(torrent.get("content_path") or torrent.get("contentPath") or "")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE items
+                SET category = ?, tags = ?, content_path = ?, raw_torrent = ?, inventory_meta = ?
+                WHERE instance_id = ? AND hash = ?
+                """,
+                (
+                    str(torrent.get("category") or ""),
+                    str(torrent.get("tags") or ""),
+                    content_path,
+                    json.dumps(torrent),
+                    json.dumps(inventory_meta or {}),
+                    instance_id,
+                    str(torrent.get("hash")),
                 ),
             )
 

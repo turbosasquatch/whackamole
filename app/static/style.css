@@ -142,6 +142,31 @@ h2 {
   max-width: 54ch;
 }
 
+.coverage-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 120px;
+}
+
+.coverage-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.coverage-badge.primary {
+  background: #e6f4f1;
+  color: var(--accent-dark);
+}
+
+.coverage-badge.other {
+  background: #efede8;
+  color: #66615a;
+}
+
 .alert,
 .notice {
   border: 1px solid;
@@ -222,7 +247,8 @@ button.secondary {
 .settings section,
 .details,
 .summary-grid,
-.probe-grid {
+.probe-grid,
+.baseline-filters {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -268,6 +294,12 @@ tr:last-child td {
 
 .actions {
   text-align: right;
+  white-space: nowrap;
+}
+
+.actions form {
+  display: inline-flex;
+  margin-left: 6px;
 }
 
 .empty {
@@ -304,6 +336,7 @@ tr:last-child td {
 
 .status-blocked,
 .status-manual_review,
+.status-inventory,
 .status-baseline,
 .status-ignored {
   background: #efede8;
@@ -468,6 +501,7 @@ label {
 }
 
 input,
+select,
 textarea {
   background: #fff;
   border: 1px solid #c8c2b6;
@@ -485,6 +519,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--accent);
   outline: 3px solid rgba(15, 118, 110, 0.14);
@@ -543,6 +578,36 @@ textarea:focus {
 .probe.idle {
   background: #f1eee8;
   color: #55524c;
+}
+
+.baseline-filters {
+  margin: 0 0 16px;
+  padding: 12px;
+}
+
+.baseline-filters form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.baseline-filters fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.baseline-filters legend {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 4px;
 }
 
 @media (max-width: 860px) {
