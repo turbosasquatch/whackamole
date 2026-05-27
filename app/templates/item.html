@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Item · Whackamole{% endblock %}
+{% block content %}
+{% if not item %}
+  <section class="toolbar">
+    <div>
+      <h1>Item not found</h1>
+      <p class="muted">The requested item is no longer in the local queue.</p>
+    </div>
+    <a class="button secondary" href="/">Back</a>
+  </section>
+{% else %}
+  <section class="toolbar">
+    <div>
+      <h1>{{ item.name }}</h1>
+      <p class="muted">{{ item.hash }}</p>
+    </div>
+    <div class="button-row">
+      <form method="post" action="/items/{{ item.id }}/recheck">
+        <button class="button" type="submit">Recheck</button>
+      </form>
+      <form method="post" action="/items/{{ item.id }}/ignore">
+        <button class="button secondary" type="submit">Ignore</button>
+      </form>
+      <a class="button secondary" href="/">Back</a>
+    </div>
+  </section>
+
+  <section class="summary-grid">
+    <div>
+      <span>Status</span>
+      <strong class="pill status-{{ item.status }}">{{ item.status }}</strong>
+    </div>
+    <div>
+      <span>Verdict</span>
+      <strong>{{ item.verdict or "-" }}</strong>
+    </div>
+    <div>
+      <span>Size</span>
+      <strong>{{ item.size | bytes }}</strong>
+    </div>
+    <div>
+      <span>Updated</span>
+      <strong>{{ item.updated_at | datetime }}</strong>
+    </div>
+  </section>
+
+  <section class="details">
+    <h2>Paths</h2>
+    <dl>
+      <dt>QUI path</dt>
+      <dd>{{ item.content_path }}</dd>
+      <dt>UA path</dt>
+      <dd>{{ item.mapped_path or "-" }}</dd>
+      <dt>UA args</dt>
+      <dd>{{ item.ua_args or "-" }}</dd>
+    </dl>
+  </section>
+
+  <section class="details">
+    <h2>Decision</h2>
+    <dl>
+      <dt>Reason</dt>
+      <dd>{{ item.reason or "-" }}</dd>
+      <dt>Trackers</dt>
+      <dd>{{ item.tracker_results | join(", ") if item.tracker_results else "-" }}</dd>
+      <dt>Attempts</dt>
+      <dd>{{ item.attempt_count }}</dd>
+      <dt>Next check</dt>
+      <dd>{{ item.next_check_at | datetime }}</dd>
+    </dl>
+  </section>
+
+  <section class="details">
+    <h2>UA Log</h2>
+    <pre class="log">{{ item.ua_log or "No UA log captured yet." }}</pre>
+  </section>
+{% endif %}
+{% endblock %}

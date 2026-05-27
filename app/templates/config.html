@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Settings · Whackamole{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Settings</h1>
+    <p class="muted">Saved API keys are encrypted and shown only as saved/not saved.</p>
+  </div>
+  <div class="button-row">
+    <form method="post" action="/config/probe">
+      <button class="button secondary" type="submit">Probe</button>
+    </form>
+    <a class="button secondary" href="/">Dashboard</a>
+  </div>
+</section>
+
+{% if message %}
+  <p class="notice">{{ message }}</p>
+{% endif %}
+
+{% if probe_results %}
+  <section class="probe-grid">
+    {% for result in probe_results %}
+      <div class="probe {{ result.state }}">
+        <strong>{{ result.name }}</strong>
+        <span>{{ result.detail }}</span>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+<form class="settings" method="post" action="/config">
+  <section>
+    <h2>QUI</h2>
+    <div class="form-grid">
+      <label>
+        URL
+        <input name="qui_url" value="{{ cfg.qui.url }}" placeholder="http://unraid-ip:7476">
+      </label>
+      <label>
+        Instance ID
+        <input name="qui_instance_id" type="number" min="1" value="{{ cfg.qui.instance_id }}">
+      </label>
+      <label>
+        Page limit
+        <input name="qui_page_limit" type="number" min="1" value="{{ cfg.qui.page_limit }}">
+      </label>
+      <label>
+        API key {% if secrets.qui_api_key %}<span class="saved">saved</span>{% endif %}
+        <input name="qui_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.qui_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_qui_api_key" type="checkbox">
+        Clear saved QUI key
+      </label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Upload Assistant</h2>
+    <div class="form-grid">
+      <label>
+        URL
+        <input name="ua_url" value="{{ cfg.upload_assistant.url }}" placeholder="http://unraid-ip:5000">
+      </label>
+      <label>
+        UA temp path
+        <input name="ua_tmp_path" value="{{ cfg.upload_assistant.tmp_path }}">
+      </label>
+      <label>
+        Request timeout seconds
+        <input name="ua_timeout" type="number" min="60" value="{{ cfg.upload_assistant.request_timeout_seconds }}">
+      </label>
+      <label>
+        Bearer token {% if secrets.ua_bearer_token %}<span class="saved">saved</span>{% endif %}
+        <input name="ua_bearer_token" type="password" autocomplete="new-password" placeholder="{% if secrets.ua_bearer_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_ua_bearer_token" type="checkbox">
+        Clear saved UA token
+      </label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Paths</h2>
+    <label>
+      Path mappings
+      <textarea name="path_mappings" rows="5">{{ path_mappings }}</textarea>
+    </label>
+  </section>
+
+  <section>
+    <h2>Watch Scope</h2>
+    <div class="form-grid">
+      <label>
+        Excluded category terms
+        <input name="exclude_category_terms" value="{{ exclude_category_terms }}">
+      </label>
+      <label>
+        Excluded tag terms
+        <input name="exclude_tag_terms" value="{{ exclude_tag_terms }}">
+      </label>
+      <label class="checkbox">
+        <input name="process_existing_on_first_run" type="checkbox" {% if cfg.watch.process_existing_on_first_run %}checked{% endif %}>
+        Process existing torrents on first run
+      </label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Safety</h2>
+    <div class="form-grid">
+      <label>
+        Poll interval seconds
+        <input name="poll_interval_seconds" type="number" min="15" value="{{ cfg.safety.poll_interval_seconds }}">
+      </label>
+      <label>
+        Max queue size
+        <input name="max_queue_size" type="number" min="1" value="{{ cfg.safety.max_queue_size }}">
+      </label>
+      <label>
+        Max concurrent UA jobs
+        <input name="max_concurrent_ua_jobs" type="number" min="1" value="{{ cfg.safety.max_concurrent_ua_jobs }}">
+      </label>
+      <label>
+        Seconds between UA jobs
+        <input name="min_seconds_between_ua_jobs" type="number" min="0" value="{{ cfg.safety.min_seconds_between_ua_jobs }}">
+      </label>
+      <label>
+        Manual recheck cooldown hours
+        <input name="recheck_cooldown_hours" type="number" min="1" value="{{ cfg.safety.recheck_cooldown_hours }}">
+      </label>
+      <label>
+        Max error retries
+        <input name="max_error_retries" type="number" min="0" value="{{ cfg.safety.max_error_retries }}">
+      </label>
+      <label>
+        Error backoff minutes
+        <input name="error_backoff_minutes" value="{{ error_backoff_minutes }}">
+      </label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Future Imports</h2>
+    <div class="form-grid">
+      <label>
+        Sonarr URL
+        <input name="sonarr_url" value="{{ cfg.sonarr.url }}">
+      </label>
+      <label>
+        Sonarr API key {% if secrets.sonarr_api_key %}<span class="saved">saved</span>{% endif %}
+        <input name="sonarr_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.sonarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_sonarr_api_key" type="checkbox">
+        Clear saved Sonarr key
+      </label>
+      <label>
+        Radarr URL
+        <input name="radarr_url" value="{{ cfg.radarr.url }}">
+      </label>
+      <label>
+        Radarr API key {% if secrets.radarr_api_key %}<span class="saved">saved</span>{% endif %}
+        <input name="radarr_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.radarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_radarr_api_key" type="checkbox">
+        Clear saved Radarr key
+      </label>
+      <label>
+        EasyCross URL
+        <input name="easycross_url" value="{{ cfg.easycross.url }}">
+      </label>
+      <label>
+        EasyCross API key {% if secrets.easycross_api_key %}<span class="saved">saved</span>{% endif %}
+        <input name="easycross_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.easycross_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_easycross_api_key" type="checkbox">
+        Clear saved EasyCross key
+      </label>
+    </div>
+  </section>
+
+  <footer class="save-bar">
+    <button class="button" type="submit">Save settings</button>
+  </footer>
+</form>
+{% endblock %}

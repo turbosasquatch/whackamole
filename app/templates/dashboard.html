@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Whackamole{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="muted">
+      Service {{ "running" if service.running else "stopped" }} ·
+      {{ service.running_jobs }} UA job{{ "" if service.running_jobs == 1 else "s" }} active ·
+      Baseline {{ "complete" if service.baseline_done else "pending" }}
+    </p>
+    {% if service.last_service_error %}
+      <p class="alert">Last service error: {{ service.last_service_error }}</p>
+    {% endif %}
+  </div>
+  <a class="button secondary" href="/config">Settings</a>
+</section>
+
+<section class="tabs" aria-label="Dashboard views">
+  {% set tabs = [
+    ("active", "Active", ["queued", "deferred", "checking", "error"]),
+    ("candidates", "Candidates", ["candidate"]),
+    ("blocked", "Blocked", ["blocked"]),
+    ("baseline", "Baseline", ["baseline"]),
+    ("ignored", "Ignored", ["ignored"]),
+    ("all", "All", [])
+  ] %}
+  {% for key, label, statuses in tabs %}
+    {% set ns = namespace(total=0) %}
+    {% if statuses %}
+      {% for status in statuses %}
+        {% set ns.total = ns.total + counts.get(status, 0) %}
+      {% endfor %}
+    {% else %}
+      {% set ns.total = counts.values() | sum %}
+    {% endif %}
+    <a href="/?view={{ key }}" class="{% if view == key %}selected{% endif %}">{{ label }} <span>{{ ns.total }}</span></a>
+  {% endfor %}
+</section>
+
+<section class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Verdict</th>
+        <th>Category</th>
+        <th>Size</th>
+        <th>Updated</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>
+            <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
+            <div class="path">{{ item.content_path }}</div>
+          </td>
+          <td><span class="pill status-{{ item.status }}">{{ item.status }}</span></td>
+          <td>
+            {% if item.verdict %}
+              <strong>{{ item.verdict }}</strong>
+              <div class="muted">{{ item.reason }}</div>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ item.category or "-" }}
+            {% if item.tags %}<div class="muted">{{ item.tags }}</div>{% endif %}
+          </td>
+          <td>{{ item.size | bytes }}</td>
+          <td>{{ item.updated_at | datetime }}</td>
+          <td class="actions">
+            <a class="button small" href="/items/{{ item.id }}">Open</a>
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="7" class="empty">No items in this view.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

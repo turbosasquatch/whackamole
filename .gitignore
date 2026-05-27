@@ -1,0 +1,20 @@
+.DS_Store
+.pytest_cache/
+.pycache/
+__pycache__/
+*.py[cod]
+.coverage
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Runtime state
+config/
+data/
+.smoke-data/
+whackamole.db
+secret.key
+secrets.json
+secrets.yaml

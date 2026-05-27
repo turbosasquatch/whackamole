@@ -1,0 +1,2 @@
+"""Whackamole application package."""
+
