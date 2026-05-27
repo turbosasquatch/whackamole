@@ -128,6 +128,10 @@
         <input name="min_seconds_between_ua_jobs" type="number" min="0" value="{{ cfg.safety.min_seconds_between_ua_jobs }}">
       </label>
       <label>
+        Arr search timeout seconds
+        <input name="arr_search_timeout_seconds" type="number" min="5" value="{{ cfg.safety.arr_search_timeout_seconds }}">
+      </label>
+      <label>
         Manual recheck cooldown hours
         <input name="recheck_cooldown_hours" type="number" min="1" value="{{ cfg.safety.recheck_cooldown_hours }}">
       </label>
@@ -143,7 +147,7 @@
   </section>
 
   <section>
-    <h2>Future Imports</h2>
+    <h2>Arr Comparison</h2>
     <div class="form-grid">
       <label>
         Sonarr URL

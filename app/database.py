@@ -54,6 +54,7 @@ class Database:
                     ua_args TEXT NOT NULL DEFAULT '',
                     ua_log TEXT NOT NULL DEFAULT '',
                     tracker_results TEXT NOT NULL DEFAULT '[]',
+                    arr_results TEXT NOT NULL DEFAULT '{}',
                     raw_torrent TEXT NOT NULL DEFAULT '{}',
                     ignored_reason TEXT NOT NULL DEFAULT '',
                     baseline INTEGER NOT NULL DEFAULT 0,
@@ -61,6 +62,12 @@ class Database:
                 )
                 """
             )
+            self._ensure_column(conn, "items", "arr_results", "TEXT NOT NULL DEFAULT '{}'")
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def get_kv(self, key: str) -> Optional[str]:
         with self.connect() as conn:
@@ -165,10 +172,12 @@ class Database:
         ua_args: str = "",
         ua_log: str = "",
         tracker_results: Optional[Any] = None,
+        arr_results: Optional[Any] = None,
         next_check_at: Optional[int] = None,
         increment_attempt: bool = False,
     ) -> None:
         now = int(time.time())
+        encoded_arr_results = None if arr_results is None else json.dumps(arr_results)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -178,6 +187,7 @@ class Database:
                     ua_args = COALESCE(NULLIF(?, ''), ua_args),
                     ua_log = COALESCE(NULLIF(?, ''), ua_log),
                     tracker_results = ?,
+                    arr_results = COALESCE(?, arr_results),
                     next_check_at = ?, updated_at = ?,
                     last_checked_at = CASE WHEN ? THEN ? ELSE last_checked_at END,
                     attempt_count = attempt_count + ?
@@ -191,9 +201,10 @@ class Database:
                     ua_args,
                     ua_log,
                     json.dumps(tracker_results or []),
+                    encoded_arr_results,
                     next_check_at,
                     now,
-                    1 if status in {"candidate", "blocked", "error"} else 0,
+                    1 if status in {"candidate", "blocked", "manual_review", "error"} else 0,
                     now,
                     1 if increment_attempt else 0,
                     item_id,
@@ -207,7 +218,7 @@ class Database:
                 """
                 UPDATE items
                 SET status = 'queued', verdict = '', reason = 'Manual recheck requested',
-                    next_check_at = NULL, updated_at = ?
+                    arr_results = '{}', next_check_at = NULL, updated_at = ?
                 WHERE id = ?
                 """,
                 (now, item_id),

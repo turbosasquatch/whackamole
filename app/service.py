@@ -6,6 +6,7 @@ from typing import Optional
 
 import httpx
 
+from app.arr_compare import compare_item_with_arr
 from app.clients import QuiClient, UploadAssistantClient
 from app.config import ConfigManager, SecretStore
 from app.database import Database
@@ -23,6 +24,7 @@ class WhackamoleService:
         self._stop = asyncio.Event()
         self._running_jobs = 0
         self._last_ua_job_started_at = 0.0
+        self._arr_lock = asyncio.Lock()
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -120,13 +122,14 @@ class WhackamoleService:
                 "path_mapping",
                 str(exc),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["Path mapping"]},
+                arr_results={},
                 increment_attempt=True,
             )
             return
 
         ua_args = "--site-check -ua -sda"
         ua = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
-        self.db.update_status(item_id, "checking", mapped_path=mapped_path, ua_args=ua_args)
+        self.db.update_status(item_id, "checking", mapped_path=mapped_path, ua_args=ua_args, arr_results={})
 
         try:
             log = await ua.execute_site_check(mapped_path, ua_args, item["hash"])
@@ -141,6 +144,7 @@ class WhackamoleService:
                 ua_args=ua_args,
                 ua_log=str(exc),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
+                arr_results={},
                 next_check_at=next_check,
                 increment_attempt=True,
             )
@@ -156,21 +160,40 @@ class WhackamoleService:
                 ua_args=ua_args,
                 ua_log=str(exc),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
+                arr_results={},
                 next_check_at=next_check,
                 increment_attempt=True,
             )
             return
 
         reduction = reduce_ua_log(log)
+        arr_results = {}
+        status = reduction.status
+        verdict = reduction.verdict
+        reason = reduction.reason
+        if reduction.status == "candidate" and reduction.tracker_results.get("passed"):
+            async with self._arr_lock:
+                arr_results = await compare_item_with_arr(
+                    item_name=item["name"],
+                    ua_log=log,
+                    passed_trackers=reduction.tracker_results["passed"],
+                    cfg=cfg,
+                    secrets=self.secrets,
+                )
+            status = str(arr_results.get("status") or "manual_review")
+            verdict = "candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review")
+            reason = str(arr_results.get("reason") or reduction.reason)
+
         self.db.update_status(
             item_id,
-            reduction.status,
-            reduction.verdict,
-            reduction.reason,
+            status,
+            verdict,
+            reason,
             mapped_path=mapped_path,
             ua_args=ua_args,
             ua_log=log,
             tracker_results=reduction.tracker_results,
+            arr_results=arr_results,
             next_check_at=None,
             increment_attempt=True,
         )

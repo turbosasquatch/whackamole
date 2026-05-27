@@ -41,6 +41,7 @@ class SafetyConfig:
     max_queue_size: int = 250
     max_concurrent_ua_jobs: int = 1
     min_seconds_between_ua_jobs: int = 120
+    arr_search_timeout_seconds: int = 45
     recheck_cooldown_hours: int = 24
     max_error_retries: int = 3
     error_backoff_minutes: List[int] = field(default_factory=lambda: [15, 60, 360])
@@ -189,4 +190,3 @@ def parse_path_mappings(value: str) -> List[PathMapping]:
 
 def format_path_mappings(mappings: List[PathMapping]) -> str:
     return "\n".join(f"{item.source} => {item.target}" for item in mappings)
-

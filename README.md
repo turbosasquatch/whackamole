@@ -1,10 +1,10 @@
 # Whackamole
 
-Whackamole watches completed torrents from [autobrr/qui](https://github.com/autobrr/qui), maps the torrent path into the path Upload Assistant can see, and runs Upload Assistant in site-check mode. The dashboard keeps the items that look worth uploading separate from blocked, errored, baseline, and ignored items.
+Whackamole watches completed torrents from [autobrr/qui](https://github.com/autobrr/qui), maps the torrent path into the path Upload Assistant can see, and runs Upload Assistant in site-check mode. When UA passes a tracker, Whackamole asks Sonarr or Radarr for read-only interactive search results and keeps only the items that look unique or like meaningful upgrades.
 
 This first build is deliberately recommendation-only: it does not upload anything for you.
 
-Whackamole treats Upload Assistant as the authority for tracker decisions. A tracker in the missing/upload-worthy bucket means UA passed that tracker after its rule and dupe checks; a tracker in the dupe or skipped buckets means UA blocked it for that reason.
+Whackamole treats Upload Assistant as the authority for tracker eligibility and duplicate checks. Sonarr/Radarr are used only as read-only comparison sources, with usenet results ignored.
 
 ## Safety Rails
 
@@ -12,6 +12,7 @@ Whackamole treats Upload Assistant as the authority for tracker decisions. A tra
 - Completed torrents are deduped by QUI instance ID and torrent hash.
 - Categories containing `cross` and tags containing `cross-seed` are excluded by default.
 - Only one Upload Assistant job runs at a time by default.
+- Arr comparisons are serialized and have a hard timeout.
 - Upload Assistant job starts are spaced by at least 120 seconds by default.
 - Errors back off at 15 minutes, 60 minutes, then 360 minutes.
 - The active queue is capped at 250 items by default.
@@ -47,6 +48,7 @@ Use [unraid/whackamole.xml](unraid/whackamole.xml) as the Docker template. Once 
 
 - QUI URL, instance ID, and API key
 - Upload Assistant URL and bearer token
+- Sonarr/Radarr URLs and API keys for upgrade comparison
 - Path mappings, usually one per line like:
 
 ```text

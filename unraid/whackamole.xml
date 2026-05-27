@@ -8,7 +8,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/turbosasquatch/whackamole/issues</Support>
   <Project>https://github.com/turbosasquatch/whackamole</Project>
-  <Overview>Whackamole watches completed torrents from QUI and asks Upload Assistant whether matching tracker uploads are missing. It keeps a dashboard of recommended upload candidates and stores API keys encrypted in /config.</Overview>
+  <Overview>Whackamole watches completed torrents from QUI, asks Upload Assistant whether tracker uploads pass checks, then uses read-only Sonarr/Radarr searches to flag unique or upgrade-worthy upload candidates. API keys are stored encrypted in /config.</Overview>
   <Category>Downloaders: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8383]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/turbosasquatch/whackamole/main/unraid/whackamole.xml</TemplateURL>

@@ -1,0 +1,146 @@
+from app.arr_compare import (
+    canonical_tracker,
+    evaluate_tracker_decisions,
+    parse_media_identity,
+    parse_release_traits,
+    release_is_equal_or_better,
+    summarize_decisions,
+)
+
+
+def test_tracker_aliases_match_ua_and_prowlarr_names():
+    assert canonical_tracker("IHD") == "IHD"
+    assert canonical_tracker("InfinityHD (API) (Prowlarr)") == "IHD"
+    assert canonical_tracker("Darkpeers (API) (Prowlarr)") == "DP"
+    assert canonical_tracker("upload.cx (API) (Prowlarr)") == "ULCX"
+    assert canonical_tracker("UnknownTracker") is None
+
+
+def test_release_traits_parse_resolution_source_hdr_audio_and_pack():
+    traits = parse_release_traits("Love.Island.All.Stars.S03.1080p.AMZN.WEB-DL.DDP2.0.H.264-Kitsune")
+
+    assert traits.resolution == "1080p"
+    assert traits.source == "web"
+    assert traits.hdr_rank == 0
+    assert traits.audio_channels == 2.0
+    assert traits.season == 3
+    assert traits.episode is None
+    assert traits.season_pack
+
+
+def test_release_traits_parse_hdr10plus_and_truehd_audio():
+    traits = parse_release_traits("Heretic.2024.2160p.BluRay.TrueHD.Atmos.7.1.DV.HDR10Plus.x265-MainFrame")
+
+    assert traits.resolution == "2160p"
+    assert traits.source == "bluray_encode"
+    assert traits.hdr_rank == 3
+    assert traits.audio_channels == 7.1
+
+
+def test_release_comparison_keeps_resolution_lanes_separate():
+    local = parse_release_traits("Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GRP")
+    remote = parse_release_traits("Movie.2024.2160p.WEB-DL.DDP5.1.HDR.H.265-GRP")
+
+    assert not release_is_equal_or_better(local, remote)
+
+
+def test_release_comparison_treats_hdr_and_audio_as_upgrades():
+    local = parse_release_traits("Movie.2024.1080p.WEB-DL.DDP5.1.HDR.H.265-GRP")
+    remote_sdr = parse_release_traits("Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GRP")
+    remote_stereo = parse_release_traits("Movie.2024.1080p.WEB-DL.DDP2.0.HDR.H.265-GRP")
+    remote_better = parse_release_traits("Movie.2024.1080p.WEB-DL.DDP7.1.DV.H.265-GRP")
+
+    assert not release_is_equal_or_better(local, remote_sdr)
+    assert not release_is_equal_or_better(local, remote_stereo)
+    assert release_is_equal_or_better(local, remote_better)
+
+
+def test_season_pack_beats_episode_only_results():
+    local_pack = parse_release_traits("Show.S03.1080p.WEB-DL.DDP2.0.H.264-GRP")
+    remote_episode = parse_release_traits("Show.S03E01.1080p.WEB-DL.DDP2.0.H.264-GRP")
+    local_episode = parse_release_traits("Show.S03E01.1080p.WEB-DL.DDP2.0.H.264-GRP")
+    remote_pack = parse_release_traits("Show.S03.1080p.WEB-DL.DDP2.0.H.264-GRP")
+
+    assert not release_is_equal_or_better(local_pack, remote_episode)
+    assert release_is_equal_or_better(local_episode, remote_pack)
+
+
+def test_tracker_decisions_filter_usenet_and_block_equal_torrent():
+    local = parse_release_traits("Heretic.2024.2160p.BluRay.TrueHD.Atmos.7.1.DV.HDR10Plus.x265-MainFrame")
+    releases = [
+        {
+            "protocol": "usenet",
+            "indexer": "NinjaCentral (Prowlarr)",
+            "title": "Heretic.2024.2160p.BluRay.TrueHD.Atmos.7.1.DV.HDR10Plus.x265-MainFrame",
+        },
+        {
+            "protocol": "torrent",
+            "indexer": "upload.cx (API) (Prowlarr)",
+            "title": "Heretic.2024.2160p.BluRay.TrueHD.Atmos.7.1.DV.HDR10Plus.x265-MainFrame.mkv",
+            "quality": {"quality": {"name": "Bluray-2160p"}},
+            "seeders": 4,
+        },
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["ULCX"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "upload.cx (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "blocked"
+    assert decisions[0]["best_release"]["title"].startswith("Heretic")
+
+
+def test_tracker_decisions_candidate_when_only_lower_audio_exists():
+    local = parse_release_traits("Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP")
+    releases = [
+        {
+            "protocol": "torrent",
+            "indexer": "Darkpeers (API) (Prowlarr)",
+            "title": "Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-OTHER",
+        }
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["DP"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "Darkpeers (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "candidate"
+    assert summarize_decisions(decisions)[0] == "candidate"
+
+
+def test_tracker_decisions_unknown_alias_manual_review():
+    local = parse_release_traits("Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP")
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["MYSTERY"],
+        local_traits=local,
+        releases=[],
+        configured_indexers=[],
+    )
+
+    assert decisions[0]["status"] == "manual_review"
+    assert summarize_decisions(decisions)[0] == "manual_review"
+
+
+def test_parse_media_identity_uses_ua_ids():
+    log = """
+    Title: Love Island: All Stars (2024)
+    Category: TV
+    TMDB: https://www.themoviedb.org/tv/243754
+    TVDB: https://www.thetvdb.com/?id=444348&tab=series
+    IMDB: https://www.imdb.com/title/tt28959685
+    """
+
+    identity = parse_media_identity(log, "Love.Island.All.Stars.S03.1080p.AMZN.WEB-DL.DDP2.0.H.264-Kitsune")
+
+    assert identity.kind == "sonarr"
+    assert identity.tvdb_id == 444348
+    assert identity.tmdb_id == 243754
+    assert identity.season == 3
+    assert identity.episode is None

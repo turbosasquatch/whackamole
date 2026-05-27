@@ -91,3 +91,66 @@ class UploadAssistantClient:
 
     def _headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.bearer_token or ''}"}
+
+
+class BaseArrClient:
+    def __init__(self, url: str, api_key: Optional[str], timeout_seconds: int = 45) -> None:
+        self.url = url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
+
+    async def system_status(self) -> Dict[str, Any]:
+        return await self._get("/api/v3/system/status")
+
+    async def list_indexers(self) -> List[Dict[str, Any]]:
+        data = await self._get("/api/v3/indexer")
+        return data if isinstance(data, list) else []
+
+    async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        timeout = httpx.Timeout(self.timeout_seconds, connect=min(10, self.timeout_seconds))
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{self.url}{path}", headers=self._headers(), params=params)
+            response.raise_for_status()
+            return response.json()
+
+    def _headers(self) -> Dict[str, str]:
+        return {"X-Api-Key": self.api_key or ""}
+
+
+class SonarrClient(BaseArrClient):
+    async def list_series(self) -> List[Dict[str, Any]]:
+        data = await self._get("/api/v3/series")
+        return data if isinstance(data, list) else []
+
+    async def list_episodes(self, series_id: int, season_number: Optional[int] = None) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {"seriesId": series_id}
+        if season_number is not None:
+            params["seasonNumber"] = season_number
+        data = await self._get("/api/v3/episode", params=params)
+        return data if isinstance(data, list) else []
+
+    async def search_releases(
+        self,
+        *,
+        series_id: Optional[int] = None,
+        season_number: Optional[int] = None,
+        episode_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {}
+        if episode_id is not None:
+            params["episodeId"] = episode_id
+        else:
+            params["seriesId"] = series_id
+            params["seasonNumber"] = season_number
+        data = await self._get("/api/v3/release", params=params)
+        return data if isinstance(data, list) else []
+
+
+class RadarrClient(BaseArrClient):
+    async def list_movies(self) -> List[Dict[str, Any]]:
+        data = await self._get("/api/v3/movie")
+        return data if isinstance(data, list) else []
+
+    async def search_releases(self, movie_id: int) -> List[Dict[str, Any]]:
+        data = await self._get("/api/v3/release", params={"movieId": movie_id})
+        return data if isinstance(data, list) else []

@@ -303,6 +303,7 @@ tr:last-child td {
 }
 
 .status-blocked,
+.status-manual_review,
 .status-baseline,
 .status-ignored {
   background: #efede8;
@@ -408,20 +409,39 @@ dd {
   font-weight: 800;
 }
 
-.tracker-links {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.arr-decisions {
+  display: grid;
+  gap: 10px;
 }
 
-.tracker-links a {
-  background: #fff;
+.arr-decision {
+  background: #f8f7f3;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--accent-dark);
-  font-size: 12px;
-  font-weight: 700;
-  padding: 2px 8px;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.arr-decision.candidate {
+  border-color: #a8d8aa;
+}
+
+.arr-decision.blocked {
+  border-color: #cfc8ba;
+}
+
+.arr-decision.manual_review {
+  border-color: #d9b45f;
+}
+
+.arr-decision span,
+.release-match {
+  color: var(--muted);
+}
+
+.release-match {
+  font-size: 13px;
 }
 
 .settings {

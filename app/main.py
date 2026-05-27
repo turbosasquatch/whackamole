@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette import status
 
-from app.clients import QuiClient, UploadAssistantClient
+from app.clients import QuiClient, RadarrClient, SonarrClient, UploadAssistantClient
 from app.config import (
     AppConfig,
     ConfigManager,
@@ -27,7 +27,6 @@ from app.config import (
 from app.database import Database
 from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
-from app.tracker_links import tracker_links
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -60,9 +59,12 @@ def _config_dir() -> str:
 def _row_dict(row: Any) -> Dict[str, Any]:
     item = dict(row)
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
+    arr_result = _arr_result(item.get("arr_results"))
     item["tracker_results"] = tracker_groups
     item["tracker_buckets"] = _tracker_bucket_items(tracker_groups)
     item["tracker_summary"] = _tracker_summary(tracker_groups)
+    item["arr_result"] = arr_result
+    item["arr_summary"] = _arr_summary(arr_result)
     return item
 
 
@@ -102,7 +104,6 @@ def _tracker_bucket_items(groups: Dict[str, List[str]]) -> Dict[str, List[Dict[s
         bucket: [
             {
                 "name": tracker,
-                "links": tracker_links(tracker),
             }
             for tracker in groups.get(bucket, [])
         ]
@@ -122,6 +123,31 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
         for bucket in TRACKER_BUCKETS
         if groups.get(bucket)
     ]
+    return " | ".join(parts)
+
+
+def _arr_result(value: Any) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _arr_summary(result: Dict[str, Any]) -> str:
+    decisions = result.get("decisions")
+    if not isinstance(decisions, list) or not decisions:
+        return ""
+    valid = [str(item.get("tracker")) for item in decisions if item.get("status") == "candidate"]
+    blocked = [str(item.get("tracker")) for item in decisions if item.get("status") == "blocked"]
+    manual = [str(item.get("tracker")) for item in decisions if item.get("status") == "manual_review"]
+    parts = []
+    if valid:
+        parts.append(f"Valid: {', '.join(valid)}")
+    if blocked:
+        parts.append(f"Equal/better exists: {', '.join(blocked)}")
+    if manual:
+        parts.append(f"Manual review: {', '.join(manual)}")
     return " | ".join(parts)
 
 
@@ -184,6 +210,7 @@ async def dashboard(request: Request, view: str = "active") -> HTMLResponse:
         "active": ["queued", "deferred", "checking", "error"],
         "candidates": ["candidate"],
         "blocked": ["blocked"],
+        "manual": ["manual_review"],
         "baseline": ["baseline"],
         "ignored": ["ignored"],
         "all": [],
@@ -253,6 +280,7 @@ async def save_config(
     max_queue_size: str = Form("250"),
     max_concurrent_ua_jobs: str = Form("1"),
     min_seconds_between_ua_jobs: str = Form("120"),
+    arr_search_timeout_seconds: str = Form("45"),
     recheck_cooldown_hours: str = Form("24"),
     max_error_retries: str = Form("3"),
     error_backoff_minutes: str = Form("15, 60, 360"),
@@ -289,6 +317,11 @@ async def save_config(
         min_seconds_between_ua_jobs,
         cfg.safety.min_seconds_between_ua_jobs,
         minimum=0,
+    )
+    cfg.safety.arr_search_timeout_seconds = _as_int(
+        arr_search_timeout_seconds,
+        cfg.safety.arr_search_timeout_seconds,
+        minimum=5,
     )
     cfg.safety.recheck_cooldown_hours = _as_int(recheck_cooldown_hours, cfg.safety.recheck_cooldown_hours, minimum=1)
     cfg.safety.max_error_retries = _as_int(max_error_retries, cfg.safety.max_error_retries, minimum=0)
@@ -338,6 +371,28 @@ async def probe_config(request: Request) -> HTMLResponse:
             results.append({"name": "Upload Assistant", "state": "ok", "detail": detail})
         except Exception as exc:
             results.append({"name": "Upload Assistant", "state": "error", "detail": _short_error(exc)})
+
+    if cfg.sonarr.url:
+        try:
+            client = SonarrClient(cfg.sonarr.url, secrets.get("sonarr_api_key"), cfg.safety.arr_search_timeout_seconds)
+            status_payload = await client.system_status()
+            indexers = await client.list_indexers() if secrets.has("sonarr_api_key") else []
+            torrent_count = sum(1 for indexer in indexers if str(indexer.get("protocol", "")).lower() == "torrent")
+            detail = f"Connected to {status_payload.get('appName', 'Sonarr')}. {torrent_count} torrent indexer(s)."
+            results.append({"name": "Sonarr", "state": "ok", "detail": detail})
+        except Exception as exc:
+            results.append({"name": "Sonarr", "state": "error", "detail": _short_error(exc)})
+
+    if cfg.radarr.url:
+        try:
+            client = RadarrClient(cfg.radarr.url, secrets.get("radarr_api_key"), cfg.safety.arr_search_timeout_seconds)
+            status_payload = await client.system_status()
+            indexers = await client.list_indexers() if secrets.has("radarr_api_key") else []
+            torrent_count = sum(1 for indexer in indexers if str(indexer.get("protocol", "")).lower() == "torrent")
+            detail = f"Connected to {status_payload.get('appName', 'Radarr')}. {torrent_count} torrent indexer(s)."
+            results.append({"name": "Radarr", "state": "ok", "detail": detail})
+        except Exception as exc:
+            results.append({"name": "Radarr", "state": "error", "detail": _short_error(exc)})
 
     if not results:
         results.append({"name": "Configuration", "state": "idle", "detail": "Add URLs and saved keys before probing."})

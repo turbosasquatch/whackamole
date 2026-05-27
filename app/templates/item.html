@@ -81,13 +81,6 @@
                   {% for tracker in trackers %}
                     <li>
                       <span class="tracker-name">{{ tracker.name }}</span>
-                      {% if tracker.links %}
-                        <span class="tracker-links">
-                          {% for link in tracker.links %}
-                            <a href="{{ link.url }}" target="_blank" rel="noreferrer">{{ link.label }}</a>
-                          {% endfor %}
-                        </span>
-                      {% endif %}
                     </li>
                   {% endfor %}
                 </ul>
@@ -105,6 +98,53 @@
       <dd>{{ item.next_check_at | datetime }}</dd>
     </dl>
   </section>
+
+  {% if item.arr_result %}
+    <section class="details">
+      <h2>Arr Comparison</h2>
+      <dl>
+        <dt>Status</dt>
+        <dd>{{ item.arr_result.status or "-" }}</dd>
+        <dt>Reason</dt>
+        <dd>{{ item.arr_result.reason or "-" }}</dd>
+        <dt>Source</dt>
+        <dd>{{ item.arr_result.source or "-" }}</dd>
+        <dt>Local traits</dt>
+        <dd>
+          {% set traits = item.arr_result.local_traits or {} %}
+          {{ traits.resolution or "unknown resolution" }} ·
+          {{ traits.source_label or traits.source or "unknown source" }} ·
+          {{ traits.hdr_label or "SDR" }} ·
+          {{ "%.1f"|format(traits.audio_channels or 0) }} audio
+          {% if traits.season_pack %}
+            · Season pack
+          {% elif traits.season and traits.episode %}
+            · S{{ "%02d"|format(traits.season) }}E{{ "%02d"|format(traits.episode) }}
+          {% endif %}
+        </dd>
+        <dt>Tracker decisions</dt>
+        <dd>
+          <div class="arr-decisions">
+            {% for decision in item.arr_result.decisions or [] %}
+              <div class="arr-decision {{ decision.status }}">
+                <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
+                <span>{{ decision.reason }}</span>
+                {% if decision.best_release %}
+                  <div class="release-match">
+                    <b>Best match:</b> {{ decision.best_release.title }}
+                    {% if decision.best_release.quality %} · {{ decision.best_release.quality }}{% endif %}
+                    {% if decision.best_release.seeders is not none %} · {{ decision.best_release.seeders }} seeders{% endif %}
+                  </div>
+                {% endif %}
+              </div>
+            {% else %}
+              <span class="muted">No Arr comparison recorded.</span>
+            {% endfor %}
+          </div>
+        </dd>
+      </dl>
+    </section>
+  {% endif %}
 
   <section class="details">
     <h2>UA Log</h2>

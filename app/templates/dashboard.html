@@ -21,6 +21,7 @@
     ("active", "Active", ["queued", "deferred", "checking", "error"]),
     ("candidates", "Candidates", ["candidate"]),
     ("blocked", "Blocked", ["blocked"]),
+    ("manual", "Manual Review", ["manual_review"]),
     ("baseline", "Baseline", ["baseline"]),
     ("ignored", "Ignored", ["ignored"]),
     ("all", "All", [])
@@ -65,6 +66,9 @@
               <div class="muted">{{ item.reason }}</div>
               {% if item.tracker_summary %}
                 <div class="tracker-summary">{{ item.tracker_summary }}</div>
+              {% endif %}
+              {% if item.arr_summary %}
+                <div class="tracker-summary">{{ item.arr_summary }}</div>
               {% endif %}
             {% else %}
               <span class="muted">-</span>
