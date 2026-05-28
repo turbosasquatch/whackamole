@@ -193,3 +193,45 @@ def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypa
         assert log.text == "Trackers passed all checks: IHD"
         assert log.headers["content-type"].startswith("text/plain")
         assert missing.status_code == 404
+
+
+def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "no-video",
+                "name": "Wild.At.Heart.S06.1080p.AMZN.WEB-DL.DD2.0.x264-NTb",
+                "category": "tv",
+                "tags": "",
+                "content_path": "/media/torrents/tv/Wild.At.Heart.S06.1080p.AMZN.WEB-DL.DD2.0.x264-NTb",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        reason = "UA could not find video files at the mapped path. Check the torrent path/mount or rerun after mover maintenance."
+        db.update_status(
+            item_id,
+            "manual_review",
+            "no_video_files",
+            reason,
+            ua_log="No Video files found",
+            tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+            arr_results={},
+            increment_attempt=True,
+        )
+
+        api_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+        page_response = client.get(f"/items/{item_id}")
+
+        assert api_response.status_code == 200
+        assert api_response.json()["status"] == "manual_review"
+        assert api_response.json()["verdict"] == "no_video_files"
+        assert api_response.json()["reason"] == reason
+        assert page_response.status_code == 200
+        assert "no_video_files" in page_response.text
+        assert reason in page_response.text

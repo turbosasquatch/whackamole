@@ -419,6 +419,7 @@ class WhackamoleService:
         status = reduction.status
         verdict = reduction.verdict
         reason = reduction.reason
+        next_check_at = None
         if reduction.status == "candidate" and reduction.tracker_results.get("passed"):
             async with self._arr_lock:
                 arr_results = await compare_item_with_arr(
@@ -431,6 +432,8 @@ class WhackamoleService:
             status = str(arr_results.get("status") or "manual_review")
             verdict = "candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review")
             reason = str(arr_results.get("reason") or reduction.reason)
+        elif reduction.status == "error":
+            next_check_at = self._next_error_check(item["attempt_count"], None)
 
         self.db.update_status(
             item_id,
@@ -442,7 +445,7 @@ class WhackamoleService:
             ua_log=log,
             tracker_results=reduction.tracker_results,
             arr_results=arr_results,
-            next_check_at=None,
+            next_check_at=next_check_at,
             increment_attempt=True,
         )
 

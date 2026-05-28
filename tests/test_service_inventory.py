@@ -85,6 +85,14 @@ class IncrementalQuiClient:
         }
 
 
+class InterruptedUploadAssistantClient:
+    def __init__(self, _cfg, _bearer_token):
+        pass
+
+    async def execute_site_check(self, _path, _args, _session_id):
+        return "Received SIGTERM, shutting down gracefully...\nWeb UI server stopped\nShutdown complete"
+
+
 def test_poll_captures_support_inventory_without_queueing(tmp_path, monkeypatch):
     FakeQuiClient.calls = []
     monkeypatch.setattr("app.service.QuiClient", FakeQuiClient)
@@ -147,3 +155,39 @@ def test_incremental_poll_stops_after_all_known_page(tmp_path, monkeypatch):
     hashes = {row["hash"] for row in db.list_items([], limit=10)}
     assert IncrementalQuiClient.calls == [0]
     assert "should-not-fetch" not in hashes
+
+
+def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.service.UploadAssistantClient", InterruptedUploadAssistantClient)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    cfg.safety.error_backoff_minutes = [15, 60, 360]
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    db.insert_discovered(
+        1,
+        {
+            "hash": "interrupted",
+            "name": "Interrupted.Movie.2026.1080p.WEB-DL-GRP.mkv",
+            "category": "movies",
+            "tags": "",
+            "content_path": "/media/torrents/movies/Interrupted.Movie.2026.1080p.WEB-DL-GRP.mkv",
+            "progress": 1,
+        },
+        status="queued",
+        baseline=False,
+    )
+    item_id = int(db.list_items([], limit=1)[0]["id"])
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "error"
+    assert row["verdict"] == "ua_interrupted"
+    assert row["next_check_at"] is not None

@@ -8,6 +8,13 @@ from app.ua_logs import normalize_ua_log
 
 
 TRACKER_BUCKETS = ("passed", "dupe", "skipped", "error")
+INTERRUPTION_MARKERS = (
+    "received sigterm",
+    "web ui server stopped",
+    "shutdown complete",
+    "error during terminal reset",
+    "i/o operation on closed file",
+)
 
 
 @dataclass
@@ -73,6 +80,23 @@ def reduce_ua_log(log: str) -> UAReduction:
             status="blocked",
             verdict="no_tracker_passed",
             reason="No tracker passed UA checks.",
+            tracker_results=tracker_results,
+        )
+
+    if "no video files found" in lowered:
+        return UAReduction(
+            status="manual_review",
+            verdict="no_video_files",
+            reason="UA could not find video files at the mapped path. Check the torrent path/mount or rerun after mover maintenance.",
+            tracker_results=tracker_results,
+        )
+
+    if any(marker in lowered for marker in INTERRUPTION_MARKERS):
+        tracker_results["error"] = ["UA"]
+        return UAReduction(
+            status="error",
+            verdict="ua_interrupted",
+            reason="UA was interrupted before producing a clear decision. Whackamole will retry after backoff.",
             tracker_results=tracker_results,
         )
 
