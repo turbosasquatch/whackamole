@@ -510,7 +510,7 @@ async def save_config(
     max_queue_size: str = Form("250"),
     max_concurrent_ua_jobs: str = Form("1"),
     min_seconds_between_ua_jobs: str = Form("120"),
-    arr_search_timeout_seconds: str = Form("45"),
+    arr_search_timeout_seconds: str = Form("300"),
     recheck_cooldown_hours: str = Form("24"),
     max_error_retries: str = Form("3"),
     error_backoff_minutes: str = Form("15, 60, 360"),

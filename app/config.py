@@ -8,6 +8,11 @@ import yaml
 from cryptography.fernet import Fernet, InvalidToken
 
 
+CURRENT_CONFIG_VERSION = 2
+OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 45
+DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 300
+
+
 @dataclass
 class QuiConfig:
     url: str = ""
@@ -41,7 +46,7 @@ class SafetyConfig:
     max_queue_size: int = 250
     max_concurrent_ua_jobs: int = 1
     min_seconds_between_ua_jobs: int = 120
-    arr_search_timeout_seconds: int = 45
+    arr_search_timeout_seconds: int = DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS
     recheck_cooldown_hours: int = 24
     max_error_retries: int = 3
     error_backoff_minutes: List[int] = field(default_factory=lambda: [15, 60, 360])
@@ -63,7 +68,7 @@ class OptionalEndpoint:
 
 @dataclass
 class AppConfig:
-    config_version: int = 1
+    config_version: int = CURRENT_CONFIG_VERSION
     host: str = "0.0.0.0"
     port: int = 8383
     qui: QuiConfig = field(default_factory=QuiConfig)
@@ -97,6 +102,7 @@ class ConfigManager:
             for item in cfg.path_mappings
             if isinstance(item, (dict, PathMapping))
         ] or [PathMapping()]
+        self._migrate(cfg)
         return cfg
 
     def save(self, config: AppConfig) -> None:
@@ -114,6 +120,12 @@ class ConfigManager:
                 self._merge_dataclass(current, value)
             else:
                 setattr(target, key, value)
+
+    def _migrate(self, cfg: AppConfig) -> None:
+        version = int(cfg.config_version or 1)
+        if version < 2 and cfg.safety.arr_search_timeout_seconds == OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS:
+            cfg.safety.arr_search_timeout_seconds = DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS
+        cfg.config_version = CURRENT_CONFIG_VERSION
 
 
 class SecretStore:
