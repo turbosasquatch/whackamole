@@ -133,11 +133,16 @@
           {{ traits.resolution or "unknown resolution" }} ·
           {{ traits.source_label or traits.source or "unknown source" }} ·
           {{ traits.hdr_label or "SDR" }} ·
-          {{ "%.1f"|format(traits.audio_channels or 0) }} audio
+          {{ traits.audio_format or "unknown audio" }}
+          {% if traits.audio_channels %} {{ "%.1f"|format(traits.audio_channels) }}{% endif %} ·
+          {{ traits.codec or "unknown codec" }}
           {% if traits.season_pack %}
             · Season pack
           {% elif traits.season and traits.episode %}
             · S{{ "%02d"|format(traits.season) }}E{{ "%02d"|format(traits.episode) }}
+          {% endif %}
+          {% if traits.movie_versions %}
+            · {{ traits.movie_versions | join(", ") }}
           {% endif %}
         </dd>
         <dt>Tracker decisions</dt>

@@ -20,9 +20,12 @@ def test_release_traits_parse_resolution_source_hdr_audio_and_pack():
     traits = parse_release_traits("Love.Island.All.Stars.S03.1080p.AMZN.WEB-DL.DDP2.0.H.264-Kitsune")
 
     assert traits.resolution == "1080p"
+    assert traits.scan_type == "progressive"
     assert traits.source == "web"
     assert traits.hdr_rank == 0
+    assert traits.audio_format == "DD+"
     assert traits.audio_channels == 2.0
+    assert traits.codec == "AVC"
     assert traits.season == 3
     assert traits.episode is None
     assert traits.season_pack
@@ -33,8 +36,68 @@ def test_release_traits_parse_hdr10plus_and_truehd_audio():
 
     assert traits.resolution == "2160p"
     assert traits.source == "bluray_encode"
-    assert traits.hdr_rank == 3
+    assert traits.hdr_rank == 4
+    assert traits.hdr_label == "DV/HDR fallback"
+    assert traits.audio_format == "TrueHD Atmos"
     assert traits.audio_channels == 7.1
+    assert traits.codec == "HEVC"
+
+
+def test_release_traits_parse_1080i_bluray_remux_dts_hd_ma():
+    traits = parse_release_traits("Maxine.S01.BluRay.1080i.DTS-HD.MA.5.1.AVC.REMUX")
+
+    assert traits.resolution == "1080i"
+    assert traits.scan_type == "interlaced"
+    assert traits.source == "bluray_remux"
+    assert traits.audio_format == "DTS-HD MA"
+    assert traits.audio_format_rank > 0
+    assert traits.audio_channels == 5.1
+    assert traits.codec == "AVC"
+    assert traits.season == 1
+    assert traits.episode is None
+    assert traits.season_pack
+
+
+def test_audio_format_ranking_uses_trash_style_order():
+    truehd_atmos = parse_release_traits("Movie.2024.1080p.BluRay.TrueHD.Atmos.7.1.H.264-GRP")
+    dtsx = parse_release_traits("Movie.2024.1080p.BluRay.DTS-X.7.1.H.264-GRP")
+    ddp_atmos = parse_release_traits("Movie.2024.1080p.WEB-DL.DDP.Atmos.5.1.H.264-GRP")
+    dts_hd_ma = parse_release_traits("Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.H.264-GRP")
+    aac = parse_release_traits("Movie.2024.1080p.WEB-DL.AAC.2.0.H.264-GRP")
+    dd = parse_release_traits("Movie.2024.1080p.WEB-DL.DD.2.0.H.264-GRP")
+    opus = parse_release_traits("Movie.2024.1080p.WEB-DL.Opus.2.0.H.264-GRP")
+
+    assert truehd_atmos.audio_format_rank > dtsx.audio_format_rank
+    assert dtsx.audio_format_rank > ddp_atmos.audio_format_rank
+    assert ddp_atmos.audio_format_rank > dts_hd_ma.audio_format_rank
+    assert dts_hd_ma.audio_format_rank > aac.audio_format_rank
+    assert aac.audio_format_rank > dd.audio_format_rank
+    assert dd.audio_format_rank > opus.audio_format_rank
+
+
+def test_hdr_formats_parse_distinct_labels():
+    fallback = parse_release_traits("Movie.2024.2160p.WEB-DL.DV.HDR10Plus.DDP5.1.H.265-GRP")
+    dv_only = parse_release_traits("Movie.2024.2160p.WEB-DL.DV.DDP5.1.H.265-GRP")
+    hdr10plus = parse_release_traits("Movie.2024.2160p.WEB-DL.HDR10P.DDP5.1.H.265-GRP")
+    hdr = parse_release_traits("Movie.2024.2160p.WEB-DL.HDR.DDP5.1.H.265-GRP")
+    sdr = parse_release_traits("Movie.2024.2160p.WEB-DL.DDP5.1.H.265-GRP")
+
+    assert [fallback.hdr_label, dv_only.hdr_label, hdr10plus.hdr_label, hdr.hdr_label, sdr.hdr_label] == [
+        "DV/HDR fallback",
+        "DV only",
+        "HDR10+",
+        "HDR",
+        "SDR",
+    ]
+    assert fallback.hdr_rank > dv_only.hdr_rank > hdr10plus.hdr_rank > hdr.hdr_rank > sdr.hdr_rank
+
+
+def test_movie_versions_parse_stable_variety_set():
+    traits = parse_release_traits(
+        "Movie.2024.2160p.BluRay.4K.Remaster.IMAX.Enhanced.Open.Matte.TrueHD.7.1.H.265-GRP"
+    )
+
+    assert traits.movie_versions == ("4K Remaster", "IMAX Enhanced", "Open Matte")
 
 
 def test_release_comparison_keeps_resolution_lanes_separate():
@@ -53,6 +116,32 @@ def test_release_comparison_treats_hdr_and_audio_as_upgrades():
     assert not release_is_equal_or_better(local, remote_sdr)
     assert not release_is_equal_or_better(local, remote_stereo)
     assert release_is_equal_or_better(local, remote_better)
+
+
+def test_release_comparison_treats_1080p_as_better_than_1080i():
+    local_1080i = parse_release_traits("Movie.2024.1080i.BluRay.DTS-HD.MA.5.1.AVC.REMUX-GRP")
+    remote_1080p = parse_release_traits("Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.AVC.REMUX-GRP")
+
+    assert release_is_equal_or_better(local_1080i, remote_1080p)
+    assert not release_is_equal_or_better(remote_1080p, local_1080i)
+
+
+def test_release_comparison_treats_audio_format_as_upgrade():
+    local = parse_release_traits("Movie.2024.1080p.BluRay.DD.5.1.H.264-GRP")
+    remote_better_format = parse_release_traits("Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.H.264-GRP")
+    remote_worse_format = parse_release_traits("Movie.2024.1080p.BluRay.AAC.5.1.H.264-GRP")
+
+    assert release_is_equal_or_better(local, remote_better_format)
+    assert not release_is_equal_or_better(remote_better_format, remote_worse_format)
+
+
+def test_release_comparison_treats_movie_versions_as_variety_lanes():
+    local_theatrical = parse_release_traits("Movie.2024.1080p.BluRay.Theatrical.Cut.TrueHD.5.1.H.264-GRP")
+    remote_special = parse_release_traits("Movie.2024.1080p.BluRay.Special.Edition.TrueHD.5.1.H.264-GRP")
+    remote_theatrical = parse_release_traits("Movie.2024.1080p.BluRay.Theatrical.Cut.TrueHD.5.1.H.264-OTHER")
+
+    assert not release_is_equal_or_better(local_theatrical, remote_special)
+    assert release_is_equal_or_better(local_theatrical, remote_theatrical)
 
 
 def test_season_pack_beats_episode_only_results():

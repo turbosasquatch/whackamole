@@ -29,19 +29,59 @@ SOURCE_LABELS = {
 }
 
 HDR_LABELS = {
-    3: "DV/HDR10+",
-    2: "HDR",
+    4: "DV/HDR fallback",
+    3: "DV only",
+    2: "HDR10+",
+    1: "HDR",
     0: "SDR",
 }
+
+AUDIO_FORMAT_RANKS = {
+    "Opus": 1,
+    "MP3": 2,
+    "DD": 3,
+    "AAC": 4,
+    "DTS": 5,
+    "DTS-ES": 6,
+    "DD+": 7,
+    "DTS-HD HRA": 8,
+    "PCM": 9,
+    "FLAC": 10,
+    "DTS-HD MA": 11,
+    "TrueHD": 12,
+    "DD+ Atmos": 13,
+    "Atmos": 14,
+    "DTS:X": 15,
+    "TrueHD Atmos": 16,
+}
+
+MOVIE_VERSION_PATTERNS: Sequence[Tuple[str, str]] = (
+    ("4K Remaster", r"\b4k[ ._-]?remaster(?:ed)?\b"),
+    ("IMAX Enhanced", r"\bimax[ ._-]?enhanced\b"),
+    ("Criterion Collection", r"\bcriterion\b"),
+    ("Masters of Cinema", r"\bmasters?[ ._-]?of[ ._-]?cinema\b"),
+    ("Vinegar Syndrome", r"\bvinegar[ ._-]?syndrome\b"),
+    ("Special Edition", r"\bspecial[ ._-]?edition\b"),
+    ("Theatrical Cut", r"\btheatrical(?:[ ._-]?cut)?\b"),
+    ("Open Matte", r"\bopen[ ._-]?matte\b"),
+    ("Hybrid", r"\bhybrid\b"),
+    ("Remaster", r"\bremaster(?:ed)?\b"),
+    ("IMAX", r"\bimax\b"),
+)
 
 
 @dataclass
 class ReleaseTraits:
     title: str
     resolution: str = ""
+    scan_type: str = ""
     source: str = "other"
     hdr_rank: int = 0
+    audio_format: str = ""
+    audio_format_rank: int = 0
     audio_channels: float = 0.0
+    codec: str = ""
+    movie_versions: Tuple[str, ...] = ()
     season: Optional[int] = None
     episode: Optional[int] = None
     season_pack: bool = False
@@ -168,12 +208,19 @@ def parse_release_traits(title: str, quality_name: str = "") -> ReleaseTraits:
     text = f"{title} {quality_name}".replace("_", ".")
     normalized = text.lower()
     season, episode = _parse_season_episode(text)
+    resolution, scan_type = _parse_resolution(normalized)
+    audio_format, audio_format_rank = _parse_audio_format(normalized)
     return ReleaseTraits(
         title=title,
-        resolution=_parse_resolution(normalized),
+        resolution=resolution,
+        scan_type=scan_type,
         source=_parse_source(normalized),
         hdr_rank=_parse_hdr_rank(normalized),
+        audio_format=audio_format,
+        audio_format_rank=audio_format_rank,
         audio_channels=_parse_audio_channels(text),
+        codec=_parse_codec(normalized),
+        movie_versions=_parse_movie_versions(normalized),
         season=season,
         episode=episode,
         season_pack=season is not None and episode is None,
@@ -233,7 +280,7 @@ def evaluate_tracker_decisions(
         same_lane = [
             (release, traits)
             for release, traits in same_lane
-            if traits.resolution == local_traits.resolution and traits.source == local_traits.source
+            if _same_release_lane(local_traits, traits)
         ]
         blockers = [
             (release, traits)
@@ -282,13 +329,18 @@ def summarize_decisions(decisions: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
 
 
 def release_is_equal_or_better(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
-    if local.resolution != remote.resolution or local.source != remote.source:
+    if not _same_release_lane(local, remote):
         return False
     if local.season_pack and not remote.season_pack:
         return False
     if remote.season_pack and not local.season_pack:
         return True
-    return remote.hdr_rank >= local.hdr_rank and remote.audio_channels >= local.audio_channels
+    return (
+        _scan_rank(remote) >= _scan_rank(local)
+        and remote.hdr_rank >= local.hdr_rank
+        and remote.audio_format_rank >= local.audio_format_rank
+        and remote.audio_channels >= local.audio_channels
+    )
 
 
 def canonical_tracker(name: str) -> Optional[str]:
@@ -401,9 +453,12 @@ def _extract_title_year(text: str, fallback: str) -> Tuple[str, Optional[int]]:
     return title, year
 
 
-def _parse_resolution(text: str) -> str:
-    match = re.search(r"\b(2160|1080|720|480)p\b", text)
-    return f"{match.group(1)}p" if match else ""
+def _parse_resolution(text: str) -> Tuple[str, str]:
+    match = re.search(r"\b(2160|1080|720|480)([pi])\b", text)
+    if not match:
+        return "", ""
+    scan_type = "progressive" if match.group(2) == "p" else "interlaced"
+    return f"{match.group(1)}{match.group(2)}", scan_type
 
 
 def _parse_source(text: str) -> str:
@@ -417,11 +472,45 @@ def _parse_source(text: str) -> str:
 
 
 def _parse_hdr_rank(text: str) -> int:
-    if re.search(r"\b(?:dv|dovi|dolby[ ._-]?vision|hdr10\+|hdr10plus)\b", text):
+    has_dv = bool(re.search(r"\b(?:dv|dovi|dolby[ ._-]?vision)\b", text))
+    has_hdr10plus = bool(re.search(r"(?:\bhdr10\+|\bhdr10plus\b|\bhdr10p\b)", text))
+    has_hdr = bool(re.search(r"\b(?:hdr|hdr10)\b", text))
+    if has_dv and (has_hdr10plus or has_hdr):
+        return 4
+    if has_dv:
         return 3
-    if re.search(r"\b(?:hdr|hdr10)\b", text):
+    if has_hdr10plus:
         return 2
+    if has_hdr:
+        return 1
     return 0
+
+
+def _parse_audio_format(text: str) -> Tuple[str, int]:
+    checks = (
+        ("TrueHD Atmos", r"\btrue[ ._-]?hd(?=[ ._-]?\d|\b)", r"\batmos\b"),
+        ("DTS:X", r"\bdts[ ._:-]?x\b", None),
+        ("DD+ Atmos", r"\b(?:ddp|dd\+|eac3|e[ ._-]?ac[ ._-]?3|dolby[ ._-]?digital[ ._-]?plus)(?=[ ._-]?\d|\b)", r"\batmos\b"),
+        ("Atmos", r"\batmos\b", None),
+        ("TrueHD", r"\btrue[ ._-]?hd(?=[ ._-]?\d|\b)", None),
+        ("DTS-HD MA", r"\bdts[ ._-]?hd[ ._-]?ma\b|\bdts[ ._-]?ma\b", None),
+        ("FLAC", r"\bflac(?=[ ._-]?\d|\b)", None),
+        ("PCM", r"\b(?:pcm|lpcm)(?=[ ._-]?\d|\b)", None),
+        ("DTS-HD HRA", r"\bdts[ ._-]?hd[ ._-]?hra\b", None),
+        ("DD+", r"\b(?:ddp|dd\+|eac3|e[ ._-]?ac[ ._-]?3|dolby[ ._-]?digital[ ._-]?plus)(?=[ ._-]?\d|\b)", None),
+        ("DTS-ES", r"\bdts[ ._-]?es\b", None),
+        ("DTS", r"\bdts(?=[ ._-]?\d|\b)", None),
+        ("AAC", r"\baac(?=[ ._-]?\d|\b)", None),
+        ("DD", r"\b(?:dd(?!p)|ac3|ac[ ._-]?3|dolby[ ._-]?digital)(?=[ ._-]?\d|\b)", None),
+        ("MP3", r"\bmp3(?=[ ._-]?\d|\b)", None),
+        ("Opus", r"\bopus(?=[ ._-]?\d|\b)", None),
+    )
+    for label, required, secondary in checks:
+        if re.search(required, text, flags=re.IGNORECASE) and (
+            secondary is None or re.search(secondary, text, flags=re.IGNORECASE)
+        ):
+            return label, AUDIO_FORMAT_RANKS[label]
+    return "", 0
 
 
 def _parse_audio_channels(title: str) -> float:
@@ -435,6 +524,30 @@ def _parse_audio_channels(title: str) -> float:
         if values:
             return max(values)
     return 0.0
+
+
+def _parse_codec(text: str) -> str:
+    if re.search(r"\b(?:vvc|h[ ._-]?266|x266)\b", text):
+        return "VVC"
+    if re.search(r"\b(?:av1)\b", text):
+        return "AV1"
+    if re.search(r"\b(?:hevc|h[ ._-]?265|x265)\b", text):
+        return "HEVC"
+    if re.search(r"\b(?:avc|h[ ._-]?264|x264)\b", text):
+        return "AVC"
+    return ""
+
+
+def _parse_movie_versions(text: str) -> Tuple[str, ...]:
+    versions: List[str] = []
+    for label, pattern in MOVIE_VERSION_PATTERNS:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            versions.append(label)
+    if "IMAX Enhanced" in versions and "IMAX" in versions:
+        versions.remove("IMAX")
+    if "4K Remaster" in versions and "Remaster" in versions:
+        versions.remove("Remaster")
+    return tuple(versions)
 
 
 def _parse_season_episode(title: str) -> Tuple[Optional[int], Optional[int]]:
@@ -460,10 +573,12 @@ def _best_release(items: Sequence[Tuple[Dict[str, Any], ReleaseTraits]]) -> Tupl
     return max(items, key=lambda item: _release_score(item[0], item[1]))
 
 
-def _release_score(release: Dict[str, Any], traits: ReleaseTraits) -> Tuple[int, int, float, int, int]:
+def _release_score(release: Dict[str, Any], traits: ReleaseTraits) -> Tuple[int, int, int, int, float, int, int]:
     return (
         1 if traits.season_pack else 0,
+        _scan_rank(traits),
         traits.hdr_rank,
+        traits.audio_format_rank,
         traits.audio_channels,
         int(release.get("seeders") or 0),
         int(release.get("size") or 0),
@@ -501,9 +616,31 @@ def _manual_decisions(trackers: Sequence[str], reason: str) -> List[Dict[str, An
 
 def _traits_payload(traits: ReleaseTraits) -> Dict[str, Any]:
     payload = asdict(traits)
+    payload["movie_versions"] = list(traits.movie_versions)
     payload["source_label"] = traits.source_label
     payload["hdr_label"] = traits.hdr_label
     return payload
+
+
+def _same_release_lane(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
+    return (
+        _resolution_height(local.resolution) == _resolution_height(remote.resolution)
+        and local.source == remote.source
+        and tuple(local.movie_versions) == tuple(remote.movie_versions)
+    )
+
+
+def _resolution_height(value: str) -> str:
+    match = re.match(r"(\d+)", value or "")
+    return match.group(1) if match else ""
+
+
+def _scan_rank(traits: ReleaseTraits) -> int:
+    if traits.scan_type == "progressive":
+        return 2
+    if traits.scan_type == "interlaced":
+        return 1
+    return 0
 
 
 def _media_payload(identity: MediaIdentity) -> Dict[str, Any]:
