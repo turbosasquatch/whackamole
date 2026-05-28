@@ -15,13 +15,16 @@ from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
 from app.nfo_policy import (
+    analyze_mediainfo,
     analyze_nfo,
     apply_release_group_policy,
     build_nfo_manual_result,
     decode_nfo_bytes,
     empty_check_results,
+    merge_nfo_support,
     merge_check_results,
     nfo_file_candidates,
+    video_file_payloads,
 )
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
@@ -375,66 +378,52 @@ class WhackamoleService:
             return
         check_results = empty_check_results()
 
-        self.db.update_check_stage(item_id, "nfo", "Checking NFO identity before UA.", check_results)
+        self.db.update_check_stage(item_id, "nfo", "Checking QUI MediaInfo identity before UA.", check_results)
         qui = QuiClient(cfg, self.secrets.get("qui_api_key"))
         try:
             torrent_files = await qui.list_torrent_files(str(item["hash"]))
-            nfo_candidates = nfo_file_candidates(torrent_files)
-            if not nfo_candidates:
-                nfo_result = build_nfo_manual_result(
-                    "nfo_missing",
-                    "No NFO file was found in the torrent file list.",
-                    torrent_files,
-                )
-                check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
-                self.db.update_status(
-                    item_id,
-                    "manual_review",
-                    nfo_result["verdict"],
-                    nfo_result["reason"],
-                    tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
-                    arr_results={},
-                    check_stage="done",
-                    check_results=check_results,
-                    increment_attempt=True,
-                )
-                return
-            if len(nfo_candidates) > 1:
-                nfo_result = build_nfo_manual_result(
-                    "nfo_ambiguous",
-                    "Multiple NFO files were found. Pick the correct release NFO before checking.",
-                    torrent_files,
-                )
-                nfo_result["candidates"] = [
-                    {"index": candidate["index"], "name": str(candidate.get("name") or "")}
-                    for candidate in nfo_candidates
-                ]
-                check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
-                self.db.update_status(
-                    item_id,
-                    "manual_review",
-                    nfo_result["verdict"],
-                    nfo_result["reason"],
-                    tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
-                    arr_results={},
-                    check_stage="done",
-                    check_results=check_results,
-                    increment_attempt=True,
-                )
-                return
-            nfo_file = nfo_candidates[0]
-            nfo_bytes = await qui.download_torrent_file(str(item["hash"]), int(nfo_file["index"]))
-            nfo_text = decode_nfo_bytes(nfo_bytes)
-            nfo_result = analyze_nfo(
+            video_files = video_file_payloads(torrent_files)
+            mediainfo_payloads = []
+            for video_file in video_files[:10]:
+                payload = await qui.torrent_file_mediainfo(str(item["hash"]), int(video_file["index"]))
+                payload.setdefault("fileIndex", int(video_file["index"]))
+                payload.setdefault("relativePath", str(video_file.get("name") or ""))
+                mediainfo_payloads.append(payload)
+            nfo_result = analyze_mediainfo(
                 item_name=str(item["name"] or ""),
                 files=torrent_files,
-                nfo_file=nfo_file,
-                nfo_text=nfo_text,
+                mediainfo_payloads=mediainfo_payloads,
             )
+            if len(video_files) > len(mediainfo_payloads):
+                nfo_result["mediainfo_truncated"] = True
+            nfo_candidates = nfo_file_candidates(torrent_files)
+            if len(nfo_candidates) == 1:
+                nfo_file = nfo_candidates[0]
+                nfo_bytes = await qui.download_torrent_file(str(item["hash"]), int(nfo_file["index"]))
+                nfo_text = decode_nfo_bytes(nfo_bytes)
+                nfo_support = analyze_nfo(
+                    item_name=str(item["name"] or ""),
+                    files=torrent_files,
+                    nfo_file=nfo_file,
+                    nfo_text=nfo_text,
+                )
+                nfo_result = merge_nfo_support(nfo_result, nfo_support)
+            elif len(nfo_candidates) > 1:
+                nfo_result["supporting_nfo"] = {
+                    "version": 1,
+                    "source": "nfo",
+                    "status": "manual_review",
+                    "verdict": "nfo_ambiguous",
+                    "reason": "Multiple NFO files were found. QUI MediaInfo was used as the primary identity check.",
+                    "candidates": [
+                        {"index": candidate["index"], "name": str(candidate.get("name") or "")}
+                        for candidate in nfo_candidates
+                    ],
+                }
         except Exception as exc:
             nfo_result = build_nfo_manual_result(
-                "nfo_unreadable",
-                f"Whackamole could not read the NFO through QUI: {str(exc)[:180]}",
+                "mediainfo_unavailable",
+                f"Whackamole could not read QUI MediaInfo: {str(exc)[:180]}",
                 [],
             )
             check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))

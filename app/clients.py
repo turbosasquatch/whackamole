@@ -111,6 +111,16 @@ class QuiClient:
                         raise ValueError(f"Torrent file exceeds {max_bytes} bytes")
         return bytes(content)
 
+    async def torrent_file_mediainfo(self, torrent_hash: str, file_index: int) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{self.config.qui.url.rstrip('/')}/api/instances/{self.config.qui.instance_id}/torrents/{torrent_hash}/files/{file_index}/mediainfo",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else {}
+
     def _headers(self) -> Dict[str, str]:
         return {"X-API-Key": self.api_key or ""}
 

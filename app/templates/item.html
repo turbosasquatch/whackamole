@@ -123,21 +123,37 @@
     <dl>
       <dt>Current stage</dt>
       <dd>{{ item.check_stage or "-" }}</dd>
-      <dt>NFO</dt>
+      <dt>MediaInfo / NFO</dt>
       <dd>
         {% set nfo = checks.nfo or {} %}
         <strong>{{ nfo.verdict or nfo.status or "-" }}</strong>
+        {% if nfo.source %}<div class="muted">Source: {{ nfo.source }}</div>{% endif %}
         {% if nfo.reason %}<div class="muted">{{ nfo.reason }}</div>{% endif %}
         {% if nfo.release_title %}<div>Release: {{ nfo.release_title }}</div>{% endif %}
         {% if nfo.release_group %}<div>Group: {{ nfo.release_group }}</div>{% endif %}
         {% if nfo.nfo_file %}<div class="path">{{ nfo.nfo_file.name }}</div>{% endif %}
+        {% if nfo.supporting_nfo %}
+          <div class="muted">NFO: {{ nfo.supporting_nfo.verdict or nfo.supporting_nfo.status }}</div>
+        {% endif %}
       </dd>
-      <dt>NFO video names</dt>
+      <dt>Reference video names</dt>
       <dd>
         {% if nfo.complete_names %}
           <ul class="file-list">
             {% for name in nfo.complete_names %}
               <li><span>{{ name }}</span></li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <span class="muted">-</span>
+        {% endif %}
+      </dd>
+      <dt>QUI MediaInfo</dt>
+      <dd>
+        {% if nfo.mediainfo_files %}
+          <ul class="file-list">
+            {% for media in nfo.mediainfo_files %}
+              <li><span>{{ media.name or ("File " ~ media.index) }}</span></li>
             {% endfor %}
           </ul>
         {% else %}

@@ -119,3 +119,19 @@ def test_qui_client_downloads_torrent_file_with_size_cap(monkeypatch):
 
     assert payload == b"nfo text"
     assert FakeAsyncClient.calls[0][0].endswith("/api/instances/1/torrents/abc123/files/4/download")
+
+
+def test_qui_client_fetches_torrent_file_mediainfo(monkeypatch):
+    FakeAsyncClient.responses = [{"fileIndex": 4, "relativePath": "Release/Release.mkv", "streams": []}]
+    FakeAsyncClient.calls = []
+    monkeypatch.setattr("app.clients.httpx.AsyncClient", FakeAsyncClient)
+
+    cfg = AppConfig()
+    cfg.qui.url = "http://qui.test"
+    cfg.qui.instance_id = 1
+    client = QuiClient(cfg, "token")
+
+    payload = asyncio.run(client.torrent_file_mediainfo("abc123", 4))
+
+    assert payload["fileIndex"] == 4
+    assert FakeAsyncClient.calls[0][0].endswith("/api/instances/1/torrents/abc123/files/4/mediainfo")

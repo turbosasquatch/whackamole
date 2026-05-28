@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -65,6 +66,7 @@ def video_file_payloads(files: Sequence[Mapping[str, Any]]) -> List[Dict[str, An
 def build_nfo_manual_result(verdict: str, reason: str, files: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     return {
         "version": 1,
+        "source": "nfo",
         "status": "manual_review",
         "verdict": verdict,
         "reason": reason,
@@ -96,6 +98,7 @@ def analyze_nfo(
     }
     base_result = {
         "version": 1,
+        "source": "nfo",
         "status": "passed",
         "verdict": "nfo_passed",
         "reason": "NFO title matches the torrent release.",
@@ -141,6 +144,74 @@ def analyze_nfo(
         "torrent_root": expected_root,
         "flags": flags,
     }
+
+
+def analyze_mediainfo(
+    *,
+    item_name: str,
+    files: Sequence[Mapping[str, Any]],
+    mediainfo_payloads: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    video_files = video_file_payloads(files)
+    expected_root = _torrent_root_name(files) or item_name
+    release_group = extract_release_group(expected_root or item_name)
+    media_files = [_mediainfo_file_payload(payload) for payload in mediainfo_payloads]
+    base_result = {
+        "version": 1,
+        "source": "mediainfo",
+        "status": "passed",
+        "verdict": "mediainfo_passed",
+        "reason": "QUI MediaInfo matches the torrent release traits.",
+        "nfo_file": None,
+        "release_title": expected_root,
+        "release_group": release_group,
+        "complete_names": [item["basename"] for item in video_files],
+        "video_files": video_files,
+        "mediainfo_files": media_files,
+        "flags": [],
+        "excerpt": "",
+        "torrent_root": expected_root,
+    }
+    if not video_files:
+        return {
+            **base_result,
+            "status": "manual_review",
+            "verdict": "no_video_files",
+            "reason": "QUI did not report any video files for this torrent.",
+        }
+    if not mediainfo_payloads:
+        return {
+            **base_result,
+            "status": "manual_review",
+            "verdict": "mediainfo_missing",
+            "reason": "QUI did not return MediaInfo for any video files.",
+        }
+
+    for payload in mediainfo_payloads:
+        mismatch = _mediainfo_trait_mismatch(expected_root, payload)
+        if mismatch:
+            return {
+                **base_result,
+                "status": "manual_review",
+                "verdict": "mediainfo_mismatch",
+                "reason": mismatch,
+            }
+    return base_result
+
+
+def merge_nfo_support(primary: Mapping[str, Any], support: Mapping[str, Any]) -> Dict[str, Any]:
+    result = dict(primary)
+    result["supporting_nfo"] = dict(support)
+    if support.get("status") != "passed":
+        return {
+            **result,
+            "status": "manual_review",
+            "verdict": str(support.get("verdict") or "nfo_mismatch"),
+            "reason": str(support.get("reason") or "NFO identity check failed."),
+            "flags": list(primary.get("flags") or []) + list(support.get("flags") or []),
+        }
+    result["flags"] = list(primary.get("flags") or []) + list(support.get("flags") or [])
+    return result
 
 
 def parse_nfo_release_title(text: str) -> str:
@@ -337,6 +408,127 @@ def _trait_mismatch(nfo_title: str, torrent_root: str) -> str:
         if left and right and left != right:
             return f"NFO {label} does not match the torrent title."
     return ""
+
+
+def _mediainfo_trait_mismatch(release_title: str, payload: Mapping[str, Any]) -> str:
+    title_traits = parse_release_traits(release_title)
+    media_traits = _traits_from_mediainfo(payload)
+    checks = [
+        ("resolution", title_traits.resolution, media_traits.get("resolution", "")),
+        ("codec", title_traits.codec, media_traits.get("codec", "")),
+    ]
+    if title_traits.audio_format:
+        checks.append(("audio format", title_traits.audio_format, media_traits.get("audio_format", "")))
+    if title_traits.audio_channels:
+        checks.append(("audio channels", str(title_traits.audio_channels), str(media_traits.get("audio_channels") or "")))
+    if title_traits.hdr_rank:
+        checks.append(("HDR", str(title_traits.hdr_rank), str(media_traits.get("hdr_rank") or "")))
+    for label, left, right in checks:
+        if left and right and str(left) != str(right):
+            return f"QUI MediaInfo {label} does not match the torrent title."
+    return ""
+
+
+def _traits_from_mediainfo(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    tracks = _mediainfo_tracks(payload)
+    video = _first_track(tracks, "video")
+    audio = _first_track(tracks, "audio")
+    text = " ".join(str(value) for track in (video, audio) for value in track.values() if isinstance(value, (str, int, float)))
+    traits = parse_release_traits(text)
+    height = str(video.get("Height") or video.get("height") or "")
+    scan = str(video.get("ScanType") or video.get("scanType") or "").lower()
+    channels = _mediainfo_channels(audio)
+    return {
+        "resolution": _resolution_from_height(height, scan),
+        "scan_type": "interlaced" if scan.startswith("inter") else ("progressive" if scan.startswith("prog") else ""),
+        "codec": _codec_from_mediainfo(video, traits.codec),
+        "audio_format": _audio_format_from_mediainfo(audio, traits.audio_format),
+        "audio_channels": channels,
+        "hdr_rank": traits.hdr_rank,
+    }
+
+
+def _mediainfo_tracks(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    streams = payload.get("streams")
+    if isinstance(streams, list):
+        return [item for item in streams if isinstance(item, Mapping)]
+    raw = payload.get("rawJSON")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            decoded = {}
+        tracks = decoded.get("media", {}).get("track") if isinstance(decoded, Mapping) else None
+        if isinstance(tracks, list):
+            return [item for item in tracks if isinstance(item, Mapping)]
+    media = payload.get("media")
+    tracks = media.get("track") if isinstance(media, Mapping) else None
+    if isinstance(tracks, list):
+        return [item for item in tracks if isinstance(item, Mapping)]
+    return []
+
+
+def _first_track(tracks: Sequence[Mapping[str, Any]], track_type: str) -> Mapping[str, Any]:
+    for track in tracks:
+        if str(track.get("@type") or track.get("type") or "").lower() == track_type:
+            return track
+    return {}
+
+
+def _resolution_from_height(height: str, scan: str) -> str:
+    digits = re.sub(r"[^0-9]", "", height)
+    if not digits:
+        return ""
+    suffix = "i" if scan.startswith("inter") else "p"
+    return f"{digits}{suffix}"
+
+
+def _codec_from_mediainfo(video: Mapping[str, Any], fallback: str) -> str:
+    text = " ".join(
+        str(video.get(key) or "")
+        for key in ("Format", "Format_Commercial_IfAny", "CodecID", "Encoded_Library_Name", "Encoded_Library")
+    ).lower()
+    if "avc" in text or "x264" in text or "h.264" in text:
+        return "AVC"
+    if "hevc" in text or "x265" in text or "h.265" in text:
+        return "HEVC"
+    return fallback
+
+
+def _audio_format_from_mediainfo(audio: Mapping[str, Any], fallback: str) -> str:
+    text = " ".join(str(audio.get(key) or "") for key in ("Format", "Format_Commercial_IfAny", "CodecID")).lower()
+    if "e-ac-3" in text or "eac3" in text or "digital plus" in text:
+        return "DD+"
+    if "ac-3" in text or "a_ac3" in text or "dolby digital" in text:
+        return "DD"
+    if "dts-hd ma" in text or "dts-hd master" in text:
+        return "DTS-HD MA"
+    if "truehd" in text:
+        return "TrueHD"
+    if "aac" in text:
+        return "AAC"
+    return fallback
+
+
+def _mediainfo_channels(audio: Mapping[str, Any]) -> float:
+    value = str(audio.get("Channels") or audio.get("channels") or "")
+    match = re.search(r"\d+(?:\.\d+)?", value)
+    if not match:
+        return 0.0
+    channels = float(match.group(0))
+    if channels == 6:
+        return 5.1
+    if channels == 8:
+        return 7.1
+    return channels
+
+
+def _mediainfo_file_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "index": int(payload.get("fileIndex") or payload.get("index") or 0),
+        "name": str(payload.get("relativePath") or payload.get("path") or ""),
+        "traits": _traits_from_mediainfo(payload),
+    }
 
 
 def _torrent_root_name(files: Sequence[Mapping[str, Any]]) -> str:

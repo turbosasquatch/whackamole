@@ -1,4 +1,5 @@
 from app.nfo_policy import (
+    analyze_mediainfo,
     analyze_nfo,
     apply_release_group_policy,
     build_nfo_manual_result,
@@ -71,6 +72,46 @@ def test_nfo_analysis_rejects_title_mismatch():
 
     assert result["status"] == "manual_review"
     assert result["verdict"] == "nfo_mismatch"
+
+
+def test_mediainfo_analysis_accepts_single_file_without_nfo():
+    release = "Two.Distant.Strangers.2020.1080p.WEB.h264-EDITH"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1514907502}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "E-AC-3", "Format_Commercial_IfAny": "Dolby Digital Plus", "Channels": "6"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "passed"
+    assert result["verdict"] == "mediainfo_passed"
+    assert result["source"] == "mediainfo"
+    assert result["release_group"] == "EDITH"
+    assert result["mediainfo_files"][0]["traits"]["resolution"] == "1080p"
+
+
+def test_mediainfo_analysis_rejects_trait_mismatch():
+    release = "Movie.2024.2160p.WEB.h265-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [{"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"}],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert result["verdict"] == "mediainfo_mismatch"
 
 
 def test_multiple_nfo_candidates_are_discoverable_for_ambiguous_gate():
