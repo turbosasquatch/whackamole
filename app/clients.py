@@ -75,6 +75,42 @@ class QuiClient:
                 break
         return torrents
 
+    async def list_torrent_files(self, torrent_hash: str, refresh: bool = False) -> List[Dict[str, Any]]:
+        params = {"refresh": "true"} if refresh else None
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{self.config.qui.url.rstrip('/')}/api/instances/{self.config.qui.instance_id}/torrents/{torrent_hash}/files",
+                headers=self._headers(),
+                params=params,
+            )
+            response.raise_for_status()
+            data = response.json()
+            files = data if isinstance(data, list) else []
+            return [
+                {
+                    **file_info,
+                    "index": index,
+                }
+                for index, file_info in enumerate(files)
+                if isinstance(file_info, dict)
+            ]
+
+    async def download_torrent_file(self, torrent_hash: str, file_index: int, max_bytes: int = 262144) -> bytes:
+        timeout = httpx.Timeout(30)
+        content = bytearray()
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "GET",
+                f"{self.config.qui.url.rstrip('/')}/api/instances/{self.config.qui.instance_id}/torrents/{torrent_hash}/files/{file_index}/download",
+                headers=self._headers(),
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > max_bytes:
+                        raise ValueError(f"Torrent file exceeds {max_bytes} bytes")
+        return bytes(content)
+
     def _headers(self) -> Dict[str, str]:
         return {"X-API-Key": self.api_key or ""}
 

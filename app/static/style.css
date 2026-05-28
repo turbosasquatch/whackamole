@@ -167,6 +167,30 @@ h2 {
   color: #66615a;
 }
 
+.flag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.flag-badge {
+  background: #fff7df;
+  border: 1px solid #e4c56f;
+  border-radius: 999px;
+  color: #7a4d00;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.flag-badge.blocker {
+  background: #fee4e2;
+  border-color: #f4b2a9;
+  color: var(--red);
+}
+
 .alert,
 .notice {
   border: 1px solid;
@@ -530,6 +554,25 @@ dd {
   padding: 18px;
 }
 
+.policy-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.policy-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.policy-card h3 {
+  margin: 0;
+}
+
 .form-grid {
   display: grid;
   gap: 14px;
@@ -703,6 +746,7 @@ textarea:focus {
   }
 
   .form-grid,
+  .policy-grid,
   .probe-grid,
   .summary-grid {
     grid-template-columns: 1fr;

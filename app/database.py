@@ -75,6 +75,8 @@ class Database:
             self._ensure_column(conn, "items", "inventory_is_cross_seed", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "items", "inventory_is_upload", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "items", "inventory_is_support", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "items", "check_stage", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "items", "check_results", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status_updated ON items(status, updated_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_inventory_group ON items(inventory_group_key)")
             conn.execute(
@@ -320,7 +322,8 @@ class Database:
                 f"""
                 UPDATE items
                 SET status = 'queued', verdict = '', reason = 'Bulk recheck requested from baseline filtered set',
-                    arr_results = '{{}}', next_check_at = NULL, updated_at = ?
+                    tracker_results = '[]', arr_results = '{{}}', check_stage = '', check_results = '{{}}',
+                    next_check_at = NULL, updated_at = ?
                 WHERE id IN ({placeholders})
                 """,
                 [now] + ids,
@@ -421,6 +424,7 @@ class Database:
                 SET status = 'error',
                     verdict = 'interrupted_check',
                     reason = ?,
+                    check_stage = 'interrupted',
                     next_check_at = ?,
                     updated_at = ?,
                     last_checked_at = ?
@@ -494,11 +498,15 @@ class Database:
         ua_log: str = "",
         tracker_results: Optional[Any] = None,
         arr_results: Optional[Any] = None,
+        check_stage: Optional[str] = None,
+        check_results: Optional[Any] = None,
         next_check_at: Optional[int] = None,
         increment_attempt: bool = False,
     ) -> None:
         now = int(time.time())
         encoded_arr_results = None if arr_results is None else json.dumps(arr_results)
+        encoded_tracker_results = None if tracker_results is None else json.dumps(tracker_results or [])
+        encoded_check_results = None if check_results is None else json.dumps(check_results)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -507,8 +515,10 @@ class Database:
                     mapped_path = COALESCE(NULLIF(?, ''), mapped_path),
                     ua_args = COALESCE(NULLIF(?, ''), ua_args),
                     ua_log = COALESCE(NULLIF(?, ''), ua_log),
-                    tracker_results = ?,
+                    tracker_results = COALESCE(?, tracker_results),
                     arr_results = COALESCE(?, arr_results),
+                    check_stage = COALESCE(?, check_stage),
+                    check_results = COALESCE(?, check_results),
                     next_check_at = ?, updated_at = ?,
                     last_checked_at = CASE WHEN ? THEN ? ELSE last_checked_at END,
                     attempt_count = attempt_count + ?
@@ -521,8 +531,10 @@ class Database:
                     mapped_path,
                     ua_args,
                     ua_log,
-                    json.dumps(tracker_results or []),
+                    encoded_tracker_results,
                     encoded_arr_results,
+                    check_stage,
+                    encoded_check_results,
                     next_check_at,
                     now,
                     1 if status in {"candidate", "blocked", "manual_review", "error"} else 0,
@@ -539,10 +551,26 @@ class Database:
                 """
                 UPDATE items
                 SET status = 'queued', verdict = '', reason = 'Manual recheck requested',
-                    arr_results = '{}', next_check_at = NULL, updated_at = ?
+                    tracker_results = '[]', arr_results = '{}', check_stage = '', check_results = '{}',
+                    next_check_at = NULL, updated_at = ?
                 WHERE id = ?
                 """,
                 (now, item_id),
+            )
+
+    def update_check_stage(self, item_id: int, stage: str, reason: str, check_results: Optional[Any] = None) -> None:
+        now = int(time.time())
+        encoded_check_results = None if check_results is None else json.dumps(check_results)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE items
+                SET status = 'checking', check_stage = ?, reason = ?,
+                    check_results = COALESCE(?, check_results),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (stage, reason, encoded_check_results, now, item_id),
             )
 
     def ignore(self, item_id: int, reason: str = "Ignored from dashboard") -> None:

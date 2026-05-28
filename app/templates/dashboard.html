@@ -143,6 +143,13 @@
           <td>
             <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
             <div class="path">{{ item.content_path }}</div>
+            {% if item.check_flags %}
+              <div class="flag-list">
+                {% for flag in item.check_flags %}
+                  <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
           </td>
           <td><span class="pill status-{{ item.status }}">{{ item.status }}</span></td>
           <td>

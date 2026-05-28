@@ -8,9 +8,10 @@ import yaml
 from cryptography.fernet import Fernet, InvalidToken
 
 
-CURRENT_CONFIG_VERSION = 2
+CURRENT_CONFIG_VERSION = 3
 OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 45
 DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 300
+DEFAULT_TRACKER_POLICY_KEYS = ("DP", "ULCX", "IHD")
 
 
 @dataclass
@@ -80,6 +81,7 @@ class AppConfig:
     sonarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     radarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     easycross: OptionalEndpoint = field(default_factory=OptionalEndpoint)
+    tracker_policies: Dict[str, Dict[str, List[str]]] = field(default_factory=lambda: default_tracker_policies())
 
 
 class ConfigManager:
@@ -125,6 +127,16 @@ class ConfigManager:
         version = int(cfg.config_version or 1)
         if version < 2 and cfg.safety.arr_search_timeout_seconds == OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS:
             cfg.safety.arr_search_timeout_seconds = DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS
+        if not isinstance(cfg.tracker_policies, dict):
+            cfg.tracker_policies = default_tracker_policies()
+        defaults = default_tracker_policies()
+        for tracker, policy in defaults.items():
+            existing = cfg.tracker_policies.get(tracker)
+            if not isinstance(existing, dict):
+                cfg.tracker_policies[tracker] = policy
+                continue
+            existing.setdefault("banned_release_groups", [])
+            existing.setdefault("ranked_release_groups", [])
         cfg.config_version = CURRENT_CONFIG_VERSION
 
 
@@ -189,6 +201,16 @@ def parse_csv(value: str) -> List[str]:
 
 def join_csv(values: List[str]) -> str:
     return ", ".join(values)
+
+
+def default_tracker_policies() -> Dict[str, Dict[str, List[str]]]:
+    return {
+        tracker: {
+            "banned_release_groups": [],
+            "ranked_release_groups": [],
+        }
+        for tracker in DEFAULT_TRACKER_POLICY_KEYS
+    }
 
 
 def parse_path_mappings(value: str) -> List[PathMapping]:

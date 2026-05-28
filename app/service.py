@@ -14,6 +14,15 @@ from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
+from app.nfo_policy import (
+    analyze_nfo,
+    apply_release_group_policy,
+    build_nfo_manual_result,
+    decode_nfo_bytes,
+    empty_check_results,
+    merge_check_results,
+    nfo_file_candidates,
+)
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
 
@@ -364,10 +373,106 @@ class WhackamoleService:
         item = self.db.get_item(item_id)
         if item is None:
             return
+        check_results = empty_check_results()
+
+        self.db.update_check_stage(item_id, "nfo", "Checking NFO identity before UA.", check_results)
+        qui = QuiClient(cfg, self.secrets.get("qui_api_key"))
+        try:
+            torrent_files = await qui.list_torrent_files(str(item["hash"]))
+            nfo_candidates = nfo_file_candidates(torrent_files)
+            if not nfo_candidates:
+                nfo_result = build_nfo_manual_result(
+                    "nfo_missing",
+                    "No NFO file was found in the torrent file list.",
+                    torrent_files,
+                )
+                check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
+                self.db.update_status(
+                    item_id,
+                    "manual_review",
+                    nfo_result["verdict"],
+                    nfo_result["reason"],
+                    tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+                    arr_results={},
+                    check_stage="done",
+                    check_results=check_results,
+                    increment_attempt=True,
+                )
+                return
+            if len(nfo_candidates) > 1:
+                nfo_result = build_nfo_manual_result(
+                    "nfo_ambiguous",
+                    "Multiple NFO files were found. Pick the correct release NFO before checking.",
+                    torrent_files,
+                )
+                nfo_result["candidates"] = [
+                    {"index": candidate["index"], "name": str(candidate.get("name") or "")}
+                    for candidate in nfo_candidates
+                ]
+                check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
+                self.db.update_status(
+                    item_id,
+                    "manual_review",
+                    nfo_result["verdict"],
+                    nfo_result["reason"],
+                    tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+                    arr_results={},
+                    check_stage="done",
+                    check_results=check_results,
+                    increment_attempt=True,
+                )
+                return
+            nfo_file = nfo_candidates[0]
+            nfo_bytes = await qui.download_torrent_file(str(item["hash"]), int(nfo_file["index"]))
+            nfo_text = decode_nfo_bytes(nfo_bytes)
+            nfo_result = analyze_nfo(
+                item_name=str(item["name"] or ""),
+                files=torrent_files,
+                nfo_file=nfo_file,
+                nfo_text=nfo_text,
+            )
+        except Exception as exc:
+            nfo_result = build_nfo_manual_result(
+                "nfo_unreadable",
+                f"Whackamole could not read the NFO through QUI: {str(exc)[:180]}",
+                [],
+            )
+            check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
+            self.db.update_status(
+                item_id,
+                "manual_review",
+                nfo_result["verdict"],
+                nfo_result["reason"],
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+                arr_results={},
+                check_stage="done",
+                check_results=check_results,
+                increment_attempt=True,
+            )
+            return
+
+        check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
+        if nfo_result.get("status") != "passed":
+            self.db.update_status(
+                item_id,
+                "manual_review",
+                str(nfo_result.get("verdict") or "nfo_mismatch"),
+                str(nfo_result.get("reason") or "NFO identity check failed."),
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+                arr_results={},
+                check_stage="done",
+                check_results=check_results,
+                increment_attempt=True,
+            )
+            return
 
         try:
             mapped_path = map_path(item["content_path"], cfg.path_mappings)
         except ValueError as exc:
+            check_results = merge_check_results(
+                check_results,
+                flags=check_results.get("flags", []),
+            )
             self.db.update_status(
                 item_id,
                 "error",
@@ -375,18 +480,33 @@ class WhackamoleService:
                 str(exc),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["Path mapping"]},
                 arr_results={},
+                check_stage="done",
+                check_results=check_results,
                 increment_attempt=True,
             )
             return
 
         ua_args = "--site-check -ua -sda"
         ua = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
-        self.db.update_status(item_id, "checking", mapped_path=mapped_path, ua_args=ua_args, arr_results={})
+        self.db.update_status(
+            item_id,
+            "checking",
+            mapped_path=mapped_path,
+            ua_args=ua_args,
+            arr_results={},
+            check_stage="ua",
+            check_results=check_results,
+        )
 
         try:
             log = await ua.execute_site_check(mapped_path, ua_args, item["hash"])
         except httpx.HTTPStatusError as exc:
             next_check = self._next_error_check(item["attempt_count"], exc.response.headers.get("Retry-After"))
+            check_results = merge_check_results(
+                check_results,
+                ua={"status": "error", "verdict": "http_error", "reason": f"UA HTTP error {exc.response.status_code}"},
+                flags=check_results.get("flags", []),
+            )
             self.db.update_status(
                 item_id,
                 "error",
@@ -397,12 +517,19 @@ class WhackamoleService:
                 ua_log=str(exc),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
                 arr_results={},
+                check_stage="done",
+                check_results=check_results,
                 next_check_at=next_check,
                 increment_attempt=True,
             )
             return
         except Exception as exc:
             next_check = self._next_error_check(item["attempt_count"], None)
+            check_results = merge_check_results(
+                check_results,
+                ua={"status": "error", "verdict": "ua_error", "reason": str(exc)[:240]},
+                flags=check_results.get("flags", []),
+            )
             self.db.update_status(
                 item_id,
                 "error",
@@ -413,18 +540,31 @@ class WhackamoleService:
                 ua_log=str(exc),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
                 arr_results={},
+                check_stage="done",
+                check_results=check_results,
                 next_check_at=next_check,
                 increment_attempt=True,
             )
             return
 
         reduction = reduce_ua_log(log)
+        check_results = merge_check_results(
+            check_results,
+            ua={
+                "status": reduction.status,
+                "verdict": reduction.verdict,
+                "reason": reduction.reason,
+                "tracker_results": reduction.tracker_results,
+            },
+            flags=check_results.get("flags", []),
+        )
         arr_results = {}
         status = reduction.status
         verdict = reduction.verdict
         reason = reduction.reason
         next_check_at = None
         if reduction.status == "candidate" and reduction.tracker_results.get("passed"):
+            self.db.update_check_stage(item_id, "arr", "Running Arr comparison.", check_results)
             async with self._arr_lock:
                 arr_results = await compare_item_with_arr(
                     item_name=item["name"],
@@ -436,6 +576,28 @@ class WhackamoleService:
             status = str(arr_results.get("status") or "manual_review")
             verdict = "candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review")
             reason = str(arr_results.get("reason") or reduction.reason)
+            check_results = merge_check_results(
+                check_results,
+                arr=arr_results,
+                flags=check_results.get("flags", []),
+            )
+            self.db.update_check_stage(item_id, "policy", "Applying release group policy.", check_results)
+            status, policy_verdict, policy_reason, policy_result, flags = apply_release_group_policy(
+                tracker_results=reduction.tracker_results,
+                arr_results=arr_results,
+                release_group=str(nfo_result.get("release_group") or ""),
+                tracker_policies=cfg.tracker_policies,
+                flags=check_results.get("flags", []),
+                item_name=str(item["name"] or ""),
+            )
+            verdict = policy_verdict or verdict
+            reason = policy_reason or reason
+            check_results = merge_check_results(
+                check_results,
+                arr=arr_results,
+                release_group_policy=policy_result,
+                flags=flags,
+            )
         elif reduction.status == "error":
             next_check_at = self._next_error_check(item["attempt_count"], None)
 
@@ -449,6 +611,8 @@ class WhackamoleService:
             ua_log=log,
             tracker_results=reduction.tracker_results,
             arr_results=arr_results,
+            check_stage="done",
+            check_results=check_results,
             next_check_at=next_check_at,
             increment_attempt=True,
         )

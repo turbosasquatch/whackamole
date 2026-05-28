@@ -21,6 +21,7 @@ from app.config import (
     AppConfig,
     ConfigManager,
     SecretStore,
+    default_tracker_policies,
     format_path_mappings,
     join_csv,
     parse_csv,
@@ -70,6 +71,7 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item = dict(row)
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
     arr_result = _arr_result(item.get("arr_results"))
+    check_results = _check_results(item.get("check_results"))
     inventory_meta = item_inventory_meta(item)
     item_coverage = coverage_for_item(item, coverage or {})
     item["tracker_results"] = tracker_groups
@@ -77,6 +79,8 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["tracker_summary"] = _tracker_summary(tracker_groups)
     item["arr_result"] = arr_result
     item["arr_summary"] = _arr_summary(arr_result)
+    item["check_results"] = check_results
+    item["check_flags"] = _check_flags(check_results)
     item["inventory_meta"] = inventory_meta
     item["coverage"] = item_coverage
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
@@ -104,6 +108,27 @@ def _json_object(value: Any) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _check_results(value: Any) -> Dict[str, Any]:
+    parsed = _json_object(value)
+    return {
+        "version": int(parsed.get("version") or 1),
+        "nfo": parsed.get("nfo") if isinstance(parsed.get("nfo"), dict) else {},
+        "ua": parsed.get("ua") if isinstance(parsed.get("ua"), dict) else {},
+        "arr": parsed.get("arr") if isinstance(parsed.get("arr"), dict) else {},
+        "release_group_policy": parsed.get("release_group_policy")
+        if isinstance(parsed.get("release_group_policy"), dict)
+        else {},
+        "flags": parsed.get("flags") if isinstance(parsed.get("flags"), list) else [],
+    }
+
+
+def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    flags = check_results.get("flags")
+    if not isinstance(flags, list):
+        return []
+    return [flag for flag in flags if isinstance(flag, dict) and str(flag.get("key") or "")]
+
+
 def _api_item_summary(row: Any) -> Dict[str, Any]:
     item = _normalized_item(row)
     return {
@@ -126,6 +151,8 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "last_checked_at": item["last_checked_at"],
         "next_check_at": item["next_check_at"],
         "attempt_count": item["attempt_count"],
+        "check_stage": item.get("check_stage", ""),
+        "flags": item["check_flags"],
         "baseline": bool(item["baseline"]),
         "ignored_reason": item["ignored_reason"],
         "tracker_results": item["tracker_results"],
@@ -149,16 +176,21 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         "tracker_summary": item["tracker_summary"],
     }
     arr = item["arr_result"]
+    stored_checks = item["check_results"]
+    checks = {
+        "nfo": stored_checks.get("nfo") or {},
+        "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
+        "arr": stored_checks.get("arr") or arr,
+        "release_group_policy": stored_checks.get("release_group_policy") or {},
+        "flags": item["check_flags"],
+    }
     summary.update(
         {
             "raw_torrent": raw_torrent,
             "video_files": item.get("video_files") or _video_files_for_item(item),
             "ua": ua,
             "arr": arr,
-            "checks": {
-                "ua": ua,
-                "arr": arr,
-            },
+            "checks": checks,
         }
     )
     return summary
@@ -346,9 +378,25 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
         "exclude_category_terms": join_csv(cfg.watch.exclude_category_terms),
         "exclude_tag_terms": join_csv(cfg.watch.exclude_tag_terms),
         "error_backoff_minutes": join_csv([str(item) for item in cfg.safety.error_backoff_minutes]),
+        "tracker_policies": _tracker_policy_context(cfg),
         "message": message,
         "probe_results": probe_results or [],
     }
+
+
+def _tracker_policy_context(cfg: AppConfig) -> List[Dict[str, str]]:
+    policies = cfg.tracker_policies if isinstance(cfg.tracker_policies, dict) else default_tracker_policies()
+    rows = []
+    for tracker in default_tracker_policies().keys():
+        policy = policies.get(tracker) if isinstance(policies.get(tracker), dict) else {}
+        rows.append(
+            {
+                "tracker": tracker,
+                "banned": join_csv([str(item) for item in policy.get("banned_release_groups", [])]),
+                "ranked": join_csv([str(item) for item in policy.get("ranked_release_groups", [])]),
+            }
+        )
+    return rows
 
 
 def _coverage_for_rows(db: Database, rows: Sequence[Any]) -> Dict[str, List[Dict[str, Any]]]:
@@ -617,6 +665,12 @@ async def save_config(
     clear_easycross_api_key: Optional[str] = Form(None),
     whackamole_api_token: str = Form(""),
     clear_whackamole_api_token: Optional[str] = Form(None),
+    policy_dp_banned: Optional[str] = Form(None),
+    policy_dp_ranked: Optional[str] = Form(None),
+    policy_ulcx_banned: Optional[str] = Form(None),
+    policy_ulcx_ranked: Optional[str] = Form(None),
+    policy_ihd_banned: Optional[str] = Form(None),
+    policy_ihd_ranked: Optional[str] = Form(None),
 ) -> HTMLResponse:
     manager: ConfigManager = request.app.state.config_manager
     secrets: SecretStore = request.app.state.secrets
@@ -662,6 +716,19 @@ async def save_config(
     cfg.sonarr.url = sonarr_url.strip().rstrip("/")
     cfg.radarr.url = radarr_url.strip().rstrip("/")
     cfg.easycross.url = easycross_url.strip().rstrip("/")
+    policy_inputs = {
+        "DP": (policy_dp_banned, policy_dp_ranked),
+        "ULCX": (policy_ulcx_banned, policy_ulcx_ranked),
+        "IHD": (policy_ihd_banned, policy_ihd_ranked),
+    }
+    existing_policies = cfg.tracker_policies if isinstance(cfg.tracker_policies, dict) else default_tracker_policies()
+    cfg.tracker_policies = default_tracker_policies()
+    for tracker, (banned, ranked) in policy_inputs.items():
+        existing = existing_policies.get(tracker) if isinstance(existing_policies.get(tracker), dict) else {}
+        cfg.tracker_policies[tracker] = {
+            "banned_release_groups": parse_csv(banned) if banned is not None else list(existing.get("banned_release_groups", [])),
+            "ranked_release_groups": parse_csv(ranked) if ranked is not None else list(existing.get("ranked_release_groups", [])),
+        }
 
     _update_secret(secrets, "qui_api_key", qui_api_key, clear_qui_api_key)
     _update_secret(secrets, "ua_bearer_token", ua_bearer_token, clear_ua_bearer_token)

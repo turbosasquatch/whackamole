@@ -228,6 +228,25 @@
     </div>
   </section>
 
+  <section>
+    <h2>Tracker Release Group Policy</h2>
+    <div class="policy-grid">
+      {% for policy in tracker_policies %}
+        <div class="policy-card">
+          <h3>{{ policy.tracker }}</h3>
+          <label>
+            Banned release groups
+            <input name="policy_{{ policy.tracker | lower }}_banned" value="{{ policy.banned }}" placeholder="GROUP1, GROUP2">
+          </label>
+          <label>
+            Ranked release groups
+            <input name="policy_{{ policy.tracker | lower }}_ranked" value="{{ policy.ranked }}" placeholder="BESTGRP, GOODGRP, OKGRP">
+          </label>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+
   <footer class="save-bar">
     <button class="button" type="submit">Save settings</button>
   </footer>
