@@ -34,6 +34,9 @@ class WhackamoleService:
     def start(self) -> None:
         if self._task is None or self._task.done():
             self._stop.clear()
+            recovered = self.db.recover_stale_checking(self._next_error_check(0, None))
+            if recovered:
+                self.db.set_kv("last_startup_recovered_checks", str(recovered))
             self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
@@ -182,6 +185,7 @@ class WhackamoleService:
             "baseline_done": self.db.get_kv("baseline_done") == "true",
             "inventory_done": self.db.get_kv("inventory_done") == "true",
             "inventory_count": self.db.count_items([]),
+            "queue": self.db.queue_counts(),
             "maintenance": self.maintenance_snapshot(cfg),
         }
 

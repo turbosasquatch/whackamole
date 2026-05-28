@@ -246,8 +246,9 @@ class Database:
         media: str = "all",
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
+        due_errors_only: bool = False,
     ) -> List[sqlite3.Row]:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary)
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only)
         offset = max(0, int(offset or 0))
         with self.connect() as conn:
             return conn.execute(
@@ -261,8 +262,9 @@ class Database:
         media: str = "all",
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
+        due_errors_only: bool = False,
     ) -> int:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary)
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only)
         with self.connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS count FROM items AS i {where_sql}", params).fetchone()
             return int(row["count"])
@@ -331,14 +333,26 @@ class Database:
         media: str = "all",
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
+        due_errors_only: bool = False,
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
         values = list(statuses)
         if values:
-            placeholders = ",".join("?" for _ in values)
-            clauses.append(f"i.status IN ({placeholders})")
-            params.extend(values)
+            now = int(time.time())
+            non_error_values = [value for value in values if value != "error"]
+            status_clauses: List[str] = []
+            if non_error_values:
+                placeholders = ",".join("?" for _ in non_error_values)
+                status_clauses.append(f"i.status IN ({placeholders})")
+                params.extend(non_error_values)
+            if "error" in values:
+                if due_errors_only:
+                    status_clauses.append("i.status = 'error' AND (i.next_check_at IS NULL OR i.next_check_at <= ?)")
+                    params.append(now)
+                else:
+                    status_clauses.append("i.status = 'error'")
+            clauses.append(f"({' OR '.join(status_clauses)})")
         media = (media or "all").lower()
         if media not in {"", "all"}:
             clauses.append("i.inventory_media_type = ?")
@@ -371,6 +385,50 @@ class Database:
                 "SELECT COUNT(*) AS count FROM items WHERE status IN ('queued', 'deferred', 'checking')"
             ).fetchone()
             return int(row["count"])
+
+    def queue_counts(self) -> Dict[str, int]:
+        now = int(time.time())
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+                    SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END) AS deferred,
+                    SUM(CASE WHEN status = 'checking' THEN 1 ELSE 0 END) AS checking,
+                    SUM(CASE WHEN status = 'error' AND (next_check_at IS NULL OR next_check_at <= ?) THEN 1 ELSE 0 END) AS due_errors,
+                    SUM(CASE WHEN status = 'error' AND next_check_at > ? THEN 1 ELSE 0 END) AS waiting_errors
+                FROM items
+                """,
+                (now, now),
+            ).fetchone()
+        counts = {
+            "queued": int(rows["queued"] or 0),
+            "deferred": int(rows["deferred"] or 0),
+            "checking": int(rows["checking"] or 0),
+            "due_errors": int(rows["due_errors"] or 0),
+            "waiting_errors": int(rows["waiting_errors"] or 0),
+        }
+        counts["active"] = counts["queued"] + counts["deferred"] + counts["checking"] + counts["due_errors"]
+        return counts
+
+    def recover_stale_checking(self, next_check_at: int) -> int:
+        now = int(time.time())
+        reason = "Whackamole restarted while this check was running. It will retry after backoff."
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE items
+                SET status = 'error',
+                    verdict = 'interrupted_check',
+                    reason = ?,
+                    next_check_at = ?,
+                    updated_at = ?,
+                    last_checked_at = ?
+                WHERE status = 'checking'
+                """,
+                (reason, next_check_at, now, now),
+            )
+            return int(cursor.rowcount or 0)
 
     def get_due_items(self, limit: int) -> List[sqlite3.Row]:
         now = int(time.time())

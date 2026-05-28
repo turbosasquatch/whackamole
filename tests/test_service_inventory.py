@@ -191,3 +191,36 @@ def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):
     assert row["status"] == "error"
     assert row["verdict"] == "ua_interrupted"
     assert row["next_check_at"] is not None
+
+
+def test_service_start_recovers_stale_checking_rows(tmp_path):
+    manager = ConfigManager(str(tmp_path))
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    db.insert_discovered(
+        1,
+        {
+            "hash": "stale-check",
+            "name": "Stale.Check.Show.S01E01.1080p.WEB-DL-GRP",
+            "category": "tv",
+            "tags": "",
+            "content_path": "/media/torrents/tv/Stale.Check.Show.S01E01.1080p.WEB-DL-GRP",
+            "progress": 1,
+        },
+        status="checking",
+        baseline=False,
+    )
+    item_id = int(db.list_items([], limit=1)[0]["id"])
+
+    async def start_and_stop():
+        service = WhackamoleService(manager, secrets, db)
+        service.start()
+        await service.stop()
+
+    asyncio.run(start_and_stop())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "error"
+    assert row["verdict"] == "interrupted_check"
+    assert row["next_check_at"] is not None
+    assert db.get_kv("last_startup_recovered_checks") == "1"

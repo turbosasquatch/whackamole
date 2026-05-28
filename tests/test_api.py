@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -291,3 +293,39 @@ def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatc
         assert page_response.status_code == 200
         assert "no_video_files" in page_response.text
         assert reason in page_response.text
+
+
+def test_dashboard_active_view_hides_waiting_errors_but_errors_view_keeps_them(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        now = int(time.time())
+        for torrent_hash, name in [
+            ("due-error", "Due.Error.Show.S01E01.1080p.WEB-DL-GRP"),
+            ("future-error", "Future.Error.Show.S01E01.1080p.WEB-DL-GRP"),
+        ]:
+            db.insert_discovered(
+                1,
+                {
+                    "hash": torrent_hash,
+                    "name": name,
+                    "category": "tv",
+                    "tags": "",
+                    "content_path": f"/media/torrents/tv/{name}",
+                    "progress": 1,
+                },
+                status="queued",
+                baseline=False,
+            )
+        rows = {row["hash"]: row for row in db.list_items([], limit=20)}
+        db.update_status(int(rows["due-error"]["id"]), "error", "ua_error", "Due now", next_check_at=now - 1)
+        db.update_status(int(rows["future-error"]["id"]), "error", "ua_error", "Waiting", next_check_at=now + 3600)
+
+        active = client.get("/?view=active")
+        errors = client.get("/?view=errors")
+
+        assert active.status_code == 200
+        assert "Due.Error.Show" in active.text
+        assert "Future.Error.Show" not in active.text
+        assert errors.status_code == 200
+        assert "Due.Error.Show" in errors.text
+        assert "Future.Error.Show" in errors.text

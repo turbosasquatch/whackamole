@@ -368,9 +368,24 @@ def _filtered_rows(
     media: str = "all",
     missing: Optional[Iterable[str]] = None,
     hide_any_primary: bool = False,
+    due_errors_only: bool = False,
 ) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
-    rows = db.list_items_filtered(statuses, limit=limit, offset=offset, media=media, missing=missing, hide_any_primary=hide_any_primary)
-    total = db.count_items_filtered(statuses, media=media, missing=missing, hide_any_primary=hide_any_primary)
+    rows = db.list_items_filtered(
+        statuses,
+        limit=limit,
+        offset=offset,
+        media=media,
+        missing=missing,
+        hide_any_primary=hide_any_primary,
+        due_errors_only=due_errors_only,
+    )
+    total = db.count_items_filtered(
+        statuses,
+        media=media,
+        missing=missing,
+        hide_any_primary=hide_any_primary,
+        due_errors_only=due_errors_only,
+    )
     return rows, total, _coverage_for_rows(db, rows)
 
 
@@ -435,6 +450,7 @@ async def dashboard(
         "candidates": ["candidate"],
         "blocked": ["blocked"],
         "manual": ["manual_review"],
+        "errors": ["error"],
         "baseline": ["baseline"],
         "inventory": ["inventory"],
         "ignored": ["ignored"],
@@ -455,13 +471,15 @@ async def dashboard(
         media=filter_media,
         missing=filter_missing,
         hide_any_primary=filter_hide_any,
+        due_errors_only=selected == "active",
     )
+    service_snapshot = request.app.state.service.snapshot()
     context = {
         "request": request,
         "items": [_row_dict(row, coverage) for row in rows],
         "view": selected,
         "counts": request.app.state.db.status_counts(),
-        "service": request.app.state.service.snapshot(),
+        "service": service_snapshot,
         "message": message,
         "primary_trackers": PRIMARY_TRACKERS,
         "baseline_filters": {
