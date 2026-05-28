@@ -73,7 +73,31 @@ def test_status_api_is_lightweight_and_does_not_expose_token(tmp_path, monkeypat
 
         assert response.status_code == 200
         assert response.json()["configured"]["whackamole_api_token"] is True
+        assert response.json()["service"]["maintenance"]["start_time"] == "05:00"
+        assert response.json()["service"]["maintenance"]["dependency"] == "QUI"
         assert API_TOKEN not in response.text
+
+
+def test_config_page_saves_maintenance_guard_settings(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/config",
+            data={
+                "maintenance_enabled": "on",
+                "maintenance_timezone": "Europe/London",
+                "maintenance_start_time": "04:45",
+                "maintenance_lead_minutes": "45",
+            },
+        )
+
+        cfg = client.app.state.config_manager.load()
+
+        assert response.status_code == 200
+        assert cfg.maintenance.enabled is True
+        assert cfg.maintenance.timezone == "Europe/London"
+        assert cfg.maintenance.start_time == "04:45"
+        assert cfg.maintenance.lead_minutes == 45
+        assert cfg.maintenance.resume_signal == "qui_down_up"
 
 
 def test_items_api_returns_paginated_summaries_without_logs(tmp_path, monkeypatch):

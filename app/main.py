@@ -244,6 +244,16 @@ def _as_int(value: Any, default: int, minimum: Optional[int] = None) -> int:
     return parsed
 
 
+def _as_time_value(value: str, default: str) -> str:
+    try:
+        hour_text, minute_text = str(value or "").split(":", 1)
+        hour = max(0, min(23, int(hour_text)))
+        minute = max(0, min(59, int(minute_text)))
+        return f"{hour:02d}:{minute:02d}"
+    except (TypeError, ValueError):
+        return default or "05:00"
+
+
 def _secret_state(secrets: SecretStore) -> Dict[str, bool]:
     return {
         "whackamole_api_token": secrets.has("whackamole_api_token"),
@@ -462,6 +472,18 @@ async def ignore_item(item_id: int) -> RedirectResponse:
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.post("/maintenance/pause")
+async def pause_maintenance(return_to: str = Form("/")) -> RedirectResponse:
+    app.state.service.manual_pause()
+    return RedirectResponse(url=_safe_local_redirect(return_to, "/"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/maintenance/resume")
+async def resume_maintenance(return_to: str = Form("/")) -> RedirectResponse:
+    app.state.service.manual_resume()
+    return RedirectResponse(url=_safe_local_redirect(return_to, "/"), status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("config.html", _config_context(request))
@@ -492,6 +514,10 @@ async def save_config(
     recheck_cooldown_hours: str = Form("24"),
     max_error_retries: str = Form("3"),
     error_backoff_minutes: str = Form("15, 60, 360"),
+    maintenance_enabled: Optional[str] = Form(None),
+    maintenance_timezone: str = Form("Europe/London"),
+    maintenance_start_time: str = Form("05:00"),
+    maintenance_lead_minutes: str = Form("30"),
     sonarr_url: str = Form(""),
     sonarr_api_key: str = Form(""),
     clear_sonarr_api_key: Optional[str] = Form(None),
@@ -539,6 +565,11 @@ async def save_config(
         _as_int(item, 15, minimum=1)
         for item in parse_csv(error_backoff_minutes)
     ] or [15, 60, 360]
+    cfg.maintenance.enabled = maintenance_enabled == "on"
+    cfg.maintenance.timezone = maintenance_timezone.strip() or "Europe/London"
+    cfg.maintenance.start_time = _as_time_value(maintenance_start_time, cfg.maintenance.start_time)
+    cfg.maintenance.lead_minutes = _as_int(maintenance_lead_minutes, cfg.maintenance.lead_minutes, minimum=0)
+    cfg.maintenance.resume_signal = "qui_down_up"
 
     cfg.sonarr.url = sonarr_url.strip().rstrip("/")
     cfg.radarr.url = radarr_url.strip().rstrip("/")

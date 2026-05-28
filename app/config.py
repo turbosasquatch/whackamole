@@ -48,6 +48,15 @@ class SafetyConfig:
 
 
 @dataclass
+class MaintenanceConfig:
+    enabled: bool = True
+    timezone: str = "Europe/London"
+    start_time: str = "05:00"
+    lead_minutes: int = 30
+    resume_signal: str = "qui_down_up"
+
+
+@dataclass
 class OptionalEndpoint:
     url: str = ""
 
@@ -62,6 +71,7 @@ class AppConfig:
     path_mappings: List[PathMapping] = field(default_factory=lambda: [PathMapping()])
     watch: WatchConfig = field(default_factory=WatchConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
     sonarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     radarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     easycross: OptionalEndpoint = field(default_factory=OptionalEndpoint)

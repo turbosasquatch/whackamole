@@ -7,7 +7,8 @@
     <p class="muted">
       Service {{ "running" if service.running else "stopped" }} ·
       {{ service.running_jobs }} UA job{{ "" if service.running_jobs == 1 else "s" }} active ·
-      Baseline {{ "complete" if service.baseline_done else "pending" }}
+      Baseline {{ "complete" if service.baseline_done else "pending" }} ·
+      Maintenance {{ service.maintenance.state | replace("_", " ") }}
     </p>
     {% if service.last_service_error %}
       <p class="alert">Last service error: {{ service.last_service_error }}</p>
@@ -15,6 +16,34 @@
   </div>
   <a class="button secondary" href="/config">Settings</a>
 </section>
+
+{% if service.maintenance.active %}
+  <section class="maintenance-banner active">
+    <div>
+      <strong>Maintenance pause active</strong>
+      <p>{{ service.maintenance.reason }}</p>
+    </div>
+    <form method="post" action="/maintenance/resume">
+      <input type="hidden" name="return_to" value="{{ current_url }}">
+      <button class="button small" type="submit">Resume</button>
+    </form>
+  </section>
+{% else %}
+  <section class="maintenance-banner">
+    <div>
+      <strong>Maintenance guard ready</strong>
+      {% if service.maintenance.dependency_configured %}
+        <p>Next pause starts {{ service.maintenance.lead_start_at | replace("T", " ") }}.</p>
+      {% else %}
+        <p>Add QUI URL and API key before the scheduled guard can monitor maintenance.</p>
+      {% endif %}
+    </div>
+    <form method="post" action="/maintenance/pause">
+      <input type="hidden" name="return_to" value="{{ current_url }}">
+      <button class="button small secondary" type="submit">Pause now</button>
+    </form>
+  </section>
+{% endif %}
 
 <section class="tabs" aria-label="Dashboard views">
   {% set tabs = [

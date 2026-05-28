@@ -248,7 +248,8 @@ button.secondary {
 .details,
 .summary-grid,
 .probe-grid,
-.baseline-filters {
+.baseline-filters,
+.maintenance-banner {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -300,6 +301,25 @@ tr:last-child td {
 .actions form {
   display: inline-flex;
   margin-left: 6px;
+}
+
+.maintenance-banner {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+}
+
+.maintenance-banner.active {
+  background: #fff7df;
+  border-color: #e4c56f;
+}
+
+.maintenance-banner p {
+  color: var(--muted);
+  margin: 3px 0 0;
 }
 
 .empty {
@@ -500,6 +520,19 @@ label {
   gap: 6px;
 }
 
+.field-note {
+  align-content: start;
+  color: #3c4146;
+  display: grid;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.field-note strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 input,
 select,
 textarea {
@@ -624,7 +657,8 @@ textarea:focus {
 
 @media (max-width: 860px) {
   .app-header,
-  .toolbar {
+  .toolbar,
+  .maintenance-banner {
     align-items: stretch;
     flex-direction: column;
   }

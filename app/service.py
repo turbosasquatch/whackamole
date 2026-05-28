@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -26,6 +28,8 @@ class WhackamoleService:
         self._running_jobs = 0
         self._last_ua_job_started_at = 0.0
         self._arr_lock = asyncio.Lock()
+        self._maintenance_probe_at = 0.0
+        self._maintenance_probe_ok: Optional[bool] = None
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -41,7 +45,8 @@ class WhackamoleService:
         while not self._stop.is_set():
             cfg = self.config_manager.load()
             try:
-                if cfg.qui.url and self.secrets.has("qui_api_key"):
+                maintenance_active = await self._maintenance_pause_active(cfg)
+                if not maintenance_active and cfg.qui.url and self.secrets.has("qui_api_key"):
                     await self.poll_once()
                     await self.run_due_jobs()
             except Exception as exc:
@@ -150,6 +155,8 @@ class WhackamoleService:
 
     async def run_due_jobs(self) -> None:
         cfg = self.config_manager.load()
+        if self.maintenance_snapshot(cfg)["active"]:
+            return
         if self._running_jobs >= max(1, cfg.safety.max_concurrent_ua_jobs):
             return
 
@@ -165,6 +172,7 @@ class WhackamoleService:
             asyncio.create_task(self._run_item(item["id"]))
 
     def snapshot(self) -> dict:
+        cfg = self.config_manager.load()
         task_alive = self._task is not None and not self._task.done()
         return {
             "running": task_alive and not self._stop.is_set(),
@@ -174,7 +182,172 @@ class WhackamoleService:
             "baseline_done": self.db.get_kv("baseline_done") == "true",
             "inventory_done": self.db.get_kv("inventory_done") == "true",
             "inventory_count": self.db.count_items([]),
+            "maintenance": self.maintenance_snapshot(cfg),
         }
+
+    def manual_pause(self) -> None:
+        now = int(time.time())
+        self.db.set_kv("maintenance_manual_paused", "true")
+        self.db.set_kv("maintenance_manual_reason", "Manual pause")
+        self.db.set_kv("maintenance_manual_updated_at", str(now))
+
+    def manual_resume(self) -> None:
+        cfg = self.config_manager.load()
+        today = self._local_now(cfg).date().isoformat()
+        self.db.set_kv("maintenance_manual_paused", "false")
+        self.db.set_kv("maintenance_manual_reason", "")
+        self.db.set_kv("maintenance_manual_resume_date", today)
+        self._clear_scheduled_maintenance()
+
+    def maintenance_snapshot(self, cfg=None) -> dict:
+        cfg = cfg or self.config_manager.load()
+        now = self._local_now(cfg)
+        today = now.date().isoformat()
+        current_start = self._scheduled_start(now, cfg)
+        lead_delta = timedelta(minutes=max(0, int(cfg.maintenance.lead_minutes or 0)))
+        current_lead_start = current_start - lead_delta
+        active_date = self.db.get_kv("maintenance_active_date") or ""
+        completed_date = self.db.get_kv("maintenance_completed_date") or ""
+        manual_resumed_date = self.db.get_kv("maintenance_manual_resume_date") or ""
+        manual_paused = self.db.get_kv("maintenance_manual_paused") == "true"
+        seen_down = self.db.get_kv("maintenance_seen_down") == "true"
+        dependency_configured = bool(cfg.qui.url and self.secrets.has("qui_api_key"))
+        scheduled_active = active_date == today and completed_date != today and manual_resumed_date != today
+        lead_pending = (
+            bool(cfg.maintenance.enabled)
+            and dependency_configured
+            and manual_resumed_date != today
+            and completed_date != today
+            and current_lead_start <= now < current_start
+        )
+        active = manual_paused or scheduled_active or lead_pending
+        display_start = current_start
+        if not active and now >= current_start:
+            display_start = current_start + timedelta(days=1)
+        display_lead_start = display_start - lead_delta
+        if manual_paused:
+            reason = self.db.get_kv("maintenance_manual_reason") or "Manual pause"
+            state = "manual"
+        elif scheduled_active and seen_down:
+            reason = "Maintenance active: QUI went down, waiting for it to come back healthy."
+            state = "waiting_for_qui_up"
+        elif scheduled_active:
+            reason = "Maintenance active: waiting for QUI to go down and come back."
+            state = "waiting_for_qui_down"
+        elif lead_pending:
+            reason = f"Maintenance lead time active until {cfg.maintenance.start_time}."
+            state = "lead_time"
+        else:
+            reason = ""
+            state = "idle"
+        return {
+            "enabled": bool(cfg.maintenance.enabled),
+            "active": active,
+            "state": state,
+            "reason": reason,
+            "timezone": cfg.maintenance.timezone,
+            "start_time": cfg.maintenance.start_time,
+            "lead_minutes": int(cfg.maintenance.lead_minutes or 0),
+            "next_start_at": display_start.isoformat(),
+            "lead_start_at": display_lead_start.isoformat(),
+            "active_date": active_date,
+            "completed_date": completed_date,
+            "seen_dependency_down": seen_down,
+            "manual_paused": manual_paused,
+            "manual_resumed_date": manual_resumed_date,
+            "dependency": "QUI",
+            "dependency_configured": dependency_configured,
+        }
+
+    async def _maintenance_pause_active(self, cfg) -> bool:
+        snapshot = self.maintenance_snapshot(cfg)
+        if snapshot["manual_paused"]:
+            return True
+        if not cfg.maintenance.enabled:
+            return False
+        if not snapshot["dependency_configured"]:
+            return False
+
+        now = self._local_now(cfg)
+        today = now.date().isoformat()
+        if self.db.get_kv("maintenance_manual_resume_date") == today:
+            return False
+        if self.db.get_kv("maintenance_completed_date") == today:
+            return False
+
+        scheduled_start = self._scheduled_start(now, cfg)
+        lead_start = scheduled_start - timedelta(minutes=max(0, int(cfg.maintenance.lead_minutes or 0)))
+        if lead_start <= now < scheduled_start:
+            self._start_scheduled_maintenance(today)
+            return True
+        if now < scheduled_start:
+            return False
+
+        active_date = self.db.get_kv("maintenance_active_date") or ""
+        health_ok = await self._qui_health_ok(cfg)
+        if active_date != today:
+            if health_ok:
+                return False
+            self._start_scheduled_maintenance(today)
+            self.db.set_kv("maintenance_seen_down", "true")
+            return True
+
+        if not health_ok:
+            self.db.set_kv("maintenance_seen_down", "true")
+            return True
+
+        if self.db.get_kv("maintenance_seen_down") == "true":
+            self.db.set_kv("maintenance_completed_date", today)
+            self._clear_scheduled_maintenance()
+            return False
+
+        return True
+
+    async def _qui_health_ok(self, cfg) -> bool:
+        if not cfg.qui.url:
+            return False
+        if time.time() - self._maintenance_probe_at < 10 and self._maintenance_probe_ok is not None:
+            return self._maintenance_probe_ok
+        try:
+            await QuiClient(cfg, self.secrets.get("qui_api_key")).health()
+        except Exception:
+            ok = False
+        else:
+            ok = True
+        self._maintenance_probe_at = time.time()
+        self._maintenance_probe_ok = ok
+        return ok
+
+    def _start_scheduled_maintenance(self, today: str) -> None:
+        if self.db.get_kv("maintenance_active_date") != today:
+            self.db.set_kv("maintenance_active_date", today)
+            self.db.set_kv("maintenance_seen_down", "false")
+
+    def _clear_scheduled_maintenance(self) -> None:
+        self.db.set_kv("maintenance_active_date", "")
+        self.db.set_kv("maintenance_seen_down", "false")
+
+    def _local_now(self, cfg) -> datetime:
+        return datetime.now(self._timezone(cfg))
+
+    def _timezone(self, cfg) -> ZoneInfo:
+        try:
+            return ZoneInfo(cfg.maintenance.timezone or "Europe/London")
+        except ZoneInfoNotFoundError:
+            return ZoneInfo("UTC")
+
+    def _scheduled_start(self, now: datetime, cfg) -> datetime:
+        hour, minute = self._parse_start_time(cfg.maintenance.start_time)
+        return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    def _parse_start_time(self, value: str) -> tuple[int, int]:
+        try:
+            hour_text, minute_text = str(value or "05:00").split(":", 1)
+            hour = max(0, min(23, int(hour_text)))
+            minute = max(0, min(59, int(minute_text)))
+            return hour, minute
+        except (TypeError, ValueError):
+            return 5, 0
 
     async def _run_item(self, item_id: int) -> None:
         try:

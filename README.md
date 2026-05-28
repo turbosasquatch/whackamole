@@ -71,6 +71,12 @@ The `Inventory` tab shows captured cross-seed/upload rows themselves for audit.
 
 Baseline and Inventory views are paginated so large libraries stay responsive. On the Baseline view, `Run check on found set` queues every row matching the current filters; normal UA job spacing and concurrency limits still control how quickly those checks run.
 
+## Maintenance Guard
+
+Whackamole can pause itself around scheduled mover work without editing mover scripts. The default guard starts at 04:30 Europe/London for a 05:00 maintenance window. While active, Whackamole stops QUI polling and UA job starts. It resumes automatically only after QUI has gone down and then becomes healthy again, which matches Unraid mover scripts that stop QUI before file moves and start it afterward.
+
+You can adjust or disable the guard in Settings. The dashboard also has manual pause and resume buttons for one-off maintenance.
+
 ## JSON API
 
 Detailed item APIs are read-only and require the Whackamole API bearer token from Settings. `/api/status` stays unauthenticated and only returns lightweight service/configured-state booleans.

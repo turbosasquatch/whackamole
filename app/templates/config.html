@@ -161,6 +161,32 @@
   </section>
 
   <section>
+    <h2>Maintenance Guard</h2>
+    <div class="form-grid">
+      <label class="checkbox">
+        <input name="maintenance_enabled" type="checkbox" {% if cfg.maintenance.enabled %}checked{% endif %}>
+        Pause around mover maintenance
+      </label>
+      <label>
+        Timezone
+        <input name="maintenance_timezone" value="{{ cfg.maintenance.timezone }}" placeholder="Europe/London">
+      </label>
+      <label>
+        Maintenance start time
+        <input name="maintenance_start_time" type="time" value="{{ cfg.maintenance.start_time }}">
+      </label>
+      <label>
+        Lead minutes
+        <input name="maintenance_lead_minutes" type="number" min="0" value="{{ cfg.maintenance.lead_minutes }}">
+      </label>
+      <div class="field-note">
+        Resume signal
+        <strong>QUI down, then healthy again</strong>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2>Arr Comparison</h2>
     <div class="form-grid">
       <label>
