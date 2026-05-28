@@ -414,6 +414,30 @@ dd {
   overflow-wrap: anywhere;
 }
 
+.file-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-list li {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-list span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.file-list small {
+  color: var(--muted);
+}
+
 .log {
   background: #1f2326;
   border-radius: 8px;

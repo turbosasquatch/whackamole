@@ -195,6 +195,62 @@ def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypa
         assert missing.status_code == 404
 
 
+def test_item_detail_includes_video_files_in_paths_section(tmp_path, monkeypatch):
+    media_dir = tmp_path / "media" / "Example.Show.S01E01.1080p.WEB-DL-GRP"
+    sample = media_dir / "Sample.txt"
+    episode = media_dir / "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv"
+    extra = media_dir / "Extras" / "Behind.The.Scenes.mp4"
+    extra.parent.mkdir(parents=True)
+    sample.write_text("not video", encoding="utf-8")
+    episode.write_bytes(b"episode")
+    extra.write_bytes(b"extra")
+
+    with _client(tmp_path / "config", monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "video-files",
+                "name": "Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "",
+                "content_path": str(media_dir),
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "manual_review",
+            "no_video_files",
+            "Needs inspection",
+            mapped_path=str(media_dir),
+            ua_log="No Video files found",
+            tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+            arr_results={},
+            increment_attempt=True,
+        )
+
+        detail = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+        page = client.get(f"/items/{item_id}")
+
+        assert detail.status_code == 200
+        files = detail.json()["video_files"]["files"]
+        assert [item["relative_path"] for item in files] == [
+            "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv",
+            "Extras/Behind.The.Scenes.mp4",
+        ]
+        assert detail.json()["video_files"]["message"] == ""
+        assert page.status_code == 200
+        assert "Video files" in page.text
+        assert "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv" in page.text
+        assert "Behind.The.Scenes.mp4" in page.text
+        assert "Sample.txt" not in page.text
+
+
 def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

@@ -52,6 +52,24 @@
       <dd>{{ item.content_path }}</dd>
       <dt>UA path</dt>
       <dd>{{ item.mapped_path or "-" }}</dd>
+      <dt>Video files</dt>
+      <dd>
+        {% if item.video_files.files %}
+          <ul class="file-list">
+            {% for file in item.video_files.files %}
+              <li>
+                <span>{{ file.relative_path }}</span>
+                <small>{{ file.size | bytes }}</small>
+              </li>
+            {% endfor %}
+          </ul>
+          {% if item.video_files.truncated %}
+            <p class="muted">Showing first {{ item.video_files.files | length }} video files.</p>
+          {% endif %}
+        {% else %}
+          <span class="muted">{{ item.video_files.message or "-" }}</span>
+        {% endif %}
+      </dd>
       <dt>UA args</dt>
       <dd>{{ item.ua_args or "-" }}</dd>
     </dl>

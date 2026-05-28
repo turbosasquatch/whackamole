@@ -38,6 +38,8 @@ from app.service import WhackamoleService
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+MAX_VIDEO_FILES = 200
 
 
 def _format_datetime(value: Optional[int]) -> str:
@@ -78,6 +80,12 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["inventory_meta"] = inventory_meta
     item["coverage"] = item_coverage
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
+    return item
+
+
+def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+    item = _row_dict(row, coverage)
+    item["video_files"] = _video_files_for_item(item)
     return item
 
 
@@ -144,6 +152,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
     summary.update(
         {
             "raw_torrent": raw_torrent,
+            "video_files": item.get("video_files") or _video_files_for_item(item),
             "ua": ua,
             "arr": arr,
             "checks": {
@@ -153,6 +162,67 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         }
     )
     return summary
+
+
+def _video_files_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    root = str(item.get("mapped_path") or item.get("content_path") or "")
+    result = {
+        "path": root,
+        "files": [],
+        "truncated": False,
+        "message": "",
+    }
+    if not root:
+        result["message"] = "No path recorded."
+        return result
+
+    try:
+        path = Path(root)
+        if not path.exists():
+            result["message"] = "Path is not visible inside the Whackamole container."
+            return result
+        if path.is_file():
+            if path.suffix.lower() in VIDEO_EXTENSIONS:
+                result["files"] = [_video_file_payload(path, path.parent)]
+            else:
+                result["message"] = "Path is a file, but not a known video extension."
+            return result
+        if not path.is_dir():
+            result["message"] = "Path is not a regular file or directory."
+            return result
+
+        files = []
+        for child in sorted(path.rglob("*")):
+            if not child.is_file() or child.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            files.append(_video_file_payload(child, path))
+            if len(files) >= MAX_VIDEO_FILES:
+                result["truncated"] = True
+                break
+        result["files"] = files
+        if not files:
+            result["message"] = "No video files found at this path."
+        return result
+    except OSError as exc:
+        result["message"] = f"Could not inspect path: {exc}"
+        return result
+
+
+def _video_file_payload(path: Path, base: Path) -> Dict[str, Any]:
+    try:
+        relative = str(path.relative_to(base))
+    except ValueError:
+        relative = path.name
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    return {
+        "name": path.name,
+        "relative_path": relative,
+        "path": str(path),
+        "size": size,
+    }
 
 
 def _tracker_result_groups(value: Any, verdict: Any = "") -> Dict[str, List[str]]:
@@ -432,7 +502,7 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
         "item.html",
         {
             "request": request,
-            "item": _row_dict(row, _coverage_for_row(request.app.state.db, row)),
+            "item": _row_detail_dict(row, _coverage_for_row(request.app.state.db, row)),
             "service": request.app.state.service.snapshot(),
         },
     )
@@ -699,7 +769,7 @@ async def api_item_detail(request: Request, item_id: int) -> JSONResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return JSONResponse(_api_item_detail(_row_dict(row, _coverage_for_row(request.app.state.db, row))))
+    return JSONResponse(_api_item_detail(_row_detail_dict(row, _coverage_for_row(request.app.state.db, row))))
 
 
 @app.get("/api/items/{item_id}/log")
