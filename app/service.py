@@ -14,16 +14,12 @@ from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
-from app.nfo_policy import (
+from app.media_policy import (
     analyze_mediainfo,
-    analyze_nfo,
     apply_release_group_policy,
-    build_nfo_manual_result,
-    decode_nfo_bytes,
+    build_media_manual_result,
     empty_check_results,
-    merge_nfo_support,
     merge_check_results,
-    nfo_file_candidates,
     video_file_payloads,
 )
 from app.pathmap import map_path
@@ -389,54 +385,29 @@ class WhackamoleService:
                 payload.setdefault("fileIndex", int(video_file["index"]))
                 payload.setdefault("relativePath", str(video_file.get("name") or ""))
                 mediainfo_payloads.append(payload)
-            nfo_result = analyze_mediainfo(
+            media_result = analyze_mediainfo(
                 item_name=str(item["name"] or ""),
                 files=torrent_files,
                 mediainfo_payloads=mediainfo_payloads,
             )
             if len(video_files) > len(mediainfo_payloads):
-                nfo_result["mediainfo_truncated"] = True
-            nfo_candidates = nfo_file_candidates(torrent_files)
-            if len(nfo_candidates) == 1:
-                nfo_file = nfo_candidates[0]
-                nfo_bytes = await qui.download_torrent_file(str(item["hash"]), int(nfo_file["index"]))
-                nfo_text = decode_nfo_bytes(nfo_bytes)
-                nfo_support = analyze_nfo(
-                    item_name=str(item["name"] or ""),
-                    files=torrent_files,
-                    nfo_file=nfo_file,
-                    nfo_text=nfo_text,
-                )
-                nfo_result = merge_nfo_support(nfo_result, nfo_support)
-            elif len(nfo_candidates) > 1:
-                nfo_result["supporting_nfo"] = {
-                    "version": 1,
-                    "source": "nfo",
-                    "status": "manual_review",
-                    "verdict": "nfo_ambiguous",
-                    "reason": "Multiple NFO files were found. QUI MediaInfo was used as the primary identity check.",
-                    "candidates": [
-                        {"index": candidate["index"], "name": str(candidate.get("name") or "")}
-                        for candidate in nfo_candidates
-                    ],
-                }
+                media_result["mediainfo_truncated"] = True
         except Exception as exc:
-            nfo_result = build_nfo_manual_result(
+            media_result = build_media_manual_result(
                 "mediainfo_unavailable",
                 f"Whackamole could not read QUI MediaInfo: {str(exc)[:180]}",
                 [],
             )
             check_results = merge_check_results(
                 check_results,
-                media=nfo_result,
-                nfo=nfo_result,
-                flags=nfo_result.get("flags", []),
+                media=media_result,
+                flags=media_result.get("flags", []),
             )
             self.db.update_status(
                 item_id,
                 "manual_review",
-                nfo_result["verdict"],
-                nfo_result["reason"],
+                media_result["verdict"],
+                media_result["reason"],
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
                 arr_results={},
                 check_stage="done",
@@ -447,16 +418,15 @@ class WhackamoleService:
 
         check_results = merge_check_results(
             check_results,
-            media=nfo_result,
-            nfo=nfo_result,
-            flags=nfo_result.get("flags", []),
+            media=media_result,
+            flags=media_result.get("flags", []),
         )
-        if nfo_result.get("status") != "passed":
+        if media_result.get("status") != "passed":
             self.db.update_status(
                 item_id,
                 "manual_review",
-                str(nfo_result.get("verdict") or "nfo_mismatch"),
-                str(nfo_result.get("reason") or "NFO identity check failed."),
+                str(media_result.get("verdict") or "media_error"),
+                str(media_result.get("reason") or "MediaInfo identity check failed."),
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
                 arr_results={},
                 check_stage="done",
@@ -584,7 +554,7 @@ class WhackamoleService:
             status, policy_verdict, policy_reason, policy_result, flags = apply_release_group_policy(
                 tracker_results=reduction.tracker_results,
                 arr_results=arr_results,
-                release_group=str(nfo_result.get("release_group") or ""),
+                release_group=str(media_result.get("release_group") or ""),
                 tracker_policies=cfg.tracker_policies,
                 flags=check_results.get("flags", []),
                 item_name=str(item["name"] or ""),

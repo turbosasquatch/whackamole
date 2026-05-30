@@ -136,7 +136,7 @@
   <section class="details">
     <h2>Media Info Check</h2>
     {% set checks = item.check_results %}
-    {% set media = checks.media or checks.nfo or {} %}
+    {% set media = checks.media or {} %}
     <dl>
       <dt>Current stage</dt>
       <dd>{{ item.check_stage or "-" }}</dd>
@@ -147,9 +147,6 @@
         {% if media.reason %}<div class="muted">{{ media.reason }}</div>{% endif %}
         {% if media.release_title %}<div>Release: {{ media.release_title }}</div>{% endif %}
         {% if media.release_group %}<div>Group: {{ media.release_group }}</div>{% endif %}
-        {% if media.supporting_nfo %}
-          <div class="muted">NFO: {{ media.supporting_nfo.verdict or media.supporting_nfo.status }}</div>
-        {% endif %}
       </dd>
       <dt>Confirmed tags</dt>
       <dd>

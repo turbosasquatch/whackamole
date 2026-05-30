@@ -1,4 +1,4 @@
-from app.media_identity import analyze_media_payloads, parse_release_traits
+from app.media_identity import analyze_media_payloads, parse_release_traits, traits_from_mediainfo, traits_payload
 
 
 def test_release_identity_normalizes_common_user_aliases():
@@ -9,6 +9,12 @@ def test_release_identity_normalizes_common_user_aliases():
     assert traits.codec == "HEVC"
     assert "Dolby Vision" in traits.hdr_formats
     assert traits.release_group == "GRP"
+
+
+def test_release_identity_parses_symbol_release_group():
+    traits = parse_release_traits("1923.S02E01.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H")
+
+    assert traits.release_group == "R&H"
 
 
 def test_release_identity_parses_truehd_dovi_and_h265_aliases():
@@ -23,6 +29,14 @@ def test_release_identity_parses_truehd_dovi_and_h265_aliases():
 
 def test_release_identity_parses_dts_hd_ma():
     traits = parse_release_traits("Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.AVC-GRP")
+
+    assert traits.audio_format == "DTS-HD MA"
+    assert traits.audio_channels == 5.1
+    assert traits.codec == "AVC"
+
+
+def test_release_identity_parses_compact_dts_hd_ma():
+    traits = parse_release_traits("Free.State.of.Jones.2016.1080p.BluRay.DTS-HD.MA5.1.x264-iFT")
 
     assert traits.audio_format == "DTS-HD MA"
     assert traits.audio_channels == 5.1
@@ -105,3 +119,194 @@ def test_media_analysis_keeps_warnings_non_blocking():
     assert result["status"] == "passed"
     assert result["media_status"] == "warning"
     assert any(issue["key"] == "video_bitrate_low" and issue["severity"] == "WARNING" for issue in result["issues"])
+
+
+def test_real_shape_item_2719_infers_hdr10_without_hdr_format():
+    release = "Straight.Outta.Compton.2015.Directors.Cut.UHD.BluRay.2160p.DDP.7.1.HDR.x265-hallowed"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "5"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Format_Profile": "Main 10",
+                "Width": "3840",
+                "Height": "1600",
+                "BitDepth": "10",
+                "colour_primaries": "BT.2020",
+                "transfer_characteristics": "PQ",
+                "matrix_coefficients": "BT.2020 non-constant",
+            },
+            {
+                "@type": "Audio",
+                "Format": "E-AC-3",
+                "Format_Commercial_IfAny": "Dolby Digital Plus",
+                "Channels": "8",
+                "Language": "en",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "PGS", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert result["media_status"] in {"confirmed", "warning"}
+    assert "HDR10" in traits["hdr_formats"]
+    assert not any(issue["key"] == "hdr10_missing" for issue in result["issues"])
+
+
+def test_real_shape_item_2785_detects_dv_profile_8_and_hdr10_compatibility():
+    release = "1923.S02.E01.The.Killing.Season.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "3"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Width": "3840",
+                "Height": "2160",
+                "BitDepth": "10",
+                "HDR_Format": "Dolby Vision",
+                "HDR_Format_Compatibility": "HDR10",
+                "HDR_Format_Profile": "dvhe.08",
+                "HDR_Format_Settings": "BL+RPU",
+                "colour_primaries": "BT.2020",
+                "transfer_characteristics": "PQ",
+            },
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "en-US", "Default": "Yes"},
+            {"@type": "Text", "Format": "UTF-8", "Language": "en-US"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert {"Dolby Vision", "HDR10"}.issubset(set(traits["hdr_formats"]))
+    assert traits["dv_profile"] == "DV P8"
+    assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
+
+
+def test_real_shape_item_2728_accepts_dv_profile_5_without_hdr10_fallback():
+    release = "Dutton.Ranch.S01E04.DV.2160p.WEB.h265-GRACE"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "1"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Width": "3832",
+                "Height": "1920",
+                "BitDepth": "10",
+                "HDR_Format": "Dolby Vision",
+                "HDR_Format_Profile": "dvhe.05",
+                "HDR_Format_Settings": "BL+RPU",
+            },
+            {
+                "@type": "Audio",
+                "Format": "E-AC-3",
+                "Format_Commercial_IfAny": "Dolby Digital Plus with Dolby Atmos",
+                "Channels": "6",
+                "Language": "en",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert traits["hdr_formats"] == ["Dolby Vision"]
+    assert traits["dv_profile"] == "DV P5"
+    assert not any(issue["key"] in {"dolby_vision_missing", "dv_without_hdr10"} for issue in result["issues"])
+
+
+def test_real_shape_item_2720_detects_pgs_subtitles_and_dts_hd_ma():
+    release = "Free.State.of.Jones.2016.1080p.BluRay.DTS-HD.MA5.1.x264-iFT"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "3"},
+            {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1040", "BitDepth": "8"},
+            {
+                "@type": "Audio",
+                "Format": "DTS XLL",
+                "Format_Commercial_IfAny": "DTS-HD Master Audio",
+                "Channels": "6",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "PGS", "Language": "en", "Default": "Yes"},
+            {"@type": "Text", "Format": "PGS", "Language": "es"},
+            {"@type": "Text", "Format": "PGS", "Language": "fr"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert traits["audio_format"] == "DTS-HD MA"
+    assert "Subtitles" in traits["subtitle_tags"]
+    assert "Default Subs" in traits["subtitle_tags"]
+    assert not any(issue["key"] in {"no_subtitles", "audio_codec_mismatch"} for issue in result["issues"])
+
+
+def test_real_shape_item_85_detects_truehd_atmos_from_title():
+    release = "The.Rocky.Horror.Picture.Show.1975.Extended.2160p.BluRay.TrueHD.Atmos.7.1.DV.HDR10.x265-Softboat"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "53"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Title": "Dolby Vision Profile 8.1",
+                "Width": "3584",
+                "Height": "2160",
+                "BitDepth": "10",
+                "HDR_Format": "Dolby Vision",
+                "HDR_Format_Compatibility": "HDR10",
+                "HDR_Format_Profile": "dvhe.08",
+                "HDR_Format_Settings": "BL+RPU",
+            },
+            {
+                "@type": "Audio",
+                "Format": "TrueHD",
+                "CodecID": "A_TRUEHD",
+                "Channels": "8",
+                "ChannelLayout": "C L R Ls Rs Lb Rb LFE",
+                "Title": "Dolby Atmos 7.1 Remix",
+                "Language": "en",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+        ],
+    )
+
+    traits = traits_payload(traits_from_mediainfo(payload))
+    result = _analyze_sample(release, payload)
+
+    assert traits["audio_format"] == "TrueHD Atmos"
+    assert "Atmos" in traits["audio_objects"]
+    assert not any(issue["key"] in {"audio_object_missing", "atmos_title_without_metadata"} for issue in result["issues"])
+
+
+def _payload(release: str, tracks):
+    return {
+        "media": {
+            "@ref": f"/media/torrents/{release}/{release}.mkv",
+            "track": tracks,
+        }
+    }
+
+
+def _analyze_sample(release: str, payload):
+    return analyze_media_payloads(
+        release_title=release,
+        media_files=[{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}],
+        mediainfo_payloads=[payload],
+    )

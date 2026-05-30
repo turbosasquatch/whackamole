@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import re
+from pathlib import PurePosixPath
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from app.media_identity import analyze_media_payloads, extract_release_group
+
+
+VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+
+
+def empty_check_results() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "media": {},
+        "nfo": {},
+        "ua": {},
+        "arr": {},
+        "release_group_policy": {},
+        "flags": [],
+    }
+
+
+def merge_check_results(existing: Any, **updates: Any) -> Dict[str, Any]:
+    payload = existing if isinstance(existing, dict) else {}
+    result = empty_check_results()
+    for key, value in payload.items():
+        if key in result:
+            result[key] = value
+        else:
+            result[key] = value
+    for key, value in updates.items():
+        result[key] = value
+    return result
+
+
+def video_file_payloads(files: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    videos: List[Dict[str, Any]] = []
+    for index, file_info in enumerate(files):
+        name = str(file_info.get("name") or "")
+        if PurePosixPath(name).suffix.lower() not in VIDEO_EXTENSIONS:
+            continue
+        videos.append(
+            {
+                "index": int(file_info.get("index", index) or index),
+                "name": name,
+                "basename": PurePosixPath(name).name,
+                "size": int(file_info.get("size") or 0),
+            }
+        )
+    return videos
+
+
+def build_media_manual_result(verdict: str, reason: str, files: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "source": "mediainfo",
+        "status": "manual_review",
+        "media_status": "error",
+        "verdict": verdict,
+        "reason": reason,
+        "release_title": "",
+        "release_group": "",
+        "confirmed_tags": [],
+        "custom_formats": [],
+        "issues": [
+            {
+                "severity": "ERROR",
+                "key": verdict,
+                "message": reason,
+                "file": "",
+                "tags": [],
+            }
+        ],
+        "video_files": video_file_payloads(files),
+        "mediainfo_files": [],
+        "flags": [
+            {
+                "key": verdict,
+                "label": "MediaInfo Error",
+                "severity": "blocker",
+                "detail": reason,
+            }
+        ],
+    }
+
+
+def analyze_mediainfo(
+    *,
+    item_name: str,
+    files: Sequence[Mapping[str, Any]],
+    mediainfo_payloads: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    video_files = video_file_payloads(files)
+    expected_root = _torrent_root_name(files) or item_name
+    media_result = analyze_media_payloads(
+        release_title=expected_root or item_name,
+        media_files=video_files,
+        mediainfo_payloads=mediainfo_payloads,
+    )
+    media_files = list(media_result.get("mediainfo_files") or [])
+    release_group = str(media_result.get("release_group") or extract_release_group(expected_root or item_name))
+    status = str(media_result.get("status") or "passed")
+    issue_keys = {str(issue.get("key") or "") for issue in media_result.get("issues", []) if isinstance(issue, Mapping)}
+    if not video_files:
+        verdict = "no_video_files"
+    elif not mediainfo_payloads:
+        verdict = "mediainfo_missing"
+    elif status != "passed":
+        verdict = "media_error"
+    else:
+        verdict = "mediainfo_passed"
+    reason = str(media_result.get("reason") or "QUI MediaInfo matches the torrent release traits.")
+    if status == "passed" and media_result.get("media_status") == "confirmed":
+        reason = "QUI MediaInfo matches the torrent release traits."
+    base_result = {
+        **media_result,
+        "version": 1,
+        "source": "mediainfo",
+        "status": status,
+        "verdict": verdict,
+        "reason": reason,
+        "release_title": expected_root,
+        "release_group": release_group,
+        "complete_names": [item["basename"] for item in video_files],
+        "video_files": video_files,
+        "mediainfo_files": media_files,
+        "flags": list(media_result.get("flags") or []),
+        "torrent_root": expected_root,
+    }
+    mismatch_keys = {"resolution_mismatch", "video_codec_mismatch", "audio_codec_mismatch", "audio_channels_mismatch"}
+    if issue_keys.intersection(mismatch_keys):
+        for issue in media_result.get("issues", []):
+            if isinstance(issue, Mapping) and str(issue.get("key") or "") in mismatch_keys:
+                base_result["reason"] = str(issue.get("message") or base_result["reason"])
+                break
+    return base_result
+
+
+def apply_release_group_policy(
+    *,
+    tracker_results: Mapping[str, Sequence[str]],
+    arr_results: Mapping[str, Any],
+    release_group: str,
+    tracker_policies: Mapping[str, Mapping[str, Sequence[str]]],
+    flags: Sequence[Mapping[str, Any]],
+    item_name: str,
+) -> Tuple[str, str, str, Dict[str, Any], List[Dict[str, Any]]]:
+    existing_flags = [dict(flag) for flag in flags]
+    candidate_trackers = _candidate_trackers(tracker_results, arr_results)
+    decisions = []
+    allowed: List[str] = []
+    blocked: List[str] = []
+    normalized_group = _policy_key(release_group)
+
+    for tracker in candidate_trackers:
+        policy = tracker_policies.get(tracker) or {}
+        banned = [str(item) for item in policy.get("banned_release_groups", []) if str(item).strip()]
+        ranked = [str(item) for item in policy.get("ranked_release_groups", []) if str(item).strip()]
+        banned_match = _match_policy_group(release_group, banned)
+        rank = _rank_policy_group(release_group, ranked)
+        if normalized_group and banned_match:
+            blocked.append(tracker)
+            decisions.append(
+                {
+                    "tracker": tracker,
+                    "status": "blocked",
+                    "reason": f"{release_group} is banned on {tracker}.",
+                    "banned_match": banned_match,
+                    "rank": rank,
+                }
+            )
+        else:
+            allowed.append(tracker)
+            decisions.append(
+                {
+                    "tracker": tracker,
+                    "status": "candidate",
+                    "reason": "Release group policy allows this tracker.",
+                    "banned_match": "",
+                    "rank": rank,
+                }
+            )
+
+    if blocked:
+        existing_flags.append(
+            {
+                "key": "banned_release_group",
+                "label": "Banned release group",
+                "severity": "blocker",
+                "detail": f"{release_group or 'Unknown group'} is banned on: {', '.join(blocked)}",
+            }
+        )
+
+    existing_flags.extend(_possible_renamed_flags(arr_results, release_group, item_name))
+    policy_result = {
+        "version": 1,
+        "release_group": release_group,
+        "candidate_trackers": allowed,
+        "blocked_trackers": blocked,
+        "decisions": decisions,
+    }
+    if candidate_trackers and not allowed:
+        return (
+            "blocked",
+            "banned_release_group",
+            f"{release_group or 'This release group'} is banned on every otherwise valid tracker.",
+            policy_result,
+            _dedupe_flags(existing_flags),
+        )
+    if allowed:
+        return (
+            "candidate",
+            "candidate",
+            f"Valid upload candidate on: {', '.join(allowed)}",
+            policy_result,
+            _dedupe_flags(existing_flags),
+        )
+    status = str(arr_results.get("status") or "")
+    reason = str(arr_results.get("reason") or "")
+    return status, _verdict_for_status(status), reason, policy_result, _dedupe_flags(existing_flags)
+
+
+def _candidate_trackers(tracker_results: Mapping[str, Sequence[str]], arr_results: Mapping[str, Any]) -> List[str]:
+    decisions = arr_results.get("decisions") if isinstance(arr_results, Mapping) else None
+    if isinstance(decisions, list):
+        return [
+            str(decision.get("tracker"))
+            for decision in decisions
+            if isinstance(decision, Mapping) and decision.get("status") == "candidate" and str(decision.get("tracker"))
+        ]
+    return [str(tracker) for tracker in tracker_results.get("passed", []) if str(tracker)]
+
+
+def _possible_renamed_flags(arr_results: Mapping[str, Any], release_group: str, item_name: str) -> List[Dict[str, Any]]:
+    if not release_group:
+        return []
+    local_key = _release_key(item_name)
+    for decision in arr_results.get("decisions", []) if isinstance(arr_results, Mapping) else []:
+        if not isinstance(decision, Mapping):
+            continue
+        best = decision.get("best_release")
+        if not isinstance(best, Mapping):
+            continue
+        title = str(best.get("title") or "")
+        if _policy_key(extract_release_group(title)) == _policy_key(release_group) and _release_key(title) != local_key:
+            return [
+                {
+                    "key": "possible_renamed_release",
+                    "label": "Possible renamed release",
+                    "severity": "warning",
+                    "detail": "Arr found a same-group release with a different release title.",
+                }
+            ]
+    return []
+
+
+def _torrent_root_name(files: Sequence[Mapping[str, Any]]) -> str:
+    roots = []
+    for file_info in files:
+        name = str(file_info.get("name") or "")
+        parts = PurePosixPath(name).parts
+        if len(parts) > 1:
+            roots.append(parts[0])
+    if roots and len(set(roots)) == 1:
+        return roots[0]
+    return ""
+
+
+def _release_key(value: str) -> str:
+    name = PurePosixPath(str(value or "")).name
+    name = re.sub(r"\.(?:mkv|mp4|avi|m2ts|ts|mov|wmv|nfo)$", "", name, flags=re.IGNORECASE)
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+def _policy_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _match_policy_group(release_group: str, values: Sequence[str]) -> str:
+    wanted = _policy_key(release_group)
+    if not wanted:
+        return ""
+    for value in values:
+        if _policy_key(value) == wanted:
+            return str(value)
+    return ""
+
+
+def _rank_policy_group(release_group: str, ranked: Sequence[str]) -> Optional[int]:
+    wanted = _policy_key(release_group)
+    for index, value in enumerate(ranked, start=1):
+        if _policy_key(value) == wanted:
+            return index
+    return None
+
+
+def _verdict_for_status(status: str) -> str:
+    if status == "candidate":
+        return "candidate"
+    if status == "blocked":
+        return "not_upgrade"
+    if status == "manual_review":
+        return "manual_review"
+    return status or "unknown"
+
+
+def _dedupe_flags(flags: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set()
+    result = []
+    for flag in flags:
+        key = str(flag.get("key") or "")
+        detail = str(flag.get("detail") or "")
+        dedupe_key = (key, detail)
+        if not key or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        result.append(dict(flag))
+    return result

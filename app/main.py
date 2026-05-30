@@ -181,7 +181,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
     arr = item["arr_result"]
     stored_checks = item["check_results"]
     checks = {
-        "media": stored_checks.get("media") or stored_checks.get("nfo") or {},
+        "media": stored_checks.get("media") or {},
         "nfo": stored_checks.get("nfo") or {},
         "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
         "arr": stored_checks.get("arr") or arr,
@@ -330,7 +330,7 @@ def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
     def state_for(key: str, done: bool) -> str:
         if key == "queue" and status_value in {"queued", "deferred"}:
             return "active"
-        if key == "media" and stage in {"media", "nfo"}:
+        if key == "media" and stage == "media":
             return "active"
         if key == "ua" and stage == "ua":
             return "active"
@@ -588,7 +588,7 @@ async def dashboard(
         },
         "current_url": _dashboard_url(selected, page, filter_media, missing_values, filter_hide_any),
     }
-    return templates.TemplateResponse("dashboard.html", context)
+    return templates.TemplateResponse(request, "dashboard.html", context)
 
 
 @app.get("/items/{item_id}", response_class=HTMLResponse)
@@ -596,11 +596,13 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         return templates.TemplateResponse(
+            request,
             "item.html",
             {"request": request, "item": None, "service": request.app.state.service.snapshot()},
             status_code=404,
         )
     return templates.TemplateResponse(
+        request,
         "item.html",
         {
             "request": request,
@@ -658,7 +660,7 @@ async def resume_maintenance(return_to: str = Form("/")) -> RedirectResponse:
 
 @app.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("config.html", _config_context(request))
+    return templates.TemplateResponse(request, "config.html", _config_context(request))
 
 
 @app.post("/config", response_class=HTMLResponse)
@@ -779,7 +781,7 @@ async def save_config(
     _update_secret(secrets, "whackamole_api_token", whackamole_api_token, clear_whackamole_api_token)
 
     manager.save(cfg)
-    return templates.TemplateResponse("config.html", _config_context(request, message="Settings saved."))
+    return templates.TemplateResponse(request, "config.html", _config_context(request, message="Settings saved."))
 
 
 @app.post("/config/probe", response_class=HTMLResponse)
@@ -854,7 +856,7 @@ async def probe_config(request: Request) -> HTMLResponse:
     if not results:
         results.append({"name": "Configuration", "state": "idle", "detail": "Add URLs and saved keys before probing."})
 
-    return templates.TemplateResponse("config.html", _config_context(request, probe_results=results))
+    return templates.TemplateResponse(request, "config.html", _config_context(request, probe_results=results))
 
 
 @app.get("/api/status")

@@ -93,11 +93,11 @@ class InterruptedUploadAssistantClient:
         return "Received SIGTERM, shutting down gracefully...\nWeb UI server stopped\nShutdown complete"
 
 
-class NfoQuiClient:
-    nfo_text = ""
+class MediaQuiClient:
     files = []
     mediainfo = {}
     mediainfo_error = None
+    download_calls = 0
 
     def __init__(self, _cfg, _api_key):
         pass
@@ -117,7 +117,8 @@ class NfoQuiClient:
         }
 
     async def download_torrent_file(self, _torrent_hash, _file_index, max_bytes=262144):
-        return self.nfo_text.encode("utf-8")
+        type(self).download_calls += 1
+        raise AssertionError("NFO files should not be downloaded during MediaInfo identity checks")
 
 
 class PassingUploadAssistantClient:
@@ -129,22 +130,6 @@ class PassingUploadAssistantClient:
     async def execute_site_check(self, _path, _args, _session_id):
         type(self).calls += 1
         return "Trackers passed all checks: DP"
-
-
-def _nfo_text(release_title, complete_name=None):
-    complete_name = complete_name or f"{release_title}.mkv"
-    return f"""
-+---------+
-| Release |
-+---------+
-{release_title}
-
-+-----------+
-| Mediainfo |
-+-----------+
-General
-Complete name                            : {complete_name}
-"""
 
 
 def _insert_check_item(db, name="Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"):
@@ -230,12 +215,14 @@ def test_incremental_poll_stops_after_all_known_page(tmp_path, monkeypatch):
 
 def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):
     release_title = "Interrupted.Movie.2026.1080p.WEB-DL-GRP"
-    NfoQuiClient.files = [
+    MediaQuiClient.files = [
         {"index": 0, "name": f"{release_title}/{release_title}.nfo", "size": 100},
         {"index": 1, "name": f"{release_title}/{release_title}.mkv", "size": 1000},
     ]
-    NfoQuiClient.nfo_text = _nfo_text(release_title)
-    monkeypatch.setattr("app.service.QuiClient", NfoQuiClient)
+    MediaQuiClient.mediainfo = {}
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", InterruptedUploadAssistantClient)
     manager = ConfigManager(str(tmp_path))
     cfg = manager.load()
@@ -304,21 +291,22 @@ def test_service_start_recovers_stale_checking_rows(tmp_path):
     assert db.get_kv("last_startup_recovered_checks") == "1"
 
 
-def test_missing_nfo_uses_mediainfo_and_continues_to_ua(tmp_path, monkeypatch):
-    NfoQuiClient.files = [
-        {"index": 0, "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP/episode.mkv", "size": 1000}
+def test_nfo_is_ignored_when_mediainfo_passes_and_continues_to_ua(tmp_path, monkeypatch):
+    MediaQuiClient.files = [
+        {"index": 0, "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP/ignored.nfo", "size": 100},
+        {"index": 1, "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP/episode.mkv", "size": 1000},
     ]
-    NfoQuiClient.nfo_text = ""
-    NfoQuiClient.mediainfo = {
-        "fileIndex": 0,
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 1,
         "streams": [
             {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
             {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
         ],
     }
-    NfoQuiClient.mediainfo_error = None
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
     PassingUploadAssistantClient.calls = 0
-    monkeypatch.setattr("app.service.QuiClient", NfoQuiClient)
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
     manager = ConfigManager(str(tmp_path))
     cfg = manager.load()
@@ -336,18 +324,19 @@ def test_missing_nfo_uses_mediainfo_and_continues_to_ua(tmp_path, monkeypatch):
 
     row = db.get_item(item_id)
     assert row["verdict"] != "nfo_missing"
+    assert MediaQuiClient.download_calls == 0
     assert PassingUploadAssistantClient.calls == 1
 
 
-def test_missing_nfo_and_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
-    NfoQuiClient.files = [
+def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
+    MediaQuiClient.files = [
         {"index": 0, "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP/episode.mkv", "size": 1000}
     ]
-    NfoQuiClient.nfo_text = ""
-    NfoQuiClient.mediainfo = {}
-    NfoQuiClient.mediainfo_error = RuntimeError("no mediainfo")
+    MediaQuiClient.mediainfo = {}
+    MediaQuiClient.mediainfo_error = RuntimeError("no mediainfo")
+    MediaQuiClient.download_calls = 0
     PassingUploadAssistantClient.calls = 0
-    monkeypatch.setattr("app.service.QuiClient", NfoQuiClient)
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
     manager = ConfigManager(str(tmp_path))
     cfg = manager.load()
@@ -369,23 +358,23 @@ def test_missing_nfo_and_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch
     assert PassingUploadAssistantClient.calls == 0
 
 
-def test_nfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, monkeypatch):
+def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, monkeypatch):
     release_title = "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"
-    NfoQuiClient.files = [
+    MediaQuiClient.files = [
         {"index": 0, "name": f"{release_title}/{release_title}.nfo", "size": 100},
         {"index": 1, "name": f"{release_title}/{release_title}.mkv", "size": 1000},
     ]
-    NfoQuiClient.nfo_text = _nfo_text(release_title)
-    NfoQuiClient.mediainfo = {
+    MediaQuiClient.mediainfo = {
         "fileIndex": 1,
         "streams": [
             {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
             {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
         ],
     }
-    NfoQuiClient.mediainfo_error = None
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
     PassingUploadAssistantClient.calls = 0
-    monkeypatch.setattr("app.service.QuiClient", NfoQuiClient)
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
 
     async def fake_compare_item_with_arr(**_kwargs):
@@ -415,4 +404,5 @@ def test_nfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, monkeypa
     assert row["status"] == "blocked"
     assert row["verdict"] == "banned_release_group"
     assert row["check_stage"] == "done"
+    assert MediaQuiClient.download_calls == 0
     assert PassingUploadAssistantClient.calls == 1

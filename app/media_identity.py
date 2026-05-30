@@ -309,17 +309,21 @@ def media_file_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     video = _first_track(tracks, "video")
     audios = _tracks_by_type(tracks, "audio")
     texts = _tracks_by_type(tracks, "text")
+    subtitle_count = _subtitle_count(tracks)
     default_audio = _default_track(audios) or (audios[0] if audios else {})
     traits = traits_from_mediainfo(payload)
+    media = _mapping_value(payload, "media")
+    media_ref = _mapping_value(media, "@ref") if isinstance(media, Mapping) else ""
     return {
         "index": int(payload.get("fileIndex") or payload.get("index") or 0),
-        "name": str(payload.get("relativePath") or payload.get("path") or ""),
+        "name": str(payload.get("relativePath") or payload.get("path") or media_ref or ""),
         "traits": traits_payload(traits),
         "tags": list(traits.tags),
         "custom_formats": list(traits.custom_formats),
         "video": _track_payload(video),
         "audio": [_track_payload(track) for track in audios],
         "text": [_track_payload(track) for track in texts],
+        "subtitle_count": subtitle_count,
         "default_audio": _track_payload(default_audio),
     }
 
@@ -336,17 +340,18 @@ def traits_from_mediainfo(payload: Mapping[str, Any]) -> ReleaseTraits:
         if isinstance(value, (str, int, float))
     )
     fallback = parse_release_traits(text)
-    width = _number_from_value(video.get("Width") or video.get("width"))
-    height = _number_from_value(video.get("Height") or video.get("height"))
-    scan = str(video.get("ScanType") or video.get("scanType") or "").lower()
+    width = _number_from_value(_track_value(video, "Width", "width"))
+    height = _number_from_value(_track_value(video, "Height", "height"))
+    scan = _track_text(video, "ScanType", "scanType").lower()
     resolution = _resolution_from_dimensions(width, height, scan)
     codec = _codec_from_mediainfo(video, fallback.codec)
     audio_format = _audio_format_from_mediainfo(audio, fallback.audio_format)
     channels = _mediainfo_channels(audio)
     audio_objects = _audio_objects_from_mediainfo(audio, fallback.audio_objects)
     hdr_rank, hdr_formats, dv_profile = _hdr_from_mediainfo(video, fallback)
-    bit_depth = _first_text(video, "BitDepth", "bitDepth") or fallback.bit_depth
-    chroma = _first_text(video, "ChromaSubsampling", "chromaSubsampling") or fallback.chroma
+    bit_depth = _track_text(video, "BitDepth", "bitDepth") or fallback.bit_depth
+    chroma = _track_text(video, "ChromaSubsampling", "chromaSubsampling") or fallback.chroma
+    subtitle_count = _subtitle_count(tracks)
     tags = _dedupe(
         [
             value
@@ -362,7 +367,7 @@ def traits_from_mediainfo(payload: Mapping[str, Any]) -> ReleaseTraits:
                 bit_depth,
                 chroma,
                 *_track_languages(audios),
-                *_subtitle_tags_from_tracks(_tracks_by_type(tracks, "text")),
+                *_subtitle_tags_from_tracks(_tracks_by_type(tracks, "text"), subtitle_count),
             )
             if value
         ]
@@ -382,36 +387,43 @@ def traits_from_mediainfo(payload: Mapping[str, Any]) -> ReleaseTraits:
         bit_depth=bit_depth,
         chroma=chroma,
         languages=tuple(_track_languages(audios)),
-        subtitle_tags=tuple(_subtitle_tags_from_tracks(_tracks_by_type(tracks, "text"))),
+        subtitle_tags=tuple(_subtitle_tags_from_tracks(_tracks_by_type(tracks, "text"), subtitle_count)),
         tags=tuple(tags),
         custom_formats=tuple(_custom_formats_from_tags(tags, "", codec, audio_format, hdr_formats, ())),
     )
 
 
 def mediainfo_tracks(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
-    streams = payload.get("streams")
-    if isinstance(streams, list):
-        return [item for item in streams if isinstance(item, Mapping)]
-    raw = payload.get("rawJSON")
+    for key in ("streams", "track", "tracks"):
+        tracks = _mapping_value(payload, key)
+        if isinstance(tracks, list):
+            return [item for item in tracks if isinstance(item, Mapping)]
+    raw = _mapping_value(payload, "rawJSON")
     if isinstance(raw, str) and raw.strip():
         try:
             decoded = json.loads(raw)
         except json.JSONDecodeError:
             decoded = {}
-        tracks = decoded.get("media", {}).get("track") if isinstance(decoded, Mapping) else None
-        if isinstance(tracks, list):
-            return [item for item in tracks if isinstance(item, Mapping)]
-    media = payload.get("media")
-    tracks = media.get("track") if isinstance(media, Mapping) else None
-    if isinstance(tracks, list):
-        return [item for item in tracks if isinstance(item, Mapping)]
+        nested = mediainfo_tracks(decoded) if isinstance(decoded, Mapping) else []
+        if nested:
+            return nested
+    elif isinstance(raw, Mapping):
+        nested = mediainfo_tracks(raw)
+        if nested:
+            return nested
+    media = _mapping_value(payload, "media")
+    if isinstance(media, Mapping):
+        for key in ("track", "tracks", "streams"):
+            tracks = _mapping_value(media, key)
+            if isinstance(tracks, list):
+                return [item for item in tracks if isinstance(item, Mapping)]
     return []
 
 
 def extract_release_group(value: str) -> str:
     name = PurePosixPath(str(value or "")).name
     name = re.sub(r"\.(?:mkv|mp4|m4v|avi|m2ts|ts|mov|wmv|nfo)$", "", name, flags=re.IGNORECASE)
-    match = re.search(r"-([A-Za-z0-9][A-Za-z0-9._]{1,})$", name)
+    match = re.search(r"-([A-Za-z0-9][A-Za-z0-9._&+]{1,})$", name)
     return match.group(1) if match else ""
 
 
@@ -457,6 +469,7 @@ def _validate_media_file(title_traits: ReleaseTraits, file_result: Mapping[str, 
     video = file_result.get("video") if isinstance(file_result.get("video"), Mapping) else {}
     audios = file_result.get("audio") if isinstance(file_result.get("audio"), list) else []
     texts = file_result.get("text") if isinstance(file_result.get("text"), list) else []
+    subtitle_count = int(file_result.get("subtitle_count") or len(texts) or 0)
     default_audio = file_result.get("default_audio") if isinstance(file_result.get("default_audio"), Mapping) else {}
     issues: List[Dict[str, Any]] = []
 
@@ -520,7 +533,7 @@ def _validate_media_file(title_traits: ReleaseTraits, file_result: Mapping[str, 
 
     issues.extend(_validate_hdr(title_traits, traits, file_result))
     issues.extend(_bitrate_warnings(title_traits, video, default_audio, file_result))
-    issues.extend(_track_sanity_warnings(title_traits, audios, texts, default_audio, traits, file_result))
+    issues.extend(_track_sanity_warnings(title_traits, audios, texts, subtitle_count, default_audio, traits, file_result))
 
     if not issues:
         issues.append(_issue("INFO", "media_confirmed", "MediaInfo traits match the release name.", file_result))
@@ -593,6 +606,7 @@ def _track_sanity_warnings(
     title_traits: ReleaseTraits,
     audios: Sequence[Any],
     texts: Sequence[Any],
+    subtitle_count: int,
     default_audio: Mapping[str, Any],
     traits: Mapping[str, Any],
     file_result: Mapping[str, Any],
@@ -608,12 +622,12 @@ def _track_sanity_warnings(
         issues.append(_issue("WARNING", "no_english_audio", "No English audio track is marked on an English-looking release.", file_result))
     if "atmos" in default_title and "Atmos" not in traits.get("audio_objects", []):
         issues.append(_issue("WARNING", "atmos_title_without_metadata", "Audio title says Atmos but object/JOC metadata was not found.", file_result))
-    forced_subs = [track for track in texts if "forced" in _track_title(track).lower() or str(track.get("Forced") or "").lower() == "yes"]
+    forced_subs = [track for track in texts if "forced" in _track_title(track).lower() or _is_yes(_track_value(track, "Forced"))]
     for track in forced_subs:
-        if str(track.get("Default") or "").lower() not in {"yes", "true"} and str(track.get("Forced") or "").lower() not in {"yes", "true"}:
+        if not _is_yes(_track_value(track, "Default")) and not _is_yes(_track_value(track, "Forced")):
             issues.append(_issue("WARNING", "forced_subtitle_not_marked", "Forced subtitles exist but are not marked forced/default.", file_result))
             break
-    if not texts:
+    if subtitle_count <= 0:
         issues.append(_issue("WARNING", "no_subtitles", "No subtitles were found in MediaInfo.", file_result))
     return issues
 
@@ -728,7 +742,11 @@ def _parse_audio_format(text: str) -> Tuple[str, int]:
         ("DD+ Atmos", r"\b(?:ddp|dd\+|eac3|e[ ._-]?ac[ ._-]?3|dolby[ ._-]?digital[ ._-]?plus)(?=[ ._-]?\d|\b)", r"\batmos\b"),
         ("Atmos", r"\batmos\b", None),
         ("TrueHD", r"\b(?:true[ ._-]?hd|truhd|mlp[ ._-]?fba)(?=[ ._-]?\d|\b)", None),
-        ("DTS-HD MA", r"\bdts[ ._-]?hd[ ._-]?ma\b|\bdts[ ._-]?ma\b|\bdts[ ._-]?hd[ ._-]?master\b", None),
+        (
+            "DTS-HD MA",
+            r"\bdts[ ._-]?hd[ ._-]?ma(?=[ ._-]?\d|\b)|\bdts[ ._-]?ma(?=[ ._-]?\d|\b)|\bdts[ ._-]?hd[ ._-]?master\b",
+            None,
+        ),
         ("FLAC", r"\bflac(?=[ ._-]?\d|\b)", None),
         ("PCM", r"\b(?:pcm|lpcm)(?=[ ._-]?\d|\b)", None),
         ("DTS-HD HRA", r"\bdts[ ._-]?hd[ ._-]?hra\b", None),
@@ -905,29 +923,48 @@ def _custom_formats_from_tags(
 
 
 def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tuple[int, List[str], str]:
-    text = " ".join(
-        str(video.get(key) or "")
-        for key in (
-            "HDR_Format",
-            "HDR_Format_String",
-            "HDR_Format_Commercial",
-            "HDR_Format_Compatibility",
-            "HDR_Format_Profile",
-            "MasteringDisplay_ColorPrimaries",
-            "MasteringDisplay_Luminance",
-            "MaxCLL",
-            "MaxFALL",
-            "colour_primaries",
-            "transfer_characteristics",
-            "matrix_coefficients",
-        )
+    hdr_format_text = _joined_track_text(
+        video,
+        "HDR_Format",
+        "HDR_Format_String",
+        "HDR_Format_Commercial",
+        "HDR_Format_Compatibility",
+        "HDR_Format_Profile",
+        "HDR_Format_Settings",
     ).lower()
-    has_dv = "dolby vision" in text or re.search(r"\bdv\b|dovi", text)
+    color_text = _joined_track_text(
+        video,
+        "MasteringDisplay_ColorPrimaries",
+        "MasteringDisplay_Luminance",
+        "MaxCLL",
+        "MaxFALL",
+        "colour_primaries",
+        "transfer_characteristics",
+        "matrix_coefficients",
+        "ColorPrimaries",
+        "TransferCharacteristics",
+        "MatrixCoefficients",
+    ).lower()
+    descriptive_text = _joined_track_text(video, "Title", "title", "Format_Profile", "Format_Commercial_IfAny").lower()
+    text = " ".join(value for value in (hdr_format_text, color_text, descriptive_text) if value)
+    bit_depth = _number_from_value(_track_value(video, "BitDepth", "bitDepth"))
+    transfer = _track_text(video, "transfer_characteristics", "TransferCharacteristics").lower()
+    primaries = _track_text(video, "colour_primaries", "ColorPrimaries").lower()
+    has_dv = bool(
+        "dolby vision" in text
+        or re.search(r"\bdv\b|dovi", text)
+        or re.search(r"\bdvhe[. ]?0?[578]\b", text)
+        or "bl+rpu" in text
+    )
     has_hdr10plus = "hdr10+" in text or "smpte st 2094" in text or "dynamic metadata" in text
-    has_hdr10 = "hdr10" in text or "smpte st 2086" in text or "mastering display" in text or "maxcll" in text
+    explicit_hdr10 = "hdr10" in hdr_format_text or "smpte st 2086" in text or "mastering display" in text or "maxcll" in text
+    inferred_hdr10 = (
+        bit_depth >= 10
+        and "bt.2020" in primaries
+        and ("pq" in transfer or "st 2084" in transfer or "st2084" in transfer)
+    )
+    has_hdr10 = explicit_hdr10 or inferred_hdr10
     has_hlg = "hlg" in text
-    if "bt.2020" in text and ("pq" in text or "st 2084" in text):
-        has_hdr10 = True
     profile_match = re.search(r"profile[^\d]*([578])|dvhe[. ]0?([578])", text)
     dv_profile = f"DV P{profile_match.group(1) or profile_match.group(2)}" if profile_match else fallback.dv_profile
     formats = []
@@ -953,19 +990,20 @@ def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tu
 
 
 def _codec_from_mediainfo(video: Mapping[str, Any], fallback: str) -> str:
-    text = " ".join(
-        str(video.get(key) or "")
-        for key in ("Format", "Format_Commercial_IfAny", "CodecID", "Encoded_Library_Name", "Encoded_Library")
+    text = _joined_track_text(
+        video,
+        "Format",
+        "Format_Commercial_IfAny",
+        "CodecID",
+        "Encoded_Library_Name",
+        "Encoded_Library",
     ).lower()
     parsed = _parse_codec(text)
     return parsed or fallback
 
 
 def _audio_format_from_mediainfo(audio: Mapping[str, Any], fallback: str) -> str:
-    text = " ".join(
-        str(audio.get(key) or "")
-        for key in ("Format", "Format_Commercial_IfAny", "Format_Profile", "CodecID", "Title", "title")
-    ).lower()
+    text = _joined_track_text(audio, "Format", "Format_Commercial_IfAny", "Format_Profile", "CodecID", "Title", "title").lower()
     parsed, _rank = _parse_audio_format(text)
     if parsed == "Atmos" and fallback:
         return fallback
@@ -979,10 +1017,10 @@ def _audio_objects_from_mediainfo(audio: Mapping[str, Any], fallback: Sequence[s
 
 
 def _mediainfo_channels(audio: Mapping[str, Any]) -> float:
-    value = str(audio.get("Channels") or audio.get("channels") or audio.get("Channel(s)") or "")
+    value = _track_text(audio, "Channels", "channels", "Channel(s)")
     match = re.search(r"\d+(?:\.\d+)?", value)
     if not match:
-        layout = str(audio.get("ChannelLayout") or audio.get("ChannelLayout_Original") or "").lower()
+        layout = _joined_track_text(audio, "ChannelLayout", "ChannelLayout_Original").lower()
         if "l r c lfe ls rs lb rb" in layout:
             return 7.1
         if "l r c lfe ls rs" in layout:
@@ -1032,7 +1070,7 @@ def _resolution_matches(expected: str, actual: str, video: Mapping[str, Any]) ->
         return True
     if expected_height == actual_height:
         return True
-    width = int(video.get("width") or video.get("Width") or 0)
+    width = _number_from_value(_track_value(video, "width", "Width"))
     lower = int(expected_height * 0.70)
     upper = expected_height + 24
     if lower <= actual_height <= upper:
@@ -1046,35 +1084,35 @@ def _track_payload(track: Mapping[str, Any]) -> Dict[str, Any]:
     if not track:
         return {}
     return {
-        "type": str(track.get("@type") or track.get("type") or ""),
-        "format": str(track.get("Format") or track.get("format") or ""),
-        "commercial": str(track.get("Format_Commercial_IfAny") or ""),
-        "profile": str(track.get("Format_Profile") or ""),
+        "type": _track_text(track, "@type", "type"),
+        "format": _track_text(track, "Format", "format"),
+        "commercial": _track_text(track, "Format_Commercial_IfAny"),
+        "profile": _track_text(track, "Format_Profile"),
         "title": _track_title(track),
         "language": _language_name(track),
-        "channels": str(track.get("Channels") or track.get("channels") or ""),
-        "bitrate": str(track.get("BitRate") or track.get("bitRate") or track.get("BitRate_String") or ""),
-        "default": str(track.get("Default") or ""),
-        "forced": str(track.get("Forced") or ""),
-        "width": int(track.get("Width") or track.get("width") or 0),
-        "height": int(track.get("Height") or track.get("height") or 0),
+        "channels": _track_text(track, "Channels", "channels"),
+        "bitrate": _track_text(track, "BitRate", "bitRate", "BitRate_String"),
+        "default": _track_text(track, "Default"),
+        "forced": _track_text(track, "Forced"),
+        "width": _number_from_value(_track_value(track, "Width", "width")),
+        "height": _number_from_value(_track_value(track, "Height", "height")),
     }
 
 
 def _first_track(tracks: Sequence[Mapping[str, Any]], track_type: str) -> Mapping[str, Any]:
     for track in tracks:
-        if str(track.get("@type") or track.get("type") or "").lower() == track_type:
+        if _track_type(track) == track_type:
             return track
     return {}
 
 
 def _tracks_by_type(tracks: Sequence[Mapping[str, Any]], track_type: str) -> List[Mapping[str, Any]]:
-    return [track for track in tracks if str(track.get("@type") or track.get("type") or "").lower() == track_type]
+    return [track for track in tracks if _track_type(track) == track_type]
 
 
 def _default_track(tracks: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
     for track in tracks:
-        if str(track.get("Default") or "").lower() in {"yes", "true"}:
+        if _is_yes(_track_value(track, "Default")):
             return track
     return {}
 
@@ -1083,28 +1121,97 @@ def _track_languages(tracks: Sequence[Mapping[str, Any]]) -> List[str]:
     return _dedupe([_language_name(track) for track in tracks if _language_name(track)])
 
 
-def _subtitle_tags_from_tracks(tracks: Sequence[Mapping[str, Any]]) -> List[str]:
-    tags = []
+def _subtitle_count(tracks: Sequence[Mapping[str, Any]]) -> int:
+    text_tracks = len(_tracks_by_type(tracks, "text"))
+    for track in tracks:
+        if _track_type(track) != "general":
+            continue
+        count = _number_from_value(_track_value(track, "TextCount", "textCount", "Text_Count"))
+        if count:
+            return max(text_tracks, count)
+    return text_tracks
+
+
+def _subtitle_tags_from_tracks(tracks: Sequence[Mapping[str, Any]], subtitle_count: int = 0) -> List[str]:
+    tags = ["Subtitles"] if tracks or subtitle_count > 0 else []
     for track in tracks:
         title = _track_title(track).lower()
-        if "forced" in title or str(track.get("Forced") or "").lower() == "yes":
+        if "forced" in title or _is_yes(_track_value(track, "Forced")):
             tags.append("Forced")
-        if str(track.get("Default") or "").lower() == "yes":
+        if _is_yes(_track_value(track, "Default")):
             tags.append("Default Subs")
     return _dedupe(tags)
 
 
 def _track_title(track: Mapping[str, Any]) -> str:
-    return str(track.get("Title") or track.get("title") or "")
+    return _track_text(track, "Title", "title")
 
 
 def _language_name(track: Mapping[str, Any]) -> str:
-    return str(track.get("Language") or track.get("language") or "").strip().lower()
+    value = _track_text(track, "Language", "language").strip().lower()
+    primary = value.split("-", 1)[0]
+    aliases = {
+        "en": "english",
+        "eng": "english",
+        "english": "english",
+        "de": "german",
+        "ger": "german",
+        "deu": "german",
+        "fr": "french",
+        "fre": "french",
+        "fra": "french",
+        "es": "spanish",
+        "spa": "spanish",
+        "it": "italian",
+        "ita": "italian",
+        "ja": "japanese",
+        "jpn": "japanese",
+        "ko": "korean",
+        "kor": "korean",
+        "ru": "russian",
+        "rus": "russian",
+    }
+    return aliases.get(primary, aliases.get(value, value))
+
+
+def _track_type(track: Mapping[str, Any]) -> str:
+    return _track_text(track, "@type", "type").lower()
+
+
+def _track_text(track: Mapping[str, Any], *keys: str) -> str:
+    value = _track_value(track, *keys)
+    return str(value or "").strip()
+
+
+def _joined_track_text(track: Mapping[str, Any], *keys: str) -> str:
+    return " ".join(_track_text(track, key) for key in keys if _track_text(track, key))
+
+
+def _track_value(track: Mapping[str, Any], *keys: str) -> Any:
+    return _mapping_value(track, *keys)
+
+
+def _mapping_value(mapping: Mapping[str, Any], *keys: str) -> Any:
+    if not isinstance(mapping, Mapping):
+        return None
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    lowered = {str(key).lower(): value for key, value in mapping.items()}
+    for key in keys:
+        value = lowered.get(str(key).lower())
+        if value is not None:
+            return value
+    return None
+
+
+def _is_yes(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"yes", "true", "1"}
 
 
 def _first_text(track: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
-        value = str(track.get(key) or "").strip()
+        value = _track_text(track, key)
         if value:
             return value
     return ""
@@ -1126,7 +1233,7 @@ def _bitrate_kbps(track: Mapping[str, Any]) -> float:
 
 
 def _bitrate_bps(track: Mapping[str, Any]) -> float:
-    raw = str(track.get("bitrate") or track.get("BitRate") or track.get("BitRate_String") or "").strip()
+    raw = _track_text(track, "bitrate", "BitRate", "BitRate_String")
     if not raw:
         return 0.0
     match = re.search(r"([\d.]+)", raw.replace(" ", ""))
