@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette import status
 
-from app.clients import QuiClient, RadarrClient, SonarrClient, UploadAssistantClient
+from app.clients import ProfilarrClient, QuiClient, RadarrClient, SonarrClient, UploadAssistantClient
 from app.config import (
     AppConfig,
     ConfigManager,
@@ -81,6 +81,7 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["arr_summary"] = _arr_summary(arr_result)
     item["check_results"] = check_results
     item["check_flags"] = _check_flags(check_results)
+    item["stage_flow"] = _stage_flow(item, check_results, arr_result)
     item["inventory_meta"] = inventory_meta
     item["coverage"] = item_coverage
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
@@ -112,6 +113,7 @@ def _check_results(value: Any) -> Dict[str, Any]:
     parsed = _json_object(value)
     return {
         "version": int(parsed.get("version") or 1),
+        "media": parsed.get("media") if isinstance(parsed.get("media"), dict) else {},
         "nfo": parsed.get("nfo") if isinstance(parsed.get("nfo"), dict) else {},
         "ua": parsed.get("ua") if isinstance(parsed.get("ua"), dict) else {},
         "arr": parsed.get("arr") if isinstance(parsed.get("arr"), dict) else {},
@@ -153,6 +155,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "attempt_count": item["attempt_count"],
         "check_stage": item.get("check_stage", ""),
         "flags": item["check_flags"],
+        "stage_flow": item["stage_flow"],
         "baseline": bool(item["baseline"]),
         "ignored_reason": item["ignored_reason"],
         "tracker_results": item["tracker_results"],
@@ -178,6 +181,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
     arr = item["arr_result"]
     stored_checks = item["check_results"]
     checks = {
+        "media": stored_checks.get("media") or stored_checks.get("nfo") or {},
         "nfo": stored_checks.get("nfo") or {},
         "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
         "arr": stored_checks.get("arr") or arr,
@@ -315,6 +319,37 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
     return " | ".join(parts)
 
 
+def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    status_value = str(item.get("status") or "")
+    stage = str(item.get("check_stage") or "")
+    final_statuses = {"candidate", "blocked", "manual_review", "error", "ignored", "inventory", "baseline"}
+    media_done = bool(check_results.get("media") or check_results.get("nfo"))
+    ua_done = bool(check_results.get("ua"))
+    arr_done = bool(check_results.get("arr") or arr_result)
+
+    def state_for(key: str, done: bool) -> str:
+        if key == "queue" and status_value in {"queued", "deferred"}:
+            return "active"
+        if key == "media" and stage in {"media", "nfo"}:
+            return "active"
+        if key == "ua" and stage == "ua":
+            return "active"
+        if key == "arr" and stage in {"arr", "policy"}:
+            return "active"
+        if done or status_value in final_statuses:
+            return "complete" if done or key == "queue" else "pending"
+        return "pending"
+
+    final_state = "complete" if status_value in final_statuses else ("active" if stage == "done" else "pending")
+    return [
+        {"key": "queue", "label": "QUEUE", "state": state_for("queue", status_value not in {"queued", "deferred"})},
+        {"key": "media", "label": "MEDIA", "state": state_for("media", media_done)},
+        {"key": "ua", "label": "UA", "state": state_for("ua", ua_done)},
+        {"key": "arr", "label": "ARR", "state": state_for("arr", arr_done)},
+        {"key": "final", "label": status_value.upper() if status_value else "FINAL", "state": final_state},
+    ]
+
+
 def _arr_result(value: Any) -> Dict[str, Any]:
     return _json_object(value)
 
@@ -364,6 +399,7 @@ def _secret_state(secrets: SecretStore) -> Dict[str, bool]:
         "sonarr_api_key": secrets.has("sonarr_api_key"),
         "radarr_api_key": secrets.has("radarr_api_key"),
         "easycross_api_key": secrets.has("easycross_api_key"),
+        "profilarr_api_key": secrets.has("profilarr_api_key"),
     }
 
 
@@ -663,6 +699,9 @@ async def save_config(
     easycross_url: str = Form(""),
     easycross_api_key: str = Form(""),
     clear_easycross_api_key: Optional[str] = Form(None),
+    profilarr_url: str = Form(""),
+    profilarr_api_key: str = Form(""),
+    clear_profilarr_api_key: Optional[str] = Form(None),
     whackamole_api_token: str = Form(""),
     clear_whackamole_api_token: Optional[str] = Form(None),
     policy_dp_banned: Optional[str] = Form(None),
@@ -716,6 +755,7 @@ async def save_config(
     cfg.sonarr.url = sonarr_url.strip().rstrip("/")
     cfg.radarr.url = radarr_url.strip().rstrip("/")
     cfg.easycross.url = easycross_url.strip().rstrip("/")
+    cfg.profilarr.url = profilarr_url.strip().rstrip("/")
     policy_inputs = {
         "DP": (policy_dp_banned, policy_dp_ranked),
         "ULCX": (policy_ulcx_banned, policy_ulcx_ranked),
@@ -735,6 +775,7 @@ async def save_config(
     _update_secret(secrets, "sonarr_api_key", sonarr_api_key, clear_sonarr_api_key)
     _update_secret(secrets, "radarr_api_key", radarr_api_key, clear_radarr_api_key)
     _update_secret(secrets, "easycross_api_key", easycross_api_key, clear_easycross_api_key)
+    _update_secret(secrets, "profilarr_api_key", profilarr_api_key, clear_profilarr_api_key)
     _update_secret(secrets, "whackamole_api_token", whackamole_api_token, clear_whackamole_api_token)
 
     manager.save(cfg)
@@ -790,6 +831,25 @@ async def probe_config(request: Request) -> HTMLResponse:
             results.append({"name": "Radarr", "state": "ok", "detail": detail})
         except Exception as exc:
             results.append({"name": "Radarr", "state": "error", "detail": _short_error(exc)})
+
+    if cfg.profilarr.url:
+        try:
+            client = ProfilarrClient(cfg.profilarr.url, secrets.get("profilarr_api_key"), cfg.safety.arr_search_timeout_seconds)
+            await client.health()
+            status_payload = await client.status() if secrets.has("profilarr_api_key") else {}
+            databases = status_payload.get("databases") if isinstance(status_payload.get("databases"), list) else []
+            if databases:
+                counts = databases[0].get("counts") if isinstance(databases[0], dict) else {}
+                detail = (
+                    f"Connected to Profilarr {status_payload.get('version', '')}. "
+                    f"{counts.get('customFormats', 0)} custom format(s), "
+                    f"{counts.get('regularExpressions', 0)} regex pattern(s)."
+                )
+            else:
+                detail = "Connected. Save the API key to read database status."
+            results.append({"name": "Profilarr", "state": "ok", "detail": detail})
+        except Exception as exc:
+            results.append({"name": "Profilarr", "state": "error", "detail": _short_error(exc)})
 
     if not results:
         results.append({"name": "Configuration", "state": "idle", "detail": "Add URLs and saved keys before probing."})

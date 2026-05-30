@@ -81,6 +81,7 @@ class AppConfig:
     sonarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     radarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     easycross: OptionalEndpoint = field(default_factory=OptionalEndpoint)
+    profilarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     tracker_policies: Dict[str, Dict[str, List[str]]] = field(default_factory=lambda: default_tracker_policies())
 
 

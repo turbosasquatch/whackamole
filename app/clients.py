@@ -192,6 +192,31 @@ class BaseArrClient:
         return {"X-Api-Key": self.api_key or ""}
 
 
+class ProfilarrClient:
+    def __init__(self, url: str, api_key: Optional[str], timeout_seconds: int = 30) -> None:
+        self.url = url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
+
+    async def health(self) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=min(10, self.timeout_seconds)) as client:
+            response = await client.get(f"{self.url}/api/v1/health")
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else {}
+
+    async def status(self) -> Dict[str, Any]:
+        timeout = httpx.Timeout(self.timeout_seconds, connect=min(10, self.timeout_seconds))
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{self.url}/api/v1/status", headers=self._headers())
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else {}
+
+    def _headers(self) -> Dict[str, str]:
+        return {"X-Api-Key": self.api_key or ""}
+
+
 class SonarrClient(BaseArrClient):
     async def list_series(self) -> List[Dict[str, Any]]:
         data = await self._get("/api/v3/series")

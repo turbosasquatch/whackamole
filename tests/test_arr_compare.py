@@ -203,6 +203,52 @@ def test_tracker_decisions_candidate_when_only_lower_audio_exists():
     assert summarize_decisions(decisions)[0] == "candidate"
 
 
+def test_tracker_decisions_block_near_identical_alias_match_and_keep_results():
+    local = parse_release_traits("Movie.2024.2160p.WEB-DL.DD+5.1.DoVi.H265-GRP")
+    releases = [
+        {
+            "protocol": "torrent",
+            "indexer": "upload.cx (API) (Prowlarr)",
+            "title": "Movie.2024.2160p.WEB-DL.DDP5.1.DV.H.265-OTHER",
+            "seeders": 8,
+        }
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["ULCX"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "upload.cx (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "blocked"
+    assert decisions[0]["same_lane_count"] == 1
+    assert decisions[0]["results"][0]["traits"]["audio_format"] == "DD+"
+    assert decisions[0]["results"][0]["traits"]["codec"] == "HEVC"
+
+
+def test_tracker_decisions_block_truehd_dovi_h265_alias_match():
+    local = parse_release_traits("Movie.2024.2160p.BluRay.REMUX.TruHD.7.1.DoVi.H265-GRP")
+    releases = [
+        {
+            "protocol": "torrent",
+            "indexer": "Darkpeers (API) (Prowlarr)",
+            "title": "Movie.2024.2160p.BluRay.REMUX.TrueHD.7.1.DV.HEVC-OTHER",
+            "seeders": 2,
+        }
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["DP"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "Darkpeers (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "blocked"
+    assert decisions[0]["best_release"]["traits"]["audio_format"] == "TrueHD"
+
+
 def test_tracker_decisions_unknown_alias_manual_review():
     local = parse_release_traits("Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP")
 

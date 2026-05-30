@@ -151,7 +151,14 @@
               </div>
             {% endif %}
           </td>
-          <td><span class="pill status-{{ item.status }}">{{ item.status }}</span></td>
+          <td>
+            <span class="pill status-{{ item.status }}">{{ item.status }}</span>
+            <div class="stage-flow compact">
+              {% for step in item.stage_flow %}
+                <span class="stage-step {{ step.state }}">{{ step.label }}</span>
+              {% endfor %}
+            </div>
+          </td>
           <td>
             {% if item.verdict %}
               <strong>{{ item.verdict }}</strong>

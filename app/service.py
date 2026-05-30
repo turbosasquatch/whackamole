@@ -378,13 +378,13 @@ class WhackamoleService:
             return
         check_results = empty_check_results()
 
-        self.db.update_check_stage(item_id, "nfo", "Checking QUI MediaInfo identity before UA.", check_results)
+        self.db.update_check_stage(item_id, "media", "Checking QUI MediaInfo identity before UA.", check_results)
         qui = QuiClient(cfg, self.secrets.get("qui_api_key"))
         try:
             torrent_files = await qui.list_torrent_files(str(item["hash"]))
             video_files = video_file_payloads(torrent_files)
             mediainfo_payloads = []
-            for video_file in video_files[:10]:
+            for video_file in video_files:
                 payload = await qui.torrent_file_mediainfo(str(item["hash"]), int(video_file["index"]))
                 payload.setdefault("fileIndex", int(video_file["index"]))
                 payload.setdefault("relativePath", str(video_file.get("name") or ""))
@@ -426,7 +426,12 @@ class WhackamoleService:
                 f"Whackamole could not read QUI MediaInfo: {str(exc)[:180]}",
                 [],
             )
-            check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
+            check_results = merge_check_results(
+                check_results,
+                media=nfo_result,
+                nfo=nfo_result,
+                flags=nfo_result.get("flags", []),
+            )
             self.db.update_status(
                 item_id,
                 "manual_review",
@@ -440,7 +445,12 @@ class WhackamoleService:
             )
             return
 
-        check_results = merge_check_results(check_results, nfo=nfo_result, flags=nfo_result.get("flags", []))
+        check_results = merge_check_results(
+            check_results,
+            media=nfo_result,
+            nfo=nfo_result,
+            flags=nfo_result.get("flags", []),
+        )
         if nfo_result.get("status") != "passed":
             self.db.update_status(
                 item_id,

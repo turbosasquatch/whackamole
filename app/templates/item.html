@@ -46,6 +46,15 @@
   </section>
 
   <section class="details">
+    <h2>Stage</h2>
+    <div class="stage-flow">
+      {% for step in item.stage_flow %}
+        <span class="stage-step {{ step.state }}">{{ step.label }}</span>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="details">
     <h2>Paths</h2>
     <dl>
       <dt>QUI path</dt>
@@ -76,39 +85,46 @@
   </section>
 
   <section class="details">
-    <h2>Decision</h2>
+    <h2>UA</h2>
     <dl>
       <dt>Reason</dt>
       <dd>{{ item.reason or "-" }}</dd>
-      <dt>Trackers</dt>
+      <dt>Tracker checks</dt>
       <dd>
         {% set buckets = [
-          ("passed", "Missing/upload-worthy", "UA says this content passed checks and looks worth uploading."),
-          ("dupe", "Potential dupes", "UA found similar or matching content."),
+          ("passed", "Eligible after UA", "UA says this content passed checks and should continue to ARR."),
+          ("dupe", "Duplicates", "UA found similar or matching content."),
           ("skipped", "Skipped", "UA skipped these trackers because of tracker-specific conditions."),
-          ("error", "Errors", "UA or Whackamole could not complete checking.")
+          ("error", "Errors", "UA could not complete checking.")
         ] %}
-        <div class="tracker-buckets">
-          {% for key, label, help_text in buckets %}
-            {% set trackers = item.tracker_buckets.get(key, []) %}
-            {% if trackers %}
-              <div class="tracker-bucket">
-                <strong>{{ label }}</strong>
-                <span>{{ help_text }}</span>
-                <ul>
-                  {% for tracker in trackers %}
-                    <li>
-                      <span class="tracker-name">{{ tracker.name }}</span>
-                    </li>
-                  {% endfor %}
-                </ul>
-              </div>
+        <table class="mini-table">
+          <thead>
+            <tr>
+              <th>Result</th>
+              <th>Trackers</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key, label, help_text in buckets %}
+              {% set trackers = item.tracker_buckets.get(key, []) %}
+              {% if trackers %}
+                <tr class="tracker-row {{ key }}">
+                  <td><strong>{{ label }}</strong></td>
+                  <td>
+                    {% for tracker in trackers %}
+                      <span class="tracker-name">{{ tracker.name }}</span>{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                  </td>
+                  <td>{{ help_text }}</td>
+                </tr>
+              {% endif %}
+            {% endfor %}
+            {% if not item.tracker_summary %}
+              <tr><td colspan="3" class="muted">No UA tracker result recorded.</td></tr>
             {% endif %}
-          {% endfor %}
-          {% if not item.tracker_summary %}
-            <span class="muted">-</span>
-          {% endif %}
-        </div>
+          </tbody>
+        </table>
       </dd>
       <dt>Attempts</dt>
       <dd>{{ item.attempt_count }}</dd>
@@ -118,47 +134,109 @@
   </section>
 
   <section class="details">
-    <h2>Check Timeline</h2>
+    <h2>Media Info Check</h2>
     {% set checks = item.check_results %}
+    {% set media = checks.media or checks.nfo or {} %}
     <dl>
       <dt>Current stage</dt>
       <dd>{{ item.check_stage or "-" }}</dd>
-      <dt>MediaInfo / NFO</dt>
+      <dt>Result</dt>
       <dd>
-        {% set nfo = checks.nfo or {} %}
-        <strong>{{ nfo.verdict or nfo.status or "-" }}</strong>
-        {% if nfo.source %}<div class="muted">Source: {{ nfo.source }}</div>{% endif %}
-        {% if nfo.reason %}<div class="muted">{{ nfo.reason }}</div>{% endif %}
-        {% if nfo.release_title %}<div>Release: {{ nfo.release_title }}</div>{% endif %}
-        {% if nfo.release_group %}<div>Group: {{ nfo.release_group }}</div>{% endif %}
-        {% if nfo.nfo_file %}<div class="path">{{ nfo.nfo_file.name }}</div>{% endif %}
-        {% if nfo.supporting_nfo %}
-          <div class="muted">NFO: {{ nfo.supporting_nfo.verdict or nfo.supporting_nfo.status }}</div>
+        <strong>{{ media.media_status or media.verdict or media.status or "-" }}</strong>
+        {% if media.source %}<div class="muted">Source: {{ media.source }}</div>{% endif %}
+        {% if media.reason %}<div class="muted">{{ media.reason }}</div>{% endif %}
+        {% if media.release_title %}<div>Release: {{ media.release_title }}</div>{% endif %}
+        {% if media.release_group %}<div>Group: {{ media.release_group }}</div>{% endif %}
+        {% if media.supporting_nfo %}
+          <div class="muted">NFO: {{ media.supporting_nfo.verdict or media.supporting_nfo.status }}</div>
         {% endif %}
       </dd>
-      <dt>Reference video names</dt>
+      <dt>Confirmed tags</dt>
       <dd>
-        {% if nfo.complete_names %}
-          <ul class="file-list">
-            {% for name in nfo.complete_names %}
-              <li><span>{{ name }}</span></li>
+        {% if media.confirmed_tags %}
+          <div class="tag-list">
+            {% for tag in media.confirmed_tags %}
+              <span>{{ tag }}</span>
             {% endfor %}
-          </ul>
+          </div>
         {% else %}
           <span class="muted">-</span>
         {% endif %}
       </dd>
-      <dt>QUI MediaInfo</dt>
+      <dt>Custom formats</dt>
       <dd>
-        {% if nfo.mediainfo_files %}
-          <ul class="file-list">
-            {% for media in nfo.mediainfo_files %}
-              <li><span>{{ media.name or ("File " ~ media.index) }}</span></li>
+        {% if media.custom_formats %}
+          <div class="tag-list">
+            {% for tag in media.custom_formats %}
+              <span>{{ tag }}</span>
             {% endfor %}
-          </ul>
+          </div>
         {% else %}
           <span class="muted">-</span>
         {% endif %}
+      </dd>
+      <dt>Checks</dt>
+      <dd>
+        <table class="mini-table">
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>File</th>
+              <th>Check</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for issue in media.issues or [] %}
+              <tr class="severity-{{ issue.severity | lower }}">
+                <td><span class="severity-pill {{ issue.severity | lower }}">{{ issue.severity }}</span></td>
+                <td>{{ issue.file or "-" }}</td>
+                <td>{{ issue.key or "-" }}</td>
+                <td>{{ issue.message }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="muted">No MediaInfo checks recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </dd>
+      <dt>Files</dt>
+      <dd>
+        <table class="mini-table">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Tags</th>
+              <th>Default audio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for media_file in media.mediainfo_files or [] %}
+              <tr>
+                <td>{{ media_file.name or ("File " ~ media_file.index) }}</td>
+                <td>
+                  {% if media_file.tags %}
+                    <div class="tag-list compact-tags">
+                      {% for tag in media_file.tags %}
+                        <span>{{ tag }}</span>
+                      {% endfor %}
+                    </div>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% set audio = media_file.default_audio or {} %}
+                  {{ audio.format or "-" }}
+                  {% if audio.channels %} · {{ audio.channels }}ch{% endif %}
+                  {% if audio.language %} · {{ audio.language }}{% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="3" class="muted">No QUI MediaInfo file details recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </dd>
       <dt>Release group policy</dt>
       <dd>
@@ -195,7 +273,7 @@
 
   {% if item.arr_result %}
     <section class="details">
-      <h2>Arr Comparison</h2>
+      <h2>ARR</h2>
       <dl>
         <dt>Status</dt>
         <dd>{{ item.arr_result.status or "-" }}</dd>
@@ -228,6 +306,7 @@
               <div class="arr-decision {{ decision.status }}">
                 <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
                 <span>{{ decision.reason }}</span>
+                <span>{{ decision.matched_count or 0 }} torrent result{{ "" if decision.matched_count == 1 else "s" }} · {{ decision.same_lane_count or 0 }} in lane</span>
                 {% if decision.best_release %}
                   <div class="release-match">
                     <b>Best match:</b> {{ decision.best_release.title }}
@@ -235,6 +314,39 @@
                     {% if decision.best_release.seeders is not none %} · {{ decision.best_release.seeders }} seeders{% endif %}
                   </div>
                 {% endif %}
+                <table class="mini-table">
+                  <thead>
+                    <tr>
+                      <th>Indexer</th>
+                      <th>Title</th>
+                      <th>Tags</th>
+                      <th>Seeders</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for release in decision.results or [] %}
+                      {% set traits = release.traits or {} %}
+                      <tr>
+                        <td>{{ release.indexer or "-" }}</td>
+                        <td>{{ release.title }}</td>
+                        <td>
+                          {% if traits.tags %}
+                            <div class="tag-list compact-tags">
+                              {% for tag in traits.tags %}
+                                <span>{{ tag }}</span>
+                              {% endfor %}
+                            </div>
+                          {% else %}
+                            <span class="muted">-</span>
+                          {% endif %}
+                        </td>
+                        <td>{{ release.seeders if release.seeders is not none else "-" }}</td>
+                      </tr>
+                    {% else %}
+                      <tr><td colspan="4" class="muted">No non-usenet Arr result for this tracker.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
               </div>
             {% else %}
               <span class="muted">No Arr comparison recorded.</span>

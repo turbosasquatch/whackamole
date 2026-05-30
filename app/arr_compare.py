@@ -8,6 +8,14 @@ import httpx
 
 from app.clients import RadarrClient, SonarrClient
 from app.config import AppConfig, SecretStore
+from app.media_identity import (
+    ReleaseTraits,
+    parse_release_traits as _shared_parse_release_traits,
+    release_is_equal_or_better as _shared_release_is_equal_or_better,
+    release_score as _shared_release_score,
+    same_release_lane as _shared_same_release_lane,
+    traits_payload as _shared_traits_payload,
+)
 from app.ua_logs import normalize_ua_log
 
 
@@ -68,35 +76,6 @@ MOVIE_VERSION_PATTERNS: Sequence[Tuple[str, str]] = (
     ("Remaster", r"\bremaster(?:ed)?\b"),
     ("IMAX", r"\bimax\b"),
 )
-
-
-@dataclass
-class ReleaseTraits:
-    title: str
-    resolution: str = ""
-    scan_type: str = ""
-    source: str = "other"
-    hdr_rank: int = 0
-    audio_format: str = ""
-    audio_format_rank: int = 0
-    audio_channels: float = 0.0
-    codec: str = ""
-    movie_versions: Tuple[str, ...] = ()
-    season: Optional[int] = None
-    episode: Optional[int] = None
-    season_pack: bool = False
-
-    @property
-    def source_label(self) -> str:
-        return SOURCE_LABELS.get(self.source, self.source)
-
-    @property
-    def hdr_label(self) -> str:
-        return HDR_LABELS.get(self.hdr_rank, "SDR")
-
-    @property
-    def is_comparable(self) -> bool:
-        return bool(self.resolution and self.source != "other")
 
 
 @dataclass
@@ -205,26 +184,7 @@ def parse_media_identity(log: str, item_name: str) -> MediaIdentity:
 
 
 def parse_release_traits(title: str, quality_name: str = "") -> ReleaseTraits:
-    text = f"{title} {quality_name}".replace("_", ".")
-    normalized = text.lower()
-    season, episode = _parse_season_episode(text)
-    resolution, scan_type = _parse_resolution(normalized)
-    audio_format, audio_format_rank = _parse_audio_format(normalized)
-    return ReleaseTraits(
-        title=title,
-        resolution=resolution,
-        scan_type=scan_type,
-        source=_parse_source(normalized),
-        hdr_rank=_parse_hdr_rank(normalized),
-        audio_format=audio_format,
-        audio_format_rank=audio_format_rank,
-        audio_channels=_parse_audio_channels(text),
-        codec=_parse_codec(normalized),
-        movie_versions=_parse_movie_versions(normalized),
-        season=season,
-        episode=episode,
-        season_pack=season is not None and episode is None,
-    )
+    return _shared_parse_release_traits(title, quality_name)
 
 
 def evaluate_tracker_decisions(
@@ -252,6 +212,8 @@ def evaluate_tracker_decisions(
                     "status": "manual_review",
                     "reason": "No tracker alias is configured for Arr comparison.",
                     "matched_count": 0,
+                    "same_lane_count": 0,
+                    "results": [],
                     "best_release": None,
                 }
             )
@@ -263,6 +225,8 @@ def evaluate_tracker_decisions(
                     "status": "manual_review",
                     "reason": "No matching torrent indexer is configured in Arr.",
                     "matched_count": 0,
+                    "same_lane_count": 0,
+                    "results": [],
                     "best_release": None,
                 }
             )
@@ -273,13 +237,14 @@ def evaluate_tracker_decisions(
             for release in torrent_releases
             if canonical_tracker(str(release.get("indexer", ""))) == canon
         ]
-        same_lane = [
+        parsed_matches = [
             (release, parse_release_traits(str(release.get("title", "")), _quality_name(release)))
             for release in matches
         ]
+        result_payloads = [_release_payload(release, traits) for release, traits in parsed_matches]
         same_lane = [
             (release, traits)
-            for release, traits in same_lane
+            for release, traits in parsed_matches
             if _same_release_lane(local_traits, traits)
         ]
         blockers = [
@@ -296,6 +261,8 @@ def evaluate_tracker_decisions(
                     "status": "blocked",
                     "reason": "Arr found an equal-or-better torrent result in the same lane.",
                     "matched_count": len(matches),
+                    "same_lane_count": len(same_lane),
+                    "results": result_payloads,
                     "best_release": _release_payload(best_release, best_traits),
                 }
             )
@@ -311,6 +278,8 @@ def evaluate_tracker_decisions(
                 "status": "candidate",
                 "reason": "No equal-or-better torrent result found in the same lane.",
                 "matched_count": len(matches),
+                "same_lane_count": len(same_lane),
+                "results": result_payloads,
                 "best_release": best_release_payload,
             }
         )
@@ -329,18 +298,7 @@ def summarize_decisions(decisions: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
 
 
 def release_is_equal_or_better(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
-    if not _same_release_lane(local, remote):
-        return False
-    if local.season_pack and not remote.season_pack:
-        return False
-    if remote.season_pack and not local.season_pack:
-        return True
-    return (
-        _scan_rank(remote) >= _scan_rank(local)
-        and remote.hdr_rank >= local.hdr_rank
-        and remote.audio_format_rank >= local.audio_format_rank
-        and remote.audio_channels >= local.audio_channels
-    )
+    return _shared_release_is_equal_or_better(local, remote)
 
 
 def canonical_tracker(name: str) -> Optional[str]:
@@ -574,15 +532,7 @@ def _best_release(items: Sequence[Tuple[Dict[str, Any], ReleaseTraits]]) -> Tupl
 
 
 def _release_score(release: Dict[str, Any], traits: ReleaseTraits) -> Tuple[int, int, int, int, float, int, int]:
-    return (
-        1 if traits.season_pack else 0,
-        _scan_rank(traits),
-        traits.hdr_rank,
-        traits.audio_format_rank,
-        traits.audio_channels,
-        int(release.get("seeders") or 0),
-        int(release.get("size") or 0),
-    )
+    return _shared_release_score(release, traits)
 
 
 def _release_payload(release: Dict[str, Any], traits: ReleaseTraits) -> Dict[str, Any]:
@@ -608,6 +558,8 @@ def _manual_decisions(trackers: Sequence[str], reason: str) -> List[Dict[str, An
             "status": "manual_review",
             "reason": reason,
             "matched_count": 0,
+            "same_lane_count": 0,
+            "results": [],
             "best_release": None,
         }
         for tracker in trackers
@@ -615,19 +567,11 @@ def _manual_decisions(trackers: Sequence[str], reason: str) -> List[Dict[str, An
 
 
 def _traits_payload(traits: ReleaseTraits) -> Dict[str, Any]:
-    payload = asdict(traits)
-    payload["movie_versions"] = list(traits.movie_versions)
-    payload["source_label"] = traits.source_label
-    payload["hdr_label"] = traits.hdr_label
-    return payload
+    return _shared_traits_payload(traits)
 
 
 def _same_release_lane(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
-    return (
-        _resolution_height(local.resolution) == _resolution_height(remote.resolution)
-        and local.source == remote.source
-        and tuple(local.movie_versions) == tuple(remote.movie_versions)
-    )
+    return _shared_same_release_lane(local, remote)
 
 
 def _resolution_height(value: str) -> str:

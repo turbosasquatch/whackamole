@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from app.arr_compare import parse_release_traits
+from app.media_identity import (
+    analyze_media_payloads,
+    extract_release_group as _shared_extract_release_group,
+    media_file_payload as _shared_media_file_payload,
+    mediainfo_tracks as _shared_mediainfo_tracks,
+    parse_release_traits,
+    traits_from_mediainfo as _shared_traits_from_mediainfo,
+    traits_payload as _shared_traits_payload,
+)
 
 
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
@@ -14,6 +21,7 @@ VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".
 def empty_check_results() -> Dict[str, Any]:
     return {
         "version": 1,
+        "media": {},
         "nfo": {},
         "ua": {},
         "arr": {},
@@ -154,48 +162,49 @@ def analyze_mediainfo(
 ) -> Dict[str, Any]:
     video_files = video_file_payloads(files)
     expected_root = _torrent_root_name(files) or item_name
-    release_group = extract_release_group(expected_root or item_name)
-    media_files = [_mediainfo_file_payload(payload) for payload in mediainfo_payloads]
+    media_result = analyze_media_payloads(
+        release_title=expected_root or item_name,
+        media_files=video_files,
+        mediainfo_payloads=mediainfo_payloads,
+    )
+    media_files = list(media_result.get("mediainfo_files") or [])
+    release_group = str(media_result.get("release_group") or extract_release_group(expected_root or item_name))
+    status = str(media_result.get("status") or "passed")
+    issue_keys = {str(issue.get("key") or "") for issue in media_result.get("issues", []) if isinstance(issue, Mapping)}
+    if not video_files:
+        verdict = "no_video_files"
+    elif not mediainfo_payloads:
+        verdict = "mediainfo_missing"
+    elif status != "passed":
+        verdict = "mediainfo_mismatch"
+    else:
+        verdict = "mediainfo_passed"
+    reason = str(media_result.get("reason") or "QUI MediaInfo matches the torrent release traits.")
+    if status == "passed" and media_result.get("media_status") == "confirmed":
+        reason = "QUI MediaInfo matches the torrent release traits."
     base_result = {
+        **media_result,
         "version": 1,
         "source": "mediainfo",
-        "status": "passed",
-        "verdict": "mediainfo_passed",
-        "reason": "QUI MediaInfo matches the torrent release traits.",
+        "status": status,
+        "verdict": verdict,
+        "reason": reason,
         "nfo_file": None,
         "release_title": expected_root,
         "release_group": release_group,
         "complete_names": [item["basename"] for item in video_files],
         "video_files": video_files,
         "mediainfo_files": media_files,
-        "flags": [],
+        "flags": list(media_result.get("flags") or []),
         "excerpt": "",
         "torrent_root": expected_root,
     }
-    if not video_files:
-        return {
-            **base_result,
-            "status": "manual_review",
-            "verdict": "no_video_files",
-            "reason": "QUI did not report any video files for this torrent.",
-        }
-    if not mediainfo_payloads:
-        return {
-            **base_result,
-            "status": "manual_review",
-            "verdict": "mediainfo_missing",
-            "reason": "QUI did not return MediaInfo for any video files.",
-        }
-
-    for payload in mediainfo_payloads:
-        mismatch = _mediainfo_trait_mismatch(expected_root, payload)
-        if mismatch:
-            return {
-                **base_result,
-                "status": "manual_review",
-                "verdict": "mediainfo_mismatch",
-                "reason": mismatch,
-            }
+    mismatch_keys = {"resolution_mismatch", "video_codec_mismatch", "audio_codec_mismatch", "audio_channels_mismatch"}
+    if issue_keys.intersection(mismatch_keys):
+        for issue in media_result.get("issues", []):
+            if isinstance(issue, Mapping) and str(issue.get("key") or "") in mismatch_keys:
+                base_result["reason"] = str(issue.get("message") or base_result["reason"])
+                break
     return base_result
 
 
@@ -246,10 +255,7 @@ def decode_nfo_bytes(data: bytes) -> str:
 
 
 def extract_release_group(value: str) -> str:
-    name = PurePosixPath(str(value or "")).name
-    name = re.sub(r"\.(?:mkv|mp4|avi|m2ts|ts|mov|wmv|nfo)$", "", name, flags=re.IGNORECASE)
-    match = re.search(r"-([A-Za-z0-9][A-Za-z0-9._]{1,})$", name)
-    return match.group(1) if match else ""
+    return _shared_extract_release_group(value)
 
 
 def apply_release_group_policy(
@@ -430,42 +436,11 @@ def _mediainfo_trait_mismatch(release_title: str, payload: Mapping[str, Any]) ->
 
 
 def _traits_from_mediainfo(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    tracks = _mediainfo_tracks(payload)
-    video = _first_track(tracks, "video")
-    audio = _first_track(tracks, "audio")
-    text = " ".join(str(value) for track in (video, audio) for value in track.values() if isinstance(value, (str, int, float)))
-    traits = parse_release_traits(text)
-    height = str(video.get("Height") or video.get("height") or "")
-    scan = str(video.get("ScanType") or video.get("scanType") or "").lower()
-    channels = _mediainfo_channels(audio)
-    return {
-        "resolution": _resolution_from_height(height, scan),
-        "scan_type": "interlaced" if scan.startswith("inter") else ("progressive" if scan.startswith("prog") else ""),
-        "codec": _codec_from_mediainfo(video, traits.codec),
-        "audio_format": _audio_format_from_mediainfo(audio, traits.audio_format),
-        "audio_channels": channels,
-        "hdr_rank": traits.hdr_rank,
-    }
+    return _shared_traits_payload(_shared_traits_from_mediainfo(payload))
 
 
 def _mediainfo_tracks(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
-    streams = payload.get("streams")
-    if isinstance(streams, list):
-        return [item for item in streams if isinstance(item, Mapping)]
-    raw = payload.get("rawJSON")
-    if isinstance(raw, str) and raw.strip():
-        try:
-            decoded = json.loads(raw)
-        except json.JSONDecodeError:
-            decoded = {}
-        tracks = decoded.get("media", {}).get("track") if isinstance(decoded, Mapping) else None
-        if isinstance(tracks, list):
-            return [item for item in tracks if isinstance(item, Mapping)]
-    media = payload.get("media")
-    tracks = media.get("track") if isinstance(media, Mapping) else None
-    if isinstance(tracks, list):
-        return [item for item in tracks if isinstance(item, Mapping)]
-    return []
+    return _shared_mediainfo_tracks(payload)
 
 
 def _first_track(tracks: Sequence[Mapping[str, Any]], track_type: str) -> Mapping[str, Any]:
@@ -524,11 +499,7 @@ def _mediainfo_channels(audio: Mapping[str, Any]) -> float:
 
 
 def _mediainfo_file_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    return {
-        "index": int(payload.get("fileIndex") or payload.get("index") or 0),
-        "name": str(payload.get("relativePath") or payload.get("path") or ""),
-        "traits": _traits_from_mediainfo(payload),
-    }
+    return _shared_media_file_payload(payload)
 
 
 def _torrent_root_name(files: Sequence[Mapping[str, Any]]) -> str:

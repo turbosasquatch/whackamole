@@ -225,6 +225,18 @@
         <input name="clear_easycross_api_key" type="checkbox">
         Clear saved EasyCross key
       </label>
+      <label>
+        Profilarr URL
+        <input name="profilarr_url" value="{{ cfg.profilarr.url }}" placeholder="http://192.168.1.16:6868">
+      </label>
+      <label>
+        Profilarr API key {% if secrets.profilarr_api_key %}<span class="saved">saved</span>{% endif %}
+        <input name="profilarr_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.profilarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_profilarr_api_key" type="checkbox">
+        Clear saved Profilarr key
+      </label>
     </div>
   </section>
 
