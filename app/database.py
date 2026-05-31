@@ -310,7 +310,23 @@ class Database:
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
     ) -> int:
-        where_sql, params = self._filtered_where(["baseline"], media, missing, hide_any_primary)
+        return self.bulk_requeue_filtered(
+            ["baseline"],
+            media=media,
+            missing=missing,
+            hide_any_primary=hide_any_primary,
+            reason="Bulk recheck requested from baseline filtered set",
+        )
+
+    def bulk_requeue_filtered(
+        self,
+        statuses: Iterable[str],
+        media: str = "all",
+        missing: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+        reason: str = "Bulk recheck requested from filtered set",
+    ) -> int:
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary)
         now = int(time.time())
         with self.connect() as conn:
             rows = conn.execute(f"SELECT i.id FROM items AS i {where_sql}", params).fetchall()
@@ -321,12 +337,12 @@ class Database:
             conn.execute(
                 f"""
                 UPDATE items
-                SET status = 'queued', verdict = '', reason = 'Bulk recheck requested from baseline filtered set',
+                SET status = 'queued', verdict = '', reason = ?,
                     tracker_results = '[]', arr_results = '{{}}', check_stage = '', check_results = '{{}}',
                     next_check_at = NULL, updated_at = ?
                 WHERE id IN ({placeholders})
                 """,
-                [now] + ids,
+                [reason, now] + ids,
             )
             return len(ids)
 

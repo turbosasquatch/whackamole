@@ -41,6 +41,18 @@ APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
 MAX_VIDEO_FILES = 200
+DASHBOARD_VIEWS = {
+    "active": ["queued", "deferred", "checking", "error"],
+    "candidates": ["candidate"],
+    "blocked": ["blocked"],
+    "manual": ["manual_review"],
+    "errors": ["error"],
+    "baseline": ["baseline"],
+    "inventory": ["inventory"],
+    "ignored": ["ignored"],
+    "all": [],
+}
+FILTERABLE_VIEWS = {"baseline", "candidates", "blocked", "manual"}
 
 
 def _format_datetime(value: Optional[int]) -> str:
@@ -482,7 +494,7 @@ def _dashboard_url(
     message: str = "",
 ) -> str:
     params: Dict[str, Any] = {"view": view, "page": max(1, page)}
-    if view == "baseline":
+    if view in FILTERABLE_VIEWS:
         if media and media != "all":
             params["media"] = media
         selected_missing = [tracker for tracker in (missing or []) if tracker]
@@ -529,27 +541,16 @@ async def dashboard(
     page: int = Query(1, ge=1),
     message: str = "",
 ) -> HTMLResponse:
-    groups = {
-        "active": ["queued", "deferred", "checking", "error"],
-        "candidates": ["candidate"],
-        "blocked": ["blocked"],
-        "manual": ["manual_review"],
-        "errors": ["error"],
-        "baseline": ["baseline"],
-        "inventory": ["inventory"],
-        "ignored": ["ignored"],
-        "all": [],
-    }
-    selected = view if view in groups else "active"
+    selected = view if view in DASHBOARD_VIEWS else "active"
     missing_values = missing or []
     limit = 100 if selected in {"baseline", "inventory"} else 150
     offset = (page - 1) * limit
-    filter_media = media if selected == "baseline" else "all"
-    filter_missing = missing_values if selected == "baseline" else []
-    filter_hide_any = hide_any_primary if selected == "baseline" else False
+    filter_media = media if selected in FILTERABLE_VIEWS else "all"
+    filter_missing = missing_values if selected in FILTERABLE_VIEWS else []
+    filter_hide_any = hide_any_primary if selected in FILTERABLE_VIEWS else False
     rows, filtered_total, coverage = _filtered_rows(
         request.app.state.db,
-        groups[selected],
+        DASHBOARD_VIEWS[selected],
         limit=limit,
         offset=offset,
         media=filter_media,
@@ -566,13 +567,21 @@ async def dashboard(
         "service": service_snapshot,
         "message": message,
         "primary_trackers": PRIMARY_TRACKERS,
-        "baseline_filters": {
+        "filterable_views": FILTERABLE_VIEWS,
+        "dashboard_filters": {
             "media": filter_media,
-            "missing": [tracker.upper() for tracker in missing_values],
+            "missing": [tracker.upper() for tracker in filter_missing],
             "hide_any_primary": filter_hide_any,
             "filtered_total": filtered_total,
             "displayed": len(rows),
             "limit": limit,
+            "view": selected,
+            "label": {
+                "baseline": "baseline",
+                "candidates": "candidate",
+                "blocked": "blocked",
+                "manual": "manual review",
+            }.get(selected, selected.replace("_", " ")),
         },
         "pagination": {
             "page": page,
@@ -581,12 +590,12 @@ async def dashboard(
             "total": filtered_total,
             "start": offset + 1 if filtered_total else 0,
             "end": offset + len(rows),
-            "prev_url": _dashboard_url(selected, page - 1, filter_media, missing_values, filter_hide_any) if page > 1 else "",
-            "next_url": _dashboard_url(selected, page + 1, filter_media, missing_values, filter_hide_any)
+            "prev_url": _dashboard_url(selected, page - 1, filter_media, filter_missing, filter_hide_any) if page > 1 else "",
+            "next_url": _dashboard_url(selected, page + 1, filter_media, filter_missing, filter_hide_any)
             if offset + len(rows) < filtered_total
             else "",
         },
-        "current_url": _dashboard_url(selected, page, filter_media, missing_values, filter_hide_any),
+        "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_hide_any),
     }
     return templates.TemplateResponse(request, "dashboard.html", context)
 
@@ -624,12 +633,40 @@ async def recheck_filtered_baseline(
     missing: Optional[List[str]] = Form(None),
     hide_any_primary: Optional[str] = Form(None),
 ) -> RedirectResponse:
+    return await recheck_filtered_items("baseline", media, missing, hide_any_primary)
+
+
+@app.post("/items/recheck-filtered")
+async def recheck_filtered_items(
+    view: str = Form("baseline"),
+    media: str = Form("all"),
+    missing: Optional[List[str]] = Form(None),
+    hide_any_primary: Optional[str] = Form(None),
+) -> RedirectResponse:
+    selected = view if view in FILTERABLE_VIEWS else "baseline"
     missing_values = missing or []
     hide_any = hide_any_primary == "true"
-    queued = app.state.db.bulk_requeue_baseline_filtered(media=media, missing=missing_values, hide_any_primary=hide_any)
+    label = {
+        "baseline": "baseline",
+        "candidates": "candidate",
+        "blocked": "blocked",
+        "manual": "manual review",
+    }[selected]
+    reason = (
+        "Bulk recheck requested from baseline filtered set"
+        if selected == "baseline"
+        else f"Bulk recheck requested from {label} filtered set"
+    )
+    queued = app.state.db.bulk_requeue_filtered(
+        DASHBOARD_VIEWS[selected],
+        media=media,
+        missing=missing_values,
+        hide_any_primary=hide_any,
+        reason=reason,
+    )
     return RedirectResponse(
         url=_dashboard_url(
-            "baseline",
+            selected,
             page=1,
             media=media,
             missing=missing_values,

@@ -78,16 +78,16 @@
   <p class="notice">{{ message }}</p>
 {% endif %}
 
-{% if view == "baseline" %}
+{% if view in filterable_views %}
   <section class="baseline-filters">
     <form method="get" action="/">
-      <input type="hidden" name="view" value="baseline">
+      <input type="hidden" name="view" value="{{ view }}">
       <label>
         Media
         <select name="media">
           {% set media_options = [("all", "All"), ("movie", "Movies"), ("tv", "TV shows"), ("episode", "Episodes")] %}
           {% for value, label in media_options %}
-            <option value="{{ value }}" {% if baseline_filters.media == value %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ value }}" {% if dashboard_filters.media == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </label>
@@ -95,30 +95,31 @@
         <legend>Missing tracker coverage</legend>
         {% for tracker in primary_trackers %}
           <label class="checkbox">
-            <input name="missing" value="{{ tracker }}" type="checkbox" {% if tracker in baseline_filters.missing %}checked{% endif %}>
+            <input name="missing" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.missing %}checked{% endif %}>
             {{ tracker }}
           </label>
         {% endfor %}
       </fieldset>
       <label class="checkbox">
-        <input name="hide_any_primary" value="true" type="checkbox" {% if baseline_filters.hide_any_primary %}checked{% endif %}>
+        <input name="hide_any_primary" value="true" type="checkbox" {% if dashboard_filters.hide_any_primary %}checked{% endif %}>
         Hide any item with primary tracker coverage
       </label>
       <button class="button small" type="submit">Apply</button>
-      <a class="button small secondary" href="/?view=baseline">Reset</a>
+      <a class="button small secondary" href="/?view={{ view }}">Reset</a>
     </form>
-    <form method="post" action="/baseline/recheck-filtered" class="bulk-action">
-      <input type="hidden" name="media" value="{{ baseline_filters.media }}">
-      {% for tracker in baseline_filters.missing %}
+    <form method="post" action="/items/recheck-filtered" class="bulk-action">
+      <input type="hidden" name="view" value="{{ view }}">
+      <input type="hidden" name="media" value="{{ dashboard_filters.media }}">
+      {% for tracker in dashboard_filters.missing %}
         <input type="hidden" name="missing" value="{{ tracker }}">
       {% endfor %}
-      {% if baseline_filters.hide_any_primary %}
+      {% if dashboard_filters.hide_any_primary %}
         <input type="hidden" name="hide_any_primary" value="true">
       {% endif %}
       <button class="button small" type="submit">Run check on found set</button>
     </form>
     <p class="muted">
-      Showing {{ pagination.start }}-{{ pagination.end }} of {{ baseline_filters.filtered_total }} matching baseline item{{ "" if baseline_filters.filtered_total == 1 else "s" }}.
+      Showing {{ pagination.start }}-{{ pagination.end }} of {{ dashboard_filters.filtered_total }} matching {{ dashboard_filters.label }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }}.
     </p>
   </section>
 {% endif %}
@@ -193,10 +194,10 @@
           <td>{{ item.updated_at | datetime }}</td>
           <td class="actions">
             <a class="button small" href="/items/{{ item.id }}">Open</a>
-            {% if item.status == "baseline" %}
+            {% if item.status in ["baseline", "candidate", "blocked"] %}
               <form method="post" action="/items/{{ item.id }}/recheck">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small secondary" type="submit">Run check</button>
+                <button class="button small secondary" type="submit">Run recheck</button>
               </form>
             {% endif %}
           </td>

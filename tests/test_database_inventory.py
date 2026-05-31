@@ -98,6 +98,22 @@ def test_bulk_requeue_baseline_filtered_only_updates_found_set(tmp_path):
     assert rows["candidate"]["status"] == "ignored"
 
 
+def test_bulk_requeue_filtered_updates_selected_final_status_only(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "candidate", "Example.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    _insert(db, "blocked", "Example.Show.S01E02.1080p.WEB-DL-GRP", status="blocked")
+    _insert(db, "manual", "Example.Show.S01E03.1080p.WEB-DL-GRP", status="manual_review")
+
+    queued = db.bulk_requeue_filtered(["candidate"], media="episode", reason="Bulk recheck requested from candidate filtered set")
+    rows = {row["hash"]: row for row in db.list_items([], limit=20)}
+
+    assert queued == 1
+    assert rows["candidate"]["status"] == "queued"
+    assert rows["candidate"]["reason"] == "Bulk recheck requested from candidate filtered set"
+    assert rows["blocked"]["status"] == "blocked"
+    assert rows["manual"]["status"] == "manual_review"
+
+
 def test_active_filter_only_includes_due_errors(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     now = int(time.time())

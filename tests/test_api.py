@@ -179,6 +179,65 @@ def test_items_api_filters_by_inventory_coverage(tmp_path, monkeypatch):
         assert item["missing_primary_trackers"] == ["ULCX", "IHD"]
 
 
+def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+
+        page = client.get("/?view=candidates&media=episode&missing=DP")
+
+        assert page.status_code == 200
+        assert 'name="view" value="candidates"' in page.text
+        assert "Missing tracker coverage" in page.text
+        assert "/items/recheck-filtered" in page.text
+        assert f'/items/{item_id}/recheck' in page.text
+        assert "Run recheck" in page.text
+
+
+def test_manual_review_dashboard_includes_filters(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "manual-filter",
+                "name": "Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "",
+                "content_path": "/media/torrents/tv/Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "progress": 1,
+            },
+            status="manual_review",
+            baseline=False,
+        )
+
+        page = client.get("/?view=manual")
+
+        assert page.status_code == 200
+        assert 'name="view" value="manual"' in page.text
+        assert "Missing tracker coverage" in page.text
+        assert "/items/recheck-filtered" in page.text
+
+
+def test_filtered_recheck_endpoint_requeues_candidate_view(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+
+        response = client.post(
+            "/items/recheck-filtered",
+            data={"view": "candidates", "media": "episode"},
+            follow_redirects=False,
+        )
+        row = client.app.state.db.get_item(item_id)
+
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/?view=candidates")
+        assert row["status"] == "queued"
+        assert row["reason"] == "Bulk recheck requested from candidate filtered set"
+
+
 def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
