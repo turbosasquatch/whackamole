@@ -1,5 +1,8 @@
+import asyncio
+
 from app.arr_compare import (
     canonical_tracker,
+    compare_item_with_arr,
     evaluate_tracker_decisions,
     parse_media_identity,
     parse_release_traits,
@@ -279,3 +282,23 @@ def test_parse_media_identity_uses_ua_ids():
     assert identity.tmdb_id == 243754
     assert identity.season == 3
     assert identity.episode is None
+
+
+def test_compare_item_with_arr_uses_precomputed_local_traits():
+    local_traits = parse_release_traits("Show.Name.S03E04.1080p.WEB-DL.DDP5.1.H.264-GRP")
+
+    result = asyncio.run(
+        compare_item_with_arr(
+            item_name="Unparseable.Release",
+            ua_log="Category: TV",
+            passed_trackers=[],
+            cfg=None,
+            secrets=None,
+            local_traits=local_traits,
+        )
+    )
+
+    assert result["status"] == "skipped"
+    assert result["local_traits"]["season"] == 3
+    assert result["local_traits"]["episode"] == 4
+    assert result["local_traits"]["audio_format"] == "DD+"

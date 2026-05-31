@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from app.config import ConfigManager, SecretStore
 from app.database import Database
@@ -326,6 +327,10 @@ def test_nfo_is_ignored_when_mediainfo_passes_and_continues_to_ua(tmp_path, monk
     assert row["verdict"] != "nfo_missing"
     assert MediaQuiClient.download_calls == 0
     assert PassingUploadAssistantClient.calls == 1
+    checks = json.loads(row["check_results"])
+    stages = [stage["stage"] for stage in checks["diagnostics"]["stages"]]
+    assert stages[:3] == ["media", "path", "ua"]
+    assert checks["diagnostics"]["stages"][0]["status"] == "passed"
 
 
 def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
@@ -356,6 +361,9 @@ def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
     assert row["status"] == "manual_review"
     assert row["verdict"] == "mediainfo_unavailable"
     assert PassingUploadAssistantClient.calls == 0
+    checks = json.loads(row["check_results"])
+    assert checks["diagnostics"]["last_error"]["stage"] == "media"
+    assert checks["diagnostics"]["stages"][0]["status"] == "error"
 
 
 def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, monkeypatch):
@@ -377,7 +385,10 @@ def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, mo
     monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
 
-    async def fake_compare_item_with_arr(**_kwargs):
+    captured_arr_kwargs = {}
+
+    async def fake_compare_item_with_arr(**kwargs):
+        captured_arr_kwargs.update(kwargs)
         return {
             "status": "candidate",
             "reason": "Valid upload candidate on: DP",
@@ -406,3 +417,7 @@ def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, mo
     assert row["check_stage"] == "done"
     assert MediaQuiClient.download_calls == 0
     assert PassingUploadAssistantClient.calls == 1
+    assert captured_arr_kwargs["local_traits"].audio_format == "DD+"
+    checks = json.loads(row["check_results"])
+    stages = [stage["stage"] for stage in checks["diagnostics"]["stages"]]
+    assert stages == ["media", "path", "ua", "arr", "policy"]

@@ -1,0 +1,36 @@
+{
+  "media": {
+    "@ref": "/media/torrents/Untold.The.Death.and.Life.of.Lamar.Odom.2026.HDR.2160p.WEB.h265-EDITH/Untold.The.Death.and.Life.of.Lamar.Odom.2026.HDR.2160p.WEB.h265-EDITH.mkv",
+    "track": [
+      {
+        "@type": "General",
+        "TextCount": "2"
+      },
+      {
+        "@type": "Video",
+        "Format": "HEVC",
+        "Format_Profile": "Main 10",
+        "Width": "3840",
+        "Height": "2160",
+        "BitDepth": "10",
+        "MasteringDisplay_ColorPrimaries": "Display P3",
+        "MasteringDisplay_Luminance": "min: 0.0001 cd/m2, max: 1000 cd/m2",
+        "MaxCLL": "658 cd/m2",
+        "MaxFALL": "211 cd/m2"
+      },
+      {
+        "@type": "Audio",
+        "Format": "E-AC-3",
+        "Format_Commercial_IfAny": "Dolby Digital Plus with Dolby Atmos",
+        "Format_AdditionalFeatures": "JOC",
+        "Channels": "6",
+        "Default": "Yes"
+      },
+      {
+        "@type": "Text",
+        "Format": "UTF-8",
+        "Language": "en"
+      }
+    ]
+  }
+}

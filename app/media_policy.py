@@ -4,35 +4,11 @@ import re
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from app.check_results import empty_check_results, merge_check_results
 from app.media_identity import analyze_media_payloads, extract_release_group
 
 
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
-
-
-def empty_check_results() -> Dict[str, Any]:
-    return {
-        "version": 1,
-        "media": {},
-        "nfo": {},
-        "ua": {},
-        "arr": {},
-        "release_group_policy": {},
-        "flags": [],
-    }
-
-
-def merge_check_results(existing: Any, **updates: Any) -> Dict[str, Any]:
-    payload = existing if isinstance(existing, dict) else {}
-    result = empty_check_results()
-    for key, value in payload.items():
-        if key in result:
-            result[key] = value
-        else:
-            result[key] = value
-    for key, value in updates.items():
-        result[key] = value
-    return result
 
 
 def video_file_payloads(files: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:

@@ -1,0 +1,42 @@
+{
+  "media": {
+    "@ref": "/media/torrents/Marty.Supreme.2025.2160p.UHD.BluRay.HDR10Plus.DoVi.TrueHD.7.1.Atmos.x265-SPHD/Marty.Supreme.2025.2160p.UHD.BluRay.HDR10Plus.DoVi.TrueHD.7.1.Atmos.x265-SPHD.mkv",
+    "track": [
+      {
+        "@type": "General",
+        "TextCount": "4"
+      },
+      {
+        "@type": "Video",
+        "Format": "HEVC",
+        "Width": "3840",
+        "Height": "2160",
+        "BitDepth": "10",
+        "HDR_Format": "Dolby Vision / SMPTE ST 2094 App 4",
+        "HDR_Format_Compatibility": "HDR10"
+      },
+      {
+        "@type": "Audio",
+        "Format": "TrueHD",
+        "Channels": "8",
+        "Default": "Yes"
+      },
+      {
+        "@type": "Audio",
+        "Format": "E-AC-3",
+        "CommercialName": "Dolby Digital Plus with Dolby Atmos",
+        "Format_AdditionalFeatures": "JOC",
+        "Title": "E-AC-3 JOC",
+        "Channels": "6",
+        "extra": {
+          "NumberOfDynamicObjects": "15"
+        }
+      },
+      {
+        "@type": "Text",
+        "Format": "PGS",
+        "Language": "en"
+      }
+    ]
+  }
+}

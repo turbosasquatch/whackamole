@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette import status
 
 from app.clients import ProfilarrClient, QuiClient, RadarrClient, SonarrClient, UploadAssistantClient
+from app.check_results import CheckResults
 from app.config import (
     AppConfig,
     ConfigManager,
@@ -123,17 +124,7 @@ def _json_object(value: Any) -> Dict[str, Any]:
 
 def _check_results(value: Any) -> Dict[str, Any]:
     parsed = _json_object(value)
-    return {
-        "version": int(parsed.get("version") or 1),
-        "media": parsed.get("media") if isinstance(parsed.get("media"), dict) else {},
-        "nfo": parsed.get("nfo") if isinstance(parsed.get("nfo"), dict) else {},
-        "ua": parsed.get("ua") if isinstance(parsed.get("ua"), dict) else {},
-        "arr": parsed.get("arr") if isinstance(parsed.get("arr"), dict) else {},
-        "release_group_policy": parsed.get("release_group_policy")
-        if isinstance(parsed.get("release_group_policy"), dict)
-        else {},
-        "flags": parsed.get("flags") if isinstance(parsed.get("flags"), list) else [],
-    }
+    return CheckResults.from_any(parsed).to_dict()
 
 
 def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -193,12 +184,14 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
     arr = item["arr_result"]
     stored_checks = item["check_results"]
     checks = {
+        "version": stored_checks.get("version") or 1,
         "media": stored_checks.get("media") or {},
         "nfo": stored_checks.get("nfo") or {},
         "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
         "arr": stored_checks.get("arr") or arr,
         "release_group_policy": stored_checks.get("release_group_policy") or {},
         "flags": item["check_flags"],
+        "diagnostics": stored_checks.get("diagnostics") or {"stages": [], "last_error": {}},
     }
     summary.update(
         {
@@ -335,7 +328,7 @@ def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
     status_value = str(item.get("status") or "")
     stage = str(item.get("check_stage") or "")
     final_statuses = {"candidate", "blocked", "manual_review", "error", "ignored", "inventory", "baseline"}
-    media_done = bool(check_results.get("media") or check_results.get("nfo"))
+    media_done = bool(check_results.get("media"))
     ua_done = bool(check_results.get("ua"))
     arr_done = bool(check_results.get("arr") or arr_result)
 

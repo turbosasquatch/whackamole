@@ -242,6 +242,39 @@ def traits_payload(traits: ReleaseTraits) -> Dict[str, Any]:
     return payload
 
 
+def traits_from_payload(value: Mapping[str, Any]) -> ReleaseTraits:
+    payload = value if isinstance(value, Mapping) else {}
+    return ReleaseTraits(
+        title=str(payload.get("title") or ""),
+        resolution=str(payload.get("resolution") or ""),
+        scan_type=str(payload.get("scan_type") or ""),
+        source=str(payload.get("source") or "other"),
+        source_tag=str(payload.get("source_tag") or ""),
+        source_provider=str(payload.get("source_provider") or ""),
+        rip_type=str(payload.get("rip_type") or ""),
+        hdr_rank=_int_payload_value(payload.get("hdr_rank")),
+        hdr_formats=tuple(_string_sequence(payload.get("hdr_formats"))),
+        dv_profile=str(payload.get("dv_profile") or ""),
+        audio_format=str(payload.get("audio_format") or ""),
+        audio_format_rank=_int_payload_value(payload.get("audio_format_rank")),
+        audio_channels=_float_payload_value(payload.get("audio_channels")),
+        audio_objects=tuple(_string_sequence(payload.get("audio_objects"))),
+        codec=str(payload.get("codec") or ""),
+        bit_depth=str(payload.get("bit_depth") or ""),
+        chroma=str(payload.get("chroma") or ""),
+        movie_versions=tuple(_string_sequence(payload.get("movie_versions"))),
+        release_group=str(payload.get("release_group") or ""),
+        container=str(payload.get("container") or ""),
+        languages=tuple(_string_sequence(payload.get("languages"))),
+        subtitle_tags=tuple(_string_sequence(payload.get("subtitle_tags"))),
+        tags=tuple(_string_sequence(payload.get("tags"))),
+        custom_formats=tuple(_string_sequence(payload.get("custom_formats"))),
+        season=_optional_int_payload_value(payload.get("season")),
+        episode=_optional_int_payload_value(payload.get("episode")),
+        season_pack=_bool_payload_value(payload.get("season_pack")),
+    )
+
+
 def analyze_media_payloads(
     *,
     release_title: str,
@@ -1430,6 +1463,45 @@ def _scan_rank(traits: ReleaseTraits) -> int:
     if traits.scan_type == "interlaced":
         return 1
     return 0
+
+
+def _string_sequence(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, Sequence):
+        return [str(item) for item in value if str(item)]
+    return [str(value)] if str(value) else []
+
+
+def _int_payload_value(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _optional_int_payload_value(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_payload_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _bool_payload_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
 
 
 def _dedupe(values: Sequence[str]) -> List[str]:

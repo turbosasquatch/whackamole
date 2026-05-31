@@ -3,17 +3,19 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
 from app.arr_compare import compare_item_with_arr
+from app.check_results import add_stage_diagnostic
 from app.clients import QuiClient, UploadAssistantClient
 from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
+from app.media_identity import traits_from_payload
 from app.media_policy import (
     analyze_mediainfo,
     apply_release_group_policy,
@@ -372,10 +374,48 @@ class WhackamoleService:
         item = self.db.get_item(item_id)
         if item is None:
             return
-        check_results = empty_check_results()
 
+        check_results = empty_check_results()
+        media_result, check_results, terminal = await self._run_media_stage(item_id, item, cfg, check_results)
+        if terminal:
+            return
+
+        mapped_path, check_results, terminal = self._run_path_stage(item_id, item, cfg, check_results)
+        if terminal or not mapped_path:
+            return
+
+        ua_log, reduction, check_results, terminal = await self._run_ua_stage(
+            item_id,
+            item,
+            cfg,
+            mapped_path,
+            check_results,
+        )
+        if terminal or reduction is None:
+            return
+
+        await self._run_arr_and_policy_stage(
+            item_id,
+            item,
+            cfg,
+            mapped_path,
+            ua_log,
+            reduction,
+            media_result,
+            check_results,
+        )
+
+    async def _run_media_stage(
+        self,
+        item_id: int,
+        item: Mapping[str, Any],
+        cfg: Any,
+        check_results: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
+        started_at = time.perf_counter()
         self.db.update_check_stage(item_id, "media", "Checking QUI MediaInfo identity before UA.", check_results)
         qui = QuiClient(cfg, self.secrets.get("qui_api_key"))
+        torrent_files = []
         try:
             torrent_files = await qui.list_torrent_files(str(item["hash"]))
             video_files = video_file_payloads(torrent_files)
@@ -396,12 +436,21 @@ class WhackamoleService:
             media_result = build_media_manual_result(
                 "mediainfo_unavailable",
                 f"Whackamole could not read QUI MediaInfo: {str(exc)[:180]}",
-                [],
+                torrent_files,
             )
             check_results = merge_check_results(
                 check_results,
                 media=media_result,
                 flags=media_result.get("flags", []),
+            )
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="media",
+                status="error",
+                reason=media_result["reason"],
+                started_at=started_at,
+                error=exc,
+                extra={"verdict": media_result["verdict"]},
             )
             self.db.update_status(
                 item_id,
@@ -414,7 +463,7 @@ class WhackamoleService:
                 check_results=check_results,
                 increment_attempt=True,
             )
-            return
+            return media_result, check_results, True
 
         check_results = merge_check_results(
             check_results,
@@ -422,6 +471,14 @@ class WhackamoleService:
             flags=media_result.get("flags", []),
         )
         if media_result.get("status") != "passed":
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="media",
+                status="failed",
+                reason=str(media_result.get("reason") or "MediaInfo identity check failed."),
+                started_at=started_at,
+                extra={"verdict": str(media_result.get("verdict") or "media_error")},
+            )
             self.db.update_status(
                 item_id,
                 "manual_review",
@@ -433,14 +490,40 @@ class WhackamoleService:
                 check_results=check_results,
                 increment_attempt=True,
             )
-            return
+            return media_result, check_results, True
 
+        check_results = add_stage_diagnostic(
+            check_results,
+            stage="media",
+            status="passed",
+            reason=str(media_result.get("reason") or "MediaInfo confirmed."),
+            started_at=started_at,
+            extra={
+                "verdict": str(media_result.get("verdict") or "mediainfo_passed"),
+                "video_files": len(media_result.get("video_files") or []),
+                "mediainfo_files": len(media_result.get("mediainfo_files") or []),
+            },
+        )
+        return media_result, check_results, False
+
+    def _run_path_stage(
+        self,
+        item_id: int,
+        item: Mapping[str, Any],
+        cfg: Any,
+        check_results: Dict[str, Any],
+    ) -> tuple[Optional[str], Dict[str, Any], bool]:
+        started_at = time.perf_counter()
         try:
             mapped_path = map_path(item["content_path"], cfg.path_mappings)
         except ValueError as exc:
-            check_results = merge_check_results(
+            check_results = add_stage_diagnostic(
                 check_results,
-                flags=check_results.get("flags", []),
+                stage="path",
+                status="error",
+                reason=str(exc),
+                started_at=started_at,
+                error=exc,
             )
             self.db.update_status(
                 item_id,
@@ -453,8 +536,25 @@ class WhackamoleService:
                 check_results=check_results,
                 increment_attempt=True,
             )
-            return
+            return None, check_results, True
 
+        check_results = add_stage_diagnostic(
+            check_results,
+            stage="path",
+            status="passed",
+            reason="Path mapping succeeded.",
+            started_at=started_at,
+        )
+        return mapped_path, check_results, False
+
+    async def _run_ua_stage(
+        self,
+        item_id: int,
+        item: Mapping[str, Any],
+        cfg: Any,
+        mapped_path: str,
+        check_results: Dict[str, Any],
+    ) -> tuple[str, Any, Dict[str, Any], bool]:
         ua_args = "--site-check -ua -sda"
         ua = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
         self.db.update_status(
@@ -467,6 +567,7 @@ class WhackamoleService:
             check_results=check_results,
         )
 
+        started_at = time.perf_counter()
         try:
             log = await ua.execute_site_check(mapped_path, ua_args, item["hash"])
         except httpx.HTTPStatusError as exc:
@@ -475,6 +576,14 @@ class WhackamoleService:
                 check_results,
                 ua={"status": "error", "verdict": "http_error", "reason": f"UA HTTP error {exc.response.status_code}"},
                 flags=check_results.get("flags", []),
+            )
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="ua",
+                status="error",
+                reason=f"UA HTTP error {exc.response.status_code}",
+                started_at=started_at,
+                error=exc,
             )
             self.db.update_status(
                 item_id,
@@ -491,13 +600,21 @@ class WhackamoleService:
                 next_check_at=next_check,
                 increment_attempt=True,
             )
-            return
+            return str(exc), None, check_results, True
         except Exception as exc:
             next_check = self._next_error_check(item["attempt_count"], None)
             check_results = merge_check_results(
                 check_results,
                 ua={"status": "error", "verdict": "ua_error", "reason": str(exc)[:240]},
                 flags=check_results.get("flags", []),
+            )
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="ua",
+                status="error",
+                reason=str(exc)[:240],
+                started_at=started_at,
+                error=exc,
             )
             self.db.update_status(
                 item_id,
@@ -514,7 +631,7 @@ class WhackamoleService:
                 next_check_at=next_check,
                 increment_attempt=True,
             )
-            return
+            return str(exc), None, check_results, True
 
         reduction = reduce_ua_log(log)
         check_results = merge_check_results(
@@ -527,6 +644,31 @@ class WhackamoleService:
             },
             flags=check_results.get("flags", []),
         )
+        check_results = add_stage_diagnostic(
+            check_results,
+            stage="ua",
+            status=reduction.status,
+            reason=reduction.reason,
+            started_at=started_at,
+            extra={
+                "verdict": reduction.verdict,
+                "passed_trackers": list(reduction.tracker_results.get("passed") or []),
+            },
+        )
+        return log, reduction, check_results, False
+
+    async def _run_arr_and_policy_stage(
+        self,
+        item_id: int,
+        item: Mapping[str, Any],
+        cfg: Any,
+        mapped_path: str,
+        log: str,
+        reduction: Any,
+        media_result: Mapping[str, Any],
+        check_results: Dict[str, Any],
+    ) -> None:
+        ua_args = "--site-check -ua -sda"
         arr_results = {}
         status = reduction.status
         verdict = reduction.verdict
@@ -534,6 +676,10 @@ class WhackamoleService:
         next_check_at = None
         if reduction.status == "candidate" and reduction.tracker_results.get("passed"):
             self.db.update_check_stage(item_id, "arr", "Running Arr comparison.", check_results)
+            arr_started_at = time.perf_counter()
+            local_traits = traits_from_payload(
+                media_result.get("local_traits") if isinstance(media_result.get("local_traits"), Mapping) else {}
+            )
             async with self._arr_lock:
                 arr_results = await compare_item_with_arr(
                     item_name=item["name"],
@@ -541,6 +687,7 @@ class WhackamoleService:
                     passed_trackers=reduction.tracker_results["passed"],
                     cfg=cfg,
                     secrets=self.secrets,
+                    local_traits=local_traits,
                 )
             status = str(arr_results.get("status") or "manual_review")
             verdict = "candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review")
@@ -550,7 +697,16 @@ class WhackamoleService:
                 arr=arr_results,
                 flags=check_results.get("flags", []),
             )
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="arr",
+                status=status,
+                reason=reason,
+                started_at=arr_started_at,
+                extra={"passed_trackers": list(reduction.tracker_results.get("passed") or [])},
+            )
             self.db.update_check_stage(item_id, "policy", "Applying release group policy.", check_results)
+            policy_started_at = time.perf_counter()
             status, policy_verdict, policy_reason, policy_result, flags = apply_release_group_policy(
                 tracker_results=reduction.tracker_results,
                 arr_results=arr_results,
@@ -567,8 +723,26 @@ class WhackamoleService:
                 release_group_policy=policy_result,
                 flags=flags,
             )
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="policy",
+                status=status,
+                reason=reason,
+                started_at=policy_started_at,
+                extra={
+                    "candidate_trackers": list(policy_result.get("candidate_trackers") or []),
+                    "blocked_trackers": list(policy_result.get("blocked_trackers") or []),
+                },
+            )
         elif reduction.status == "error":
             next_check_at = self._next_error_check(item["attempt_count"], None)
+        else:
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="arr",
+                status="skipped",
+                reason="UA did not produce any passed trackers for Arr comparison.",
+            )
 
         self.db.update_status(
             item_id,

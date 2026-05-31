@@ -1,0 +1,60 @@
+{
+  "fileIndex": 0,
+  "relativePath": "1923.S02.E01.The.Killing.Season.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H/1923.S02.E01.The.Killing.Season.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H.mkv",
+  "streams": [
+    {
+      "kind": "Video",
+      "fields": [
+        {
+          "name": "Format",
+          "value": "HEVC"
+        }
+      ]
+    },
+    {
+      "kind": "Audio",
+      "fields": [
+        {
+          "name": "Format",
+          "value": "E-AC-3"
+        }
+      ]
+    }
+  ],
+  "rawJSON": {
+    "media": {
+      "track": [
+        {
+          "@type": "General",
+          "TextCount": "3"
+        },
+        {
+          "@type": "Video",
+          "Format": "HEVC",
+          "Width": "3840",
+          "Height": "2160",
+          "BitDepth": "10",
+          "HDR_Format": "Dolby Vision",
+          "HDR_Format_Compatibility": "HDR10",
+          "HDR_Format_Profile": "dvhe.08",
+          "HDR_Format_Settings": "BL+RPU",
+          "colour_primaries": "BT.2020",
+          "transfer_characteristics": "PQ"
+        },
+        {
+          "@type": "Audio",
+          "Format": "E-AC-3",
+          "Format_Commercial_IfAny": "Dolby Digital Plus",
+          "Channels": "6",
+          "Language": "en-US",
+          "Default": "Yes"
+        },
+        {
+          "@type": "Text",
+          "Format": "UTF-8",
+          "Language": "en-US"
+        }
+      ]
+    }
+  }
+}

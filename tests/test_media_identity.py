@@ -1,6 +1,9 @@
 import json
+from pathlib import Path
 
 from app.media_identity import analyze_media_payloads, parse_release_traits, traits_from_mediainfo, traits_payload
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "mediainfo"
 
 
 def test_release_identity_normalizes_common_user_aliases():
@@ -354,6 +357,15 @@ def test_static_hdr10_metadata_counts_without_transfer_or_primaries():
     assert not any(issue["key"] == "hdr10_missing" for issue in result["issues"])
 
 
+def test_fixture_static_hdr10_metadata_counts_without_transfer_or_primaries():
+    release = "Untold.The.Death.and.Life.of.Lamar.Odom.2026.HDR.2160p.WEB.h265-EDITH"
+    result = _analyze_sample(release, _fixture("static_hdr10.json"))
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert "HDR10" in traits["hdr_formats"]
+    assert not any(issue["key"] == "hdr10_missing" for issue in result["issues"])
+
+
 def test_secondary_atmos_track_satisfies_atmos_claim():
     release = "Marty.Supreme.2025.2160p.UHD.BluRay.HDR10Plus.DoVi.TrueHD.7.1.Atmos.x265-SPHD"
     payload = _payload(
@@ -388,6 +400,26 @@ def test_secondary_atmos_track_satisfies_atmos_claim():
 
     assert "Atmos" in traits["audio_objects"]
     assert not any(issue["key"] == "audio_object_missing" for issue in result["issues"])
+
+
+def test_fixture_secondary_atmos_track_satisfies_atmos_claim():
+    release = "Marty.Supreme.2025.2160p.UHD.BluRay.HDR10Plus.DoVi.TrueHD.7.1.Atmos.x265-SPHD"
+    result = _analyze_sample(release, _fixture("secondary_atmos.json"))
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert "Atmos" in traits["audio_objects"]
+    assert not any(issue["key"] == "audio_object_missing" for issue in result["issues"])
+
+
+def test_fixture_live_qui_stream_wrapper_shape():
+    release = "1923.S02.E01.The.Killing.Season.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H"
+    result = _analyze_sample(release, _fixture("live_qui_stream_wrapper.json"))
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert {"Dolby Vision", "HDR10"}.issubset(set(traits["hdr_formats"]))
+    assert traits["audio_format"] == "DD+"
+    assert "Subtitles" in traits["subtitle_tags"]
+    assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
 
 
 def test_release_title_atmos_does_not_fake_mediainfo_atmos_metadata():
@@ -530,6 +562,10 @@ def _payload(release: str, tracks):
             "track": tracks,
         }
     }
+
+
+def _fixture(name: str):
+    return json.loads((FIXTURE_DIR / name).read_text())
 
 
 def _analyze_sample(release: str, payload):
