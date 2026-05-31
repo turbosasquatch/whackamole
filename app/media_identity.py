@@ -347,7 +347,7 @@ def traits_from_mediainfo(payload: Mapping[str, Any]) -> ReleaseTraits:
     codec = _codec_from_mediainfo(video, fallback.codec)
     audio_format = _audio_format_from_mediainfo(audio, fallback.audio_format)
     channels = _mediainfo_channels(audio)
-    audio_objects = _audio_objects_from_mediainfo(audio, fallback.audio_objects)
+    audio_objects = _audio_objects_from_tracks(audios)
     hdr_rank, hdr_formats, dv_profile = _hdr_from_mediainfo(video, fallback)
     bit_depth = _track_text(video, "BitDepth", "bitDepth") or fallback.bit_depth
     chroma = _track_text(video, "ChromaSubsampling", "chromaSubsampling") or fallback.chroma
@@ -587,7 +587,7 @@ def _validate_media_file(title_traits: ReleaseTraits, file_result: Mapping[str, 
             )
         )
 
-    if title_traits.audio_format and traits.get("audio_format"):
+    if title_traits.audio_format and title_traits.audio_format != "Atmos" and traits.get("audio_format"):
         expected = _audio_family(title_traits.audio_format)
         actual = _audio_family(str(traits.get("audio_format") or ""))
         if expected != actual:
@@ -1042,6 +1042,15 @@ def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tu
     bit_depth = _number_from_value(_track_value(video, "BitDepth", "bitDepth"))
     transfer = _track_text(video, "transfer_characteristics", "TransferCharacteristics").lower()
     primaries = _track_text(video, "colour_primaries", "ColorPrimaries").lower()
+    static_hdr_metadata = bool(
+        _joined_track_text(
+            video,
+            "MasteringDisplay_ColorPrimaries",
+            "MasteringDisplay_Luminance",
+            "MaxCLL",
+            "MaxFALL",
+        )
+    )
     has_dv = bool(
         "dolby vision" in text
         or re.search(r"\bdv\b|dovi", text)
@@ -1049,7 +1058,13 @@ def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tu
         or "bl+rpu" in text
     )
     has_hdr10plus = "hdr10+" in text or "smpte st 2094" in text or "dynamic metadata" in text
-    explicit_hdr10 = "hdr10" in hdr_format_text or "smpte st 2086" in text or "mastering display" in text or "maxcll" in text
+    explicit_hdr10 = (
+        "hdr10" in hdr_format_text
+        or "smpte st 2086" in text
+        or "mastering display" in text
+        or "maxcll" in text
+        or (bit_depth >= 10 and static_hdr_metadata)
+    )
     inferred_hdr10 = (
         bit_depth >= 10
         and "bt.2020" in primaries
@@ -1095,7 +1110,18 @@ def _codec_from_mediainfo(video: Mapping[str, Any], fallback: str) -> str:
 
 
 def _audio_format_from_mediainfo(audio: Mapping[str, Any], fallback: str) -> str:
-    text = _joined_track_text(audio, "Format", "Format_Commercial_IfAny", "Format_Profile", "CodecID", "Title", "title").lower()
+    text = _joined_track_text(
+        audio,
+        "Format",
+        "Format_Commercial_IfAny",
+        "CommercialName",
+        "Commercial name",
+        "Format_Profile",
+        "Format_AdditionalFeatures",
+        "CodecID",
+        "Title",
+        "title",
+    ).lower()
     parsed, _rank = _parse_audio_format(text)
     if parsed == "Atmos" and fallback:
         return fallback
@@ -1103,9 +1129,16 @@ def _audio_format_from_mediainfo(audio: Mapping[str, Any], fallback: str) -> str
 
 
 def _audio_objects_from_mediainfo(audio: Mapping[str, Any], fallback: Sequence[str]) -> List[str]:
-    text = " ".join(str(value or "") for value in audio.values() if isinstance(value, (str, int, float))).lower()
+    text = _joined_scalar_text(audio).lower()
     values = _parse_audio_objects(text)
-    return values or list(fallback)
+    return values
+
+
+def _audio_objects_from_tracks(audios: Sequence[Mapping[str, Any]]) -> List[str]:
+    values: List[str] = []
+    for audio in audios:
+        values.extend(_audio_objects_from_mediainfo(audio, ()))
+    return _dedupe(values)
 
 
 def _mediainfo_channels(audio: Mapping[str, Any]) -> float:
@@ -1178,7 +1211,7 @@ def _track_payload(track: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "type": _track_text(track, "@type", "type"),
         "format": _track_text(track, "Format", "format"),
-        "commercial": _track_text(track, "Format_Commercial_IfAny"),
+        "commercial": _track_text(track, "Format_Commercial_IfAny", "CommercialName", "Commercial name"),
         "profile": _track_text(track, "Format_Profile"),
         "title": _track_title(track),
         "language": _language_name(track),
@@ -1278,6 +1311,24 @@ def _track_text(track: Mapping[str, Any], *keys: str) -> str:
 
 def _joined_track_text(track: Mapping[str, Any], *keys: str) -> str:
     return " ".join(_track_text(track, key) for key in keys if _track_text(track, key))
+
+
+def _joined_scalar_text(value: Any) -> str:
+    parts: List[str] = []
+
+    def collect(item: Any) -> None:
+        if isinstance(item, Mapping):
+            for key, nested in item.items():
+                parts.append(str(key))
+                collect(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                collect(nested)
+        elif isinstance(item, (str, int, float)):
+            parts.append(str(item))
+
+    collect(value)
+    return " ".join(parts)
 
 
 def _track_value(track: Mapping[str, Any], *keys: str) -> Any:

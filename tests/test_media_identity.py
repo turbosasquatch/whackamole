@@ -317,6 +317,107 @@ def test_live_qui_display_fields_infer_hdr10_without_hdr_format():
     assert not any(issue["key"] == "hdr10_missing" for issue in result["issues"])
 
 
+def test_static_hdr10_metadata_counts_without_transfer_or_primaries():
+    release = "Untold.The.Death.and.Life.of.Lamar.Odom.2026.HDR.2160p.WEB.h265-EDITH"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "2"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Width": "3840",
+                "Height": "2160",
+                "Format_Profile": "Main 10",
+                "BitDepth": "10",
+                "MasteringDisplay_ColorPrimaries": "Display P3",
+                "MasteringDisplay_Luminance": "min: 0.0001 cd/m2, max: 1000 cd/m2",
+                "MaxCLL": "658 cd/m2",
+                "MaxFALL": "211 cd/m2",
+            },
+            {
+                "@type": "Audio",
+                "Format": "E-AC-3",
+                "Format_Commercial_IfAny": "Dolby Digital Plus with Dolby Atmos",
+                "Format_AdditionalFeatures": "JOC",
+                "Channels": "6",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert "HDR10" in traits["hdr_formats"]
+    assert not any(issue["key"] == "hdr10_missing" for issue in result["issues"])
+
+
+def test_secondary_atmos_track_satisfies_atmos_claim():
+    release = "Marty.Supreme.2025.2160p.UHD.BluRay.HDR10Plus.DoVi.TrueHD.7.1.Atmos.x265-SPHD"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "4"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Width": "3840",
+                "Height": "2160",
+                "BitDepth": "10",
+                "HDR_Format": "Dolby Vision / SMPTE ST 2094 App 4",
+                "HDR_Format_Compatibility": "HDR10",
+            },
+            {"@type": "Audio", "Format": "TrueHD", "Channels": "8", "Default": "Yes"},
+            {
+                "@type": "Audio",
+                "Format": "E-AC-3",
+                "CommercialName": "Dolby Digital Plus with Dolby Atmos",
+                "Format_AdditionalFeatures": "JOC",
+                "Title": "E-AC-3 JOC",
+                "Channels": "6",
+                "extra": {"NumberOfDynamicObjects": "15"},
+            },
+            {"@type": "Text", "Format": "PGS", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert "Atmos" in traits["audio_objects"]
+    assert not any(issue["key"] == "audio_object_missing" for issue in result["issues"])
+
+
+def test_release_title_atmos_does_not_fake_mediainfo_atmos_metadata():
+    release = "Pirates.2003.2160p.UHD.BluRay.ATMOS.DV.x265-W4NK3R"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "4"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Title": release,
+                "Width": "3840",
+                "Height": "2160",
+                "BitDepth": "10",
+                "HDR_Format": "Dolby Vision",
+            },
+            {"@type": "Audio", "Format": "TrueHD", "Channels": "8", "Default": "Yes"},
+            {"@type": "Text", "Format": "PGS", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert "Atmos" not in traits["audio_objects"]
+    assert any(issue["key"] == "audio_object_missing" for issue in result["issues"])
+    assert not any(issue["key"] == "audio_codec_mismatch" for issue in result["issues"])
+
+
 def test_real_shape_item_2728_accepts_dv_profile_5_without_hdr10_fallback():
     release = "Dutton.Ranch.S01E04.DV.2160p.WEB.h265-GRACE"
     payload = _payload(
