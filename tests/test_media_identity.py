@@ -1,3 +1,5 @@
+import json
+
 from app.media_identity import analyze_media_payloads, parse_release_traits, traits_from_mediainfo, traits_payload
 
 
@@ -188,6 +190,131 @@ def test_real_shape_item_2785_detects_dv_profile_8_and_hdr10_compatibility():
     assert {"Dolby Vision", "HDR10"}.issubset(set(traits["hdr_formats"]))
     assert traits["dv_profile"] == "DV P8"
     assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
+
+
+def test_live_qui_stream_wrappers_prefer_raw_json_tracks():
+    release = "1923.S02.E01.The.Killing.Season.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H"
+    raw_payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "3"},
+            {
+                "@type": "Video",
+                "Format": "HEVC",
+                "Width": "3840",
+                "Height": "2160",
+                "BitDepth": "10",
+                "HDR_Format": "Dolby Vision",
+                "HDR_Format_Compatibility": "HDR10",
+                "HDR_Format_Profile": "dvhe.08",
+                "HDR_Format_Settings": "BL+RPU",
+                "colour_primaries": "BT.2020",
+                "transfer_characteristics": "PQ",
+            },
+            {"@type": "Audio", "Format": "E-AC-3", "Format_Commercial_IfAny": "Dolby Digital Plus", "Channels": "6", "Language": "en-US", "Default": "Yes"},
+            {"@type": "Text", "Format": "UTF-8", "Language": "en-US"},
+        ],
+    )
+    payload = {
+        "fileIndex": 0,
+        "relativePath": f"{release}/{release}.mkv",
+        "streams": [
+            {"kind": "Video", "fields": [{"name": "Format", "value": "HEVC"}]},
+            {"kind": "Audio", "fields": [{"name": "Format", "value": "E-AC-3"}]},
+        ],
+        "rawJSON": json.dumps(raw_payload),
+    }
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert {"Dolby Vision", "HDR10"}.issubset(set(traits["hdr_formats"]))
+    assert traits["audio_format"] == "DD+"
+    assert "Subtitles" in traits["subtitle_tags"]
+    assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
+
+
+def test_live_qui_stream_field_wrappers_are_flattened_without_raw_json():
+    release = "1923.S02.E01.The.Killing.Season.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H"
+    payload = {
+        "fileIndex": 0,
+        "relativePath": f"{release}/{release}.mkv",
+        "streams": [
+            {
+                "kind": "Video",
+                "fields": [
+                    {"name": "Format", "value": "HEVC"},
+                    {"name": "HDR format", "value": "Dolby Vision, Version 1.0, Profile 8.1, dvhe.08.06, BL+RPU, HDR10 compatible"},
+                    {"name": "Width", "value": "3 840 pixels"},
+                    {"name": "Height", "value": "2 160 pixels"},
+                    {"name": "Bit depth", "value": "10 bits"},
+                    {"name": "Color primaries", "value": "BT.2020"},
+                    {"name": "Transfer characteristics", "value": "PQ"},
+                ],
+            },
+            {
+                "kind": "Audio",
+                "fields": [
+                    {"name": "Format", "value": "E-AC-3"},
+                    {"name": "Commercial name", "value": "Dolby Digital Plus"},
+                    {"name": "Channel(s)", "value": "6 channels"},
+                    {"name": "Language", "value": "English (US)"},
+                    {"name": "Default", "value": "Yes"},
+                ],
+            },
+            {"kind": "Text", "fields": [{"name": "Format", "value": "UTF-8"}, {"name": "Language", "value": "English (US)"}]},
+            {"kind": "Text", "fields": [{"name": "Format", "value": "UTF-8"}, {"name": "Language", "value": "English (US)"}, {"name": "Title", "value": "SDH"}]},
+            {"kind": "Text", "fields": [{"name": "Format", "value": "UTF-8"}, {"name": "Language", "value": "Portuguese"}, {"name": "Default", "value": "Yes"}]},
+        ],
+    }
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert {"Dolby Vision", "HDR10"}.issubset(set(traits["hdr_formats"]))
+    assert traits["audio_format"] == "DD+"
+    assert traits["audio_channels"] == 5.1
+    assert traits["languages"] == ["english"]
+    assert traits["subtitle_tags"] == ["Subtitles", "Default Subs"]
+    assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
+
+
+def test_live_qui_display_fields_infer_hdr10_without_hdr_format():
+    release = "Straight.Outta.Compton.2015.Directors.Cut.UHD.BluRay.2160p.DDP.7.1.HDR.x265-hallowed"
+    payload = {
+        "fileIndex": 0,
+        "relativePath": f"{release}/{release}.mkv",
+        "streams": [
+            {
+                "kind": "Video",
+                "fields": [
+                    {"name": "Format", "value": "HEVC"},
+                    {"name": "Width", "value": "3 840 pixels"},
+                    {"name": "Height", "value": "1 600 pixels"},
+                    {"name": "Bit depth", "value": "10 bits"},
+                    {"name": "Color primaries", "value": "BT.2020"},
+                    {"name": "Transfer characteristics", "value": "PQ"},
+                ],
+            },
+            {
+                "kind": "Audio",
+                "fields": [
+                    {"name": "Format", "value": "E-AC-3"},
+                    {"name": "Commercial name", "value": "Dolby Digital Plus"},
+                    {"name": "Channel(s)", "value": "8 channels"},
+                    {"name": "Language", "value": "English"},
+                    {"name": "Default", "value": "Yes"},
+                ],
+            },
+            {"kind": "Text", "fields": [{"name": "Format", "value": "PGS"}, {"name": "Language", "value": "English"}]},
+        ],
+    }
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert "HDR10" in traits["hdr_formats"]
+    assert not any(issue["key"] == "hdr10_missing" for issue in result["issues"])
 
 
 def test_real_shape_item_2728_accepts_dv_profile_5_without_hdr10_fallback():

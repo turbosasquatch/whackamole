@@ -394,30 +394,122 @@ def traits_from_mediainfo(payload: Mapping[str, Any]) -> ReleaseTraits:
 
 
 def mediainfo_tracks(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
-    for key in ("streams", "track", "tracks"):
-        tracks = _mapping_value(payload, key)
-        if isinstance(tracks, list):
-            return [item for item in tracks if isinstance(item, Mapping)]
+    return _mediainfo_tracks(payload, depth=0)
+
+
+def _mediainfo_tracks(payload: Mapping[str, Any], *, depth: int) -> List[Mapping[str, Any]]:
+    if depth > 6:
+        return []
     raw = _mapping_value(payload, "rawJSON")
     if isinstance(raw, str) and raw.strip():
         try:
             decoded = json.loads(raw)
         except json.JSONDecodeError:
             decoded = {}
-        nested = mediainfo_tracks(decoded) if isinstance(decoded, Mapping) else []
+        nested = _mediainfo_tracks(decoded, depth=depth + 1) if isinstance(decoded, Mapping) else []
         if nested:
             return nested
     elif isinstance(raw, Mapping):
-        nested = mediainfo_tracks(raw)
+        nested = _mediainfo_tracks(raw, depth=depth + 1)
         if nested:
             return nested
+
+    for key in ("streams", "track", "tracks"):
+        tracks = _mapping_value(payload, key)
+        if isinstance(tracks, list):
+            normalised = _normalise_mediainfo_track_list(tracks)
+            if normalised:
+                return normalised
     media = _mapping_value(payload, "media")
     if isinstance(media, Mapping):
         for key in ("track", "tracks", "streams"):
             tracks = _mapping_value(media, key)
             if isinstance(tracks, list):
-                return [item for item in tracks if isinstance(item, Mapping)]
+                normalised = _normalise_mediainfo_track_list(tracks)
+                if normalised:
+                    return normalised
+    for key in ("data", "result", "response", "payload", "body", "mediainfo", "mediaInfo", "media_info"):
+        nested_payload = _mapping_value(payload, key)
+        if isinstance(nested_payload, Mapping):
+            nested = _mediainfo_tracks(nested_payload, depth=depth + 1)
+            if nested:
+                return nested
     return []
+
+
+def _normalise_mediainfo_track_list(tracks: Sequence[Any]) -> List[Mapping[str, Any]]:
+    normalised: List[Mapping[str, Any]] = []
+    for track in tracks:
+        if not isinstance(track, Mapping):
+            continue
+        normalised_track = _normalise_mediainfo_track(track)
+        if normalised_track:
+            normalised.append(normalised_track)
+    return normalised
+
+
+def _normalise_mediainfo_track(track: Mapping[str, Any]) -> Mapping[str, Any]:
+    normalised = dict(track)
+    fields = _mapping_value(normalised, "fields")
+    if fields is not None:
+        normalised.pop("fields", None)
+        normalised.pop("Fields", None)
+        for name, value in _iter_mediainfo_fields(fields):
+            if not name or value is None:
+                continue
+            normalised.setdefault(name, value)
+            compact = _compact_mapping_key(name)
+            alias = _MEDIAINFO_FIELD_ALIASES.get(compact)
+            if alias:
+                normalised.setdefault(alias, value)
+            auto_key = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+            if auto_key:
+                normalised.setdefault(auto_key, value)
+    kind = _mapping_value(normalised, "@type", "type", "kind")
+    if kind and not _mapping_value(normalised, "@type", "type"):
+        normalised["@type"] = str(kind)
+    return normalised
+
+
+def _iter_mediainfo_fields(fields: Any) -> List[Tuple[str, Any]]:
+    if isinstance(fields, Mapping):
+        return [(str(key), value) for key, value in fields.items()]
+    if not isinstance(fields, list):
+        return []
+    values: List[Tuple[str, Any]] = []
+    for field in fields:
+        if isinstance(field, Mapping):
+            name = _mapping_value(field, "name", "key", "label")
+            value = _mapping_value(field, "value", "text", "raw")
+            values.append((str(name or ""), value))
+        elif isinstance(field, (list, tuple)) and len(field) >= 2:
+            values.append((str(field[0]), field[1]))
+    return values
+
+
+_MEDIAINFO_FIELD_ALIASES = {
+    "commercialname": "Format_Commercial_IfAny",
+    "hdrformat": "HDR_Format",
+    "formatprofile": "Format_Profile",
+    "formatinfo": "Format_Info",
+    "codecid": "CodecID",
+    "codecidinfo": "CodecID_Info",
+    "bitrate": "BitRate",
+    "bitratemode": "BitRate_Mode",
+    "channels": "Channels",
+    "channellayout": "ChannelLayout",
+    "chromasubsampling": "ChromaSubsampling",
+    "bitdepth": "BitDepth",
+    "colorprimaries": "ColorPrimaries",
+    "colourprimaries": "colour_primaries",
+    "transfercharacteristics": "TransferCharacteristics",
+    "matrixcoefficients": "MatrixCoefficients",
+    "masteringdisplaycolorprimaries": "MasteringDisplay_ColorPrimaries",
+    "masteringdisplaycolourprimaries": "MasteringDisplay_ColorPrimaries",
+    "masteringdisplayluminance": "MasteringDisplay_Luminance",
+    "maximumcontentlightlevel": "MaxCLL",
+    "maximumframeaveragelightlevel": "MaxFALL",
+}
 
 
 def extract_release_group(value: str) -> str:
@@ -1149,6 +1241,7 @@ def _track_title(track: Mapping[str, Any]) -> str:
 
 def _language_name(track: Mapping[str, Any]) -> str:
     value = _track_text(track, "Language", "language").strip().lower()
+    value = re.sub(r"\s*\([^)]*\)", "", value).strip()
     primary = value.split("-", 1)[0]
     aliases = {
         "en": "english",
@@ -1202,7 +1295,16 @@ def _mapping_value(mapping: Mapping[str, Any], *keys: str) -> Any:
         value = lowered.get(str(key).lower())
         if value is not None:
             return value
+    compacted = {_compact_mapping_key(str(key)): value for key, value in mapping.items()}
+    for key in keys:
+        value = compacted.get(_compact_mapping_key(str(key)))
+        if value is not None:
+            return value
     return None
+
+
+def _compact_mapping_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower()).replace("colour", "color")
 
 
 def _is_yes(value: Any) -> bool:
@@ -1218,7 +1320,8 @@ def _first_text(track: Mapping[str, Any], *keys: str) -> str:
 
 
 def _number_from_value(value: Any) -> int:
-    match = re.search(r"\d+", str(value or ""))
+    text = re.sub(r"(?<=\d)\s+(?=\d{3}\b)", "", str(value or ""))
+    match = re.search(r"\d+", text)
     return int(match.group(0)) if match else 0
 
 
