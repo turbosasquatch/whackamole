@@ -54,6 +54,17 @@ DASHBOARD_VIEWS = {
     "all": [],
 }
 FILTERABLE_VIEWS = {"baseline", "candidates", "blocked", "manual"}
+DASHBOARD_TABS = [
+    ("active", "Active", ["queued", "deferred", "checking", "error"]),
+    ("candidates", "Candidates", ["candidate"]),
+    ("blocked", "Blocked", ["blocked"]),
+    ("manual", "Review", ["manual_review"]),
+    ("errors", "Errors", ["error"]),
+    ("baseline", "Baseline", ["baseline"]),
+    ("inventory", "Inventory", ["inventory"]),
+    ("ignored", "Ignored", ["ignored"]),
+    ("all", "All", []),
+]
 
 
 def _format_datetime(value: Optional[int]) -> str:
@@ -72,8 +83,16 @@ def _format_bytes(value: Optional[int]) -> str:
     return f"{amount:.1f} TiB"
 
 
+def _format_json(value: Any) -> str:
+    try:
+        return json.dumps(value, indent=2, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
 templates.env.filters["datetime"] = _format_datetime
 templates.env.filters["bytes"] = _format_bytes
+templates.env.filters["json_pretty"] = _format_json
 
 
 def _config_dir() -> str:
@@ -98,12 +117,15 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["inventory_meta"] = inventory_meta
     item["coverage"] = item_coverage
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
+    item["display_status"] = _display_status(item)
+    item["next_action"] = _next_action(item)
     return item
 
 
 def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     item = _row_dict(row, coverage)
     item["video_files"] = _video_files_for_item(item)
+    item["raw_payloads"] = _raw_payloads(item)
     return item
 
 
@@ -134,6 +156,115 @@ def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [flag for flag in flags if isinstance(flag, dict) and str(flag.get("key") or "")]
 
 
+def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
+    value = str(item.get("status") or "")
+    stage = str(item.get("check_stage") or "")
+    next_check_at = item.get("next_check_at")
+    now = int(time.time())
+    stage_labels = {
+        "media": "Checking MediaInfo",
+        "path": "Mapping path",
+        "ua": "Running UA",
+        "arr": "Checking ARR",
+        "policy": "Applying policy",
+        "done": "Checked",
+        "interrupted": "Interrupted",
+    }
+    if value == "checking":
+        return {"label": stage_labels.get(stage, "Checking"), "group": "running", "detail": "In progress"}
+    if value in {"queued", "deferred"}:
+        return {"label": "Queued", "group": "queued", "detail": "Waiting for a check slot"}
+    if value == "candidate":
+        return {"label": "Ready", "group": "ready", "detail": "Upload candidate"}
+    if value == "blocked":
+        return {"label": "Covered", "group": "covered", "detail": "No upload needed"}
+    if value == "manual_review":
+        return {"label": "Needs Review", "group": "attention", "detail": "Manual decision needed"}
+    if value == "error":
+        try:
+            retry_waiting = bool(next_check_at and int(next_check_at) > now)
+        except (TypeError, ValueError):
+            retry_waiting = False
+        return {
+            "label": "Retry Scheduled" if retry_waiting else "Error",
+            "group": "error",
+            "detail": "Waiting for retry window" if retry_waiting else "Retry due or failed",
+        }
+    if value == "baseline":
+        return {"label": "Baseline", "group": "neutral", "detail": "Inventory backlog"}
+    if value == "inventory":
+        return {"label": "Inventory", "group": "neutral", "detail": "Coverage signal"}
+    if value == "ignored":
+        return {"label": "Ignored", "group": "muted", "detail": "Hidden from active work"}
+    return {"label": value.replace("_", " ").title() if value else "Unknown", "group": "neutral", "detail": ""}
+
+
+def _next_action(item: Dict[str, Any]) -> str:
+    status_value = str(item.get("status") or "")
+    if status_value == "candidate":
+        return "Review candidate"
+    if status_value == "blocked":
+        return "Review coverage"
+    if status_value == "manual_review":
+        return "Inspect issue"
+    if status_value == "error":
+        try:
+            if item.get("next_check_at") and int(item["next_check_at"]) > int(time.time()):
+                return "Waiting for retry"
+        except (TypeError, ValueError):
+            pass
+        return "Retry check"
+    if status_value in {"baseline", "queued", "deferred"}:
+        return "Run check"
+    if status_value == "checking":
+        return "In progress"
+    if status_value == "inventory":
+        return "Coverage only"
+    if status_value == "ignored":
+        return "Ignored"
+    return "Open"
+
+
+def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    raw_torrent = _json_object(item.get("raw_torrent"))
+    checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
+    media = checks.get("media") if isinstance(checks.get("media"), dict) else {}
+    raw_mediainfo = media.get("raw_mediainfo_payloads") if isinstance(media, dict) else []
+    diagnostics = checks.get("diagnostics") if isinstance(checks.get("diagnostics"), dict) else {}
+    return {
+        "ua_log": {
+            "title": "UA log",
+            "kind": "text",
+            "available": bool(str(item.get("ua_log") or "")),
+            "content": str(item.get("ua_log") or "No UA log captured yet."),
+        },
+        "qui": {
+            "title": "Raw QUI torrent",
+            "kind": "json",
+            "available": bool(raw_torrent),
+            "content": raw_torrent or {"message": "No raw QUI torrent payload recorded."},
+        },
+        "mediainfo": {
+            "title": "Raw QUI MediaInfo",
+            "kind": "json",
+            "available": bool(raw_mediainfo),
+            "content": raw_mediainfo or {"message": "Raw MediaInfo will be available after this item is rechecked."},
+        },
+        "arr": {
+            "title": "Raw ARR result",
+            "kind": "json",
+            "available": bool(item.get("arr_result")),
+            "content": item.get("arr_result") or {"message": "No ARR result recorded."},
+        },
+        "diagnostics": {
+            "title": "Check diagnostics",
+            "kind": "json",
+            "available": bool(diagnostics),
+            "content": diagnostics or {"message": "No diagnostics recorded."},
+        },
+    }
+
+
 def _api_item_summary(row: Any) -> Dict[str, Any]:
     item = _normalized_item(row)
     return {
@@ -157,6 +288,8 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "next_check_at": item["next_check_at"],
         "attempt_count": item["attempt_count"],
         "check_stage": item.get("check_stage", ""),
+        "display_status": item["display_status"],
+        "next_action": item["next_action"],
         "flags": item["check_flags"],
         "stage_flow": item["stage_flow"],
         "baseline": bool(item["baseline"]),
@@ -347,12 +480,28 @@ def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
 
     final_state = "complete" if status_value in final_statuses else ("active" if stage == "done" else "pending")
     return [
-        {"key": "queue", "label": "QUEUE", "state": state_for("queue", status_value not in {"queued", "deferred"})},
-        {"key": "media", "label": "MEDIA", "state": state_for("media", media_done)},
+        {"key": "queue", "label": "Queue", "state": state_for("queue", status_value not in {"queued", "deferred"})},
+        {"key": "media", "label": "MediaInfo", "state": state_for("media", media_done)},
         {"key": "ua", "label": "UA", "state": state_for("ua", ua_done)},
         {"key": "arr", "label": "ARR", "state": state_for("arr", arr_done)},
-        {"key": "final", "label": status_value.upper() if status_value else "FINAL", "state": final_state},
+        {"key": "final", "label": _status_label(status_value), "state": final_state},
     ]
+
+
+def _status_label(value: str) -> str:
+    labels = {
+        "candidate": "Ready",
+        "blocked": "Covered",
+        "manual_review": "Review",
+        "error": "Error",
+        "ignored": "Ignored",
+        "inventory": "Inventory",
+        "baseline": "Baseline",
+        "checking": "Checking",
+        "queued": "Queued",
+        "deferred": "Queued",
+    }
+    return labels.get(value, value.replace("_", " ").title() if value else "Final")
 
 
 def _arr_result(value: Any) -> Dict[str, Any]:
@@ -412,6 +561,7 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
     cfg = request.app.state.config_manager.load()
     secrets = request.app.state.secrets
     return {
+        **_shell_context(request, section="settings"),
         "request": request,
         "cfg": cfg,
         "secrets": _secret_state(secrets),
@@ -423,6 +573,41 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
         "message": message,
         "probe_results": probe_results or [],
     }
+
+
+def _shell_context(request: Request, section: str = "", view: str = "", q: str = "") -> Dict[str, Any]:
+    service_snapshot = request.app.state.service.snapshot()
+    counts = request.app.state.db.status_counts()
+    return {
+        "section": section,
+        "service": service_snapshot,
+        "counts": counts,
+        "dashboard_nav": _dashboard_nav(counts, service_snapshot, view=view, q=q),
+        "search_query": q,
+        "show_dashboard_search": section == "dashboard",
+    }
+
+
+def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = "", q: str = "") -> List[Dict[str, Any]]:
+    rows = []
+    queue = service.get("queue") if isinstance(service.get("queue"), dict) else {}
+    for key, label, statuses in DASHBOARD_TABS:
+        if key == "active":
+            total = int(queue.get("active") or 0)
+        elif statuses:
+            total = sum(int(counts.get(status, 0)) for status in statuses)
+        else:
+            total = sum(int(value or 0) for value in counts.values())
+        rows.append(
+            {
+                "key": key,
+                "label": label,
+                "total": total,
+                "href": _dashboard_url(key, q=q),
+                "selected": key == view,
+            }
+        )
+    return rows
 
 
 def _tracker_policy_context(cfg: AppConfig) -> List[Dict[str, str]]:
@@ -458,6 +643,7 @@ def _filtered_rows(
     missing: Optional[Iterable[str]] = None,
     hide_any_primary: bool = False,
     due_errors_only: bool = False,
+    q: str = "",
 ) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
     rows = db.list_items_filtered(
         statuses,
@@ -467,6 +653,7 @@ def _filtered_rows(
         missing=missing,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
+        q=q,
     )
     total = db.count_items_filtered(
         statuses,
@@ -474,6 +661,7 @@ def _filtered_rows(
         missing=missing,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
+        q=q,
     )
     return rows, total, _coverage_for_rows(db, rows)
 
@@ -485,8 +673,11 @@ def _dashboard_url(
     missing: Optional[Iterable[str]] = None,
     hide_any_primary: bool = False,
     message: str = "",
+    q: str = "",
 ) -> str:
     params: Dict[str, Any] = {"view": view, "page": max(1, page)}
+    if q:
+        params["q"] = q
     if view in FILTERABLE_VIEWS:
         if media and media != "all":
             params["media"] = media
@@ -532,9 +723,11 @@ async def dashboard(
     missing: Optional[List[str]] = Query(None),
     hide_any_primary: bool = False,
     page: int = Query(1, ge=1),
+    q: str = "",
     message: str = "",
 ) -> HTMLResponse:
     selected = view if view in DASHBOARD_VIEWS else "active"
+    search_query = q.strip()
     missing_values = missing or []
     limit = 100 if selected in {"baseline", "inventory"} else 150
     offset = (page - 1) * limit
@@ -550,9 +743,11 @@ async def dashboard(
         missing=filter_missing,
         hide_any_primary=filter_hide_any,
         due_errors_only=selected == "active",
+        q=search_query,
     )
     service_snapshot = request.app.state.service.snapshot()
     context = {
+        **_shell_context(request, section="dashboard", view=selected, q=search_query),
         "request": request,
         "items": [_row_dict(row, coverage) for row in rows],
         "view": selected,
@@ -569,6 +764,7 @@ async def dashboard(
             "displayed": len(rows),
             "limit": limit,
             "view": selected,
+            "q": search_query,
             "label": {
                 "baseline": "baseline",
                 "candidates": "candidate",
@@ -583,12 +779,12 @@ async def dashboard(
             "total": filtered_total,
             "start": offset + 1 if filtered_total else 0,
             "end": offset + len(rows),
-            "prev_url": _dashboard_url(selected, page - 1, filter_media, filter_missing, filter_hide_any) if page > 1 else "",
-            "next_url": _dashboard_url(selected, page + 1, filter_media, filter_missing, filter_hide_any)
+            "prev_url": _dashboard_url(selected, page - 1, filter_media, filter_missing, filter_hide_any, q=search_query) if page > 1 else "",
+            "next_url": _dashboard_url(selected, page + 1, filter_media, filter_missing, filter_hide_any, q=search_query)
             if offset + len(rows) < filtered_total
             else "",
         },
-        "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_hide_any),
+        "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_hide_any, q=search_query),
     }
     return templates.TemplateResponse(request, "dashboard.html", context)
 
@@ -600,16 +796,16 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "item.html",
-            {"request": request, "item": None, "service": request.app.state.service.snapshot()},
+            {**_shell_context(request, section="items"), "request": request, "item": None},
             status_code=404,
         )
     return templates.TemplateResponse(
         request,
         "item.html",
         {
+            **_shell_context(request, section="items"),
             "request": request,
             "item": _row_detail_dict(row, _coverage_for_row(request.app.state.db, row)),
-            "service": request.app.state.service.snapshot(),
         },
     )
 
@@ -625,8 +821,9 @@ async def recheck_filtered_baseline(
     media: str = Form("all"),
     missing: Optional[List[str]] = Form(None),
     hide_any_primary: Optional[str] = Form(None),
+    q: str = Form(""),
 ) -> RedirectResponse:
-    return await recheck_filtered_items("baseline", media, missing, hide_any_primary)
+    return await recheck_filtered_items("baseline", media, missing, hide_any_primary, q)
 
 
 @app.post("/items/recheck-filtered")
@@ -635,10 +832,12 @@ async def recheck_filtered_items(
     media: str = Form("all"),
     missing: Optional[List[str]] = Form(None),
     hide_any_primary: Optional[str] = Form(None),
+    q: str = Form(""),
 ) -> RedirectResponse:
     selected = view if view in FILTERABLE_VIEWS else "baseline"
     missing_values = missing or []
     hide_any = hide_any_primary == "true"
+    search_query = q.strip()
     label = {
         "baseline": "baseline",
         "candidates": "candidate",
@@ -656,6 +855,7 @@ async def recheck_filtered_items(
         missing=missing_values,
         hide_any_primary=hide_any,
         reason=reason,
+        q=search_query,
     )
     return RedirectResponse(
         url=_dashboard_url(
@@ -665,6 +865,7 @@ async def recheck_filtered_items(
             missing=missing_values,
             hide_any_primary=hide_any,
             message=f"Queued {queued} item{'s' if queued != 1 else ''}.",
+            q=search_query,
         ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
@@ -910,10 +1111,12 @@ async def api_items(
     media: str = Query("all"),
     missing: Optional[List[str]] = Query(None),
     hide_any_primary: bool = Query(False),
+    q: str = Query(""),
 ) -> JSONResponse:
     _require_api_auth(request)
     statuses = _parse_status_filter(status_filter)
     missing_values = missing or []
+    search_query = q.strip()
     rows, total, coverage = _filtered_rows(
         request.app.state.db,
         statuses,
@@ -922,6 +1125,7 @@ async def api_items(
         media=media,
         missing=missing_values,
         hide_any_primary=hide_any_primary,
+        q=search_query,
     )
     serializer = _api_item_detail if include_details else _api_item_summary
     return JSONResponse(
@@ -936,6 +1140,7 @@ async def api_items(
             "media": media,
             "missing": [tracker.upper() for tracker in missing_values],
             "hide_any_primary": hide_any_primary,
+            "q": search_query,
         }
     )
 

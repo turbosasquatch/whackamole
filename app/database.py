@@ -249,8 +249,9 @@ class Database:
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         due_errors_only: bool = False,
+        q: str = "",
     ) -> List[sqlite3.Row]:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only)
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only, q)
         offset = max(0, int(offset or 0))
         with self.connect() as conn:
             return conn.execute(
@@ -265,8 +266,9 @@ class Database:
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         due_errors_only: bool = False,
+        q: str = "",
     ) -> int:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only)
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only, q)
         with self.connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS count FROM items AS i {where_sql}", params).fetchone()
             return int(row["count"])
@@ -325,8 +327,9 @@ class Database:
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         reason: str = "Bulk recheck requested from filtered set",
+        q: str = "",
     ) -> int:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary)
+        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, q=q)
         now = int(time.time())
         with self.connect() as conn:
             rows = conn.execute(f"SELECT i.id FROM items AS i {where_sql}", params).fetchall()
@@ -353,6 +356,7 @@ class Database:
         missing: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         due_errors_only: bool = False,
+        q: str = "",
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
@@ -395,6 +399,26 @@ class Database:
                 "AND c.inventory_tracker_primary = 1"
                 ")"
             )
+        query = str(q or "").strip().lower()
+        if query:
+            like = f"%{query}%"
+            searchable_columns = [
+                "i.name",
+                "i.hash",
+                "i.category",
+                "i.tags",
+                "i.content_path",
+                "i.mapped_path",
+                "i.status",
+                "i.verdict",
+                "i.reason",
+                "i.tracker_results",
+                "i.arr_results",
+                "i.inventory_meta",
+                "i.raw_torrent",
+            ]
+            clauses.append("(" + " OR ".join(f"LOWER({column}) LIKE ?" for column in searchable_columns) + ")")
+            params.extend([like] * len(searchable_columns))
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return where_sql, params
 

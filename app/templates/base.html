@@ -4,21 +4,110 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul3">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul3" defer></script>
   </head>
   <body>
-    <header class="app-header">
-      <div>
-        <a class="brand" href="/">Whackamole</a>
-        <span class="subtitle">Upload Assistant triage for QUI arrivals</span>
+    <div class="app-shell" data-app-shell>
+      <aside class="app-sidebar" aria-label="Primary navigation">
+        <div class="sidebar-brand">
+          <a class="brand-mark" href="/">W</a>
+          <div>
+            <a class="brand-name" href="/">Whackamole</a>
+            <span>QUI arrival triage</span>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Dashboard views">
+          {% for nav in dashboard_nav | default([]) %}
+            <a href="{{ nav.href }}" class="{% if nav.selected %}active{% endif %}">
+              <span>{{ nav.label }}</span>
+              <strong data-count-view="{{ nav.key }}">{{ nav.total }}</strong>
+            </a>
+          {% else %}
+            <a href="/" class="{% if request.url.path == '/' %}active{% endif %}"><span>Dashboard</span></a>
+          {% endfor %}
+        </nav>
+
+        <div class="sidebar-footer">
+          <a class="sidebar-link {% if section == 'settings' %}active{% endif %}" href="/config">Settings</a>
+          {% if service is defined %}
+            <div class="sidebar-status">
+              <span class="state-dot {% if service.running %}ok{% else %}bad{% endif %}"></span>
+              <span>{{ "Running" if service.running else "Stopped" }}</span>
+            </div>
+          {% endif %}
+        </div>
+      </aside>
+
+      <div class="app-main">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button class="icon-button" type="button" data-sidebar-toggle aria-label="Toggle sidebar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </button>
+            <div class="topbar-title">
+              <strong>{% block page_label %}Whackamole{% endblock %}</strong>
+              {% if service is defined %}
+                <span>
+                  <span data-service-running>{{ "Running" if service.running else "Stopped" }}</span>
+                  · <span data-queue-field="running_jobs">{{ service.running_jobs }}</span> UA active
+                  · <span data-queue-field="active">{{ service.queue.active }}</span> runnable
+                </span>
+              {% endif %}
+            </div>
+          </div>
+
+          {% if show_dashboard_search | default(false) %}
+            <form class="top-search" method="get" action="/">
+              <input type="hidden" name="view" value="{{ view }}">
+              {% if dashboard_filters.media and dashboard_filters.media != "all" %}
+                <input type="hidden" name="media" value="{{ dashboard_filters.media }}">
+              {% endif %}
+              {% for tracker in dashboard_filters.missing %}
+                <input type="hidden" name="missing" value="{{ tracker }}">
+              {% endfor %}
+              {% if dashboard_filters.hide_any_primary %}
+                <input type="hidden" name="hide_any_primary" value="true">
+              {% endif %}
+              <label for="global-search">Search media</label>
+              <input id="global-search" name="q" value="{{ search_query }}" placeholder="Search name, hash, tracker, reason">
+              {% if search_query %}
+                <a class="clear-search" href="/?view={{ view }}" aria-label="Clear search">Clear</a>
+              {% endif %}
+            </form>
+          {% endif %}
+
+          <div class="topbar-actions">
+            {% block topbar_actions %}{% endblock %}
+            <a class="button secondary small" href="/config">Settings</a>
+          </div>
+        </header>
+
+        <main class="content-shell">
+          {% block content %}{% endblock %}
+        </main>
       </div>
-      <nav>
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Dashboard</a>
-        <a href="/config" class="{% if request.url.path == '/config' %}active{% endif %}">Settings</a>
-      </nav>
-    </header>
-    <main>
-      {% block content %}{% endblock %}
-    </main>
+    </div>
+
+    <div class="modal-backdrop" data-raw-modal hidden>
+      <section class="raw-modal" role="dialog" aria-modal="true" aria-labelledby="raw-modal-title">
+        <header>
+          <div>
+            <span class="eyebrow">Raw data</span>
+            <h2 id="raw-modal-title">Raw data</h2>
+          </div>
+          <button class="icon-close" type="button" data-raw-close aria-label="Close">x</button>
+        </header>
+        <pre data-raw-output></pre>
+        <footer>
+          <button class="button secondary small" type="button" data-raw-copy>Copy</button>
+          <button class="button secondary small" type="button" data-raw-download>Download</button>
+          <button class="button small" type="button" data-raw-close>Close</button>
+        </footer>
+      </section>
+    </div>
   </body>
 </html>

@@ -1,23 +1,37 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · Whackamole{% endblock %}
+{% block page_label %}Dashboard{% endblock %}
+{% block topbar_actions %}
+  <button class="button secondary small mobile-only" type="button" data-filter-toggle>Filters</button>
+  <a class="button secondary small" href="{{ current_url }}">Refresh</a>
+{% endblock %}
 {% block content %}
-<section class="toolbar">
+<section class="status-strip" aria-label="Service status">
   <div>
-    <h1>Dashboard</h1>
-    <p class="muted">
-      Service {{ "running" if service.running else "stopped" }} ·
-      {{ service.running_jobs }} UA job{{ "" if service.running_jobs == 1 else "s" }} active ·
-      {{ service.queue.active }} runnable item{{ "" if service.queue.active == 1 else "s" }} ·
-      {{ service.queue.waiting_errors }} waiting error{{ "" if service.queue.waiting_errors == 1 else "s" }} ·
-      Baseline {{ "complete" if service.baseline_done else "pending" }} ·
-      Maintenance {{ service.maintenance.state | replace("_", " ") }}
-    </p>
-    {% if service.last_service_error %}
-      <p class="alert">Last service error: {{ service.last_service_error }}</p>
-    {% endif %}
+    <span class="eyebrow">Service</span>
+    <strong>{{ "Running" if service.running else "Stopped" }}</strong>
+    <span>{{ service.running_jobs }} UA active</span>
   </div>
-  <a class="button secondary" href="/config">Settings</a>
+  <div>
+    <span class="eyebrow">Queue</span>
+    <strong data-queue-field="active">{{ service.queue.active }}</strong>
+    <span>{{ service.queue.waiting_errors }} waiting error{{ "" if service.queue.waiting_errors == 1 else "s" }}</span>
+  </div>
+  <div>
+    <span class="eyebrow">Baseline</span>
+    <strong>{{ "Complete" if service.baseline_done else "Pending" }}</strong>
+    <span>{{ counts.values() | sum }} stored items</span>
+  </div>
+  <div>
+    <span class="eyebrow">Maintenance</span>
+    <strong>{{ service.maintenance.state | replace("_", " ") | title }}</strong>
+    <span>{{ service.maintenance.dependency }}</span>
+  </div>
 </section>
+
+{% if service.last_service_error %}
+  <p class="alert">Last service error: {{ service.last_service_error }}</p>
+{% endif %}
 
 {% if service.maintenance.active %}
   <section class="maintenance-banner active">
@@ -47,51 +61,45 @@
   </section>
 {% endif %}
 
-<section class="tabs" aria-label="Dashboard views">
-  {% set tabs = [
-    ("active", "Active", ["queued", "deferred", "checking", "error"]),
-    ("candidates", "Candidates", ["candidate"]),
-    ("blocked", "Blocked", ["blocked"]),
-    ("manual", "Manual Review", ["manual_review"]),
-    ("errors", "Errors", ["error"]),
-    ("baseline", "Baseline", ["baseline"]),
-    ("inventory", "Inventory", ["inventory"]),
-    ("ignored", "Ignored", ["ignored"]),
-    ("all", "All", [])
-  ] %}
-  {% for key, label, statuses in tabs %}
-    {% set ns = namespace(total=0) %}
-    {% if key == "active" %}
-      {% set ns.total = service.queue.active %}
-    {% elif statuses %}
-      {% for status in statuses %}
-        {% set ns.total = ns.total + counts.get(status, 0) %}
-      {% endfor %}
-    {% else %}
-      {% set ns.total = counts.values() | sum %}
-    {% endif %}
-    <a href="/?view={{ key }}" class="{% if view == key %}selected{% endif %}">{{ label }} <span>{{ ns.total }}</span></a>
-  {% endfor %}
-</section>
-
 {% if message %}
   <p class="notice">{{ message }}</p>
 {% endif %}
 
-{% if view in filterable_views %}
-  <section class="baseline-filters">
-    <form method="get" action="/">
+<div class="dashboard-grid">
+  <aside class="filter-panel" data-filter-panel aria-label="Dashboard filters">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">View</span>
+        <h2>{{ dashboard_filters.label | title }}</h2>
+      </div>
+      <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters">x</button>
+    </div>
+
+    <nav class="filter-view-list">
+      {% for nav in dashboard_nav %}
+        <a href="{{ nav.href }}" class="{% if nav.selected %}active{% endif %}">
+          <span>{{ nav.label }}</span>
+          <strong data-count-view="{{ nav.key }}">{{ nav.total }}</strong>
+        </a>
+      {% endfor %}
+    </nav>
+
+    <form class="filter-form" method="get" action="/">
       <input type="hidden" name="view" value="{{ view }}">
+      {% if search_query %}
+        <input type="hidden" name="q" value="{{ search_query }}">
+      {% endif %}
       <label>
         Media
-        <select name="media">
+        <select name="media" {% if view not in filterable_views %}disabled{% endif %}>
           {% set media_options = [("all", "All"), ("movie", "Movies"), ("tv", "TV shows"), ("episode", "Episodes")] %}
           {% for value, label in media_options %}
             <option value="{{ value }}" {% if dashboard_filters.media == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </label>
-      <fieldset>
+
+      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
         <legend>Missing tracker coverage</legend>
         {% for tracker in primary_trackers %}
           <label class="checkbox">
@@ -100,126 +108,168 @@
           </label>
         {% endfor %}
       </fieldset>
-      <label class="checkbox">
-        <input name="hide_any_primary" value="true" type="checkbox" {% if dashboard_filters.hide_any_primary %}checked{% endif %}>
-        Hide any item with primary tracker coverage
+
+      <label class="checkbox {% if view not in filterable_views %}disabled{% endif %}">
+        <input name="hide_any_primary" value="true" type="checkbox" {% if dashboard_filters.hide_any_primary %}checked{% endif %} {% if view not in filterable_views %}disabled{% endif %}>
+        Hide rows with any primary tracker
       </label>
-      <button class="button small" type="submit">Apply</button>
-      <a class="button small secondary" href="/?view={{ view }}">Reset</a>
+
+      <div class="filter-actions">
+        <button class="button small" type="submit">Apply</button>
+        <a class="button small secondary" href="/?view={{ view }}{% if search_query %}&q={{ search_query | urlencode }}{% endif %}">Reset filters</a>
+      </div>
     </form>
+
     <form method="post" action="/items/recheck-filtered" class="bulk-action">
       <input type="hidden" name="view" value="{{ view }}">
       <input type="hidden" name="media" value="{{ dashboard_filters.media }}">
+      {% if search_query %}
+        <input type="hidden" name="q" value="{{ search_query }}">
+      {% endif %}
       {% for tracker in dashboard_filters.missing %}
         <input type="hidden" name="missing" value="{{ tracker }}">
       {% endfor %}
       {% if dashboard_filters.hide_any_primary %}
         <input type="hidden" name="hide_any_primary" value="true">
       {% endif %}
-      <button class="button small" type="submit">Run check on found set</button>
+      <button class="button small secondary" type="submit" {% if view not in filterable_views %}disabled{% endif %}>Run check on found set</button>
     </form>
-    <p class="muted">
-      Showing {{ pagination.start }}-{{ pagination.end }} of {{ dashboard_filters.filtered_total }} matching {{ dashboard_filters.label }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }}.
-    </p>
-  </section>
-{% endif %}
+  </aside>
 
-<section class="table-wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Status</th>
-        <th>Verdict</th>
-        <th>Coverage</th>
-        <th>Category</th>
-        <th>Size</th>
-        <th>Updated</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
+  <section class="media-pane">
+    <div class="list-heading">
+      <div>
+        <span class="eyebrow">Media</span>
+        <h1>{{ dashboard_filters.filtered_total }} {{ dashboard_filters.label }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }}</h1>
+        <p class="muted">
+          Showing {{ pagination.start }}-{{ pagination.end }}{% if search_query %} for "{{ search_query }}"{% endif %}
+        </p>
+      </div>
+      <button class="button secondary small mobile-only" type="button" data-filter-toggle>Filters</button>
+    </div>
+
+    <div class="table-wrap media-table" aria-label="Media table">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Decision</th>
+            <th>Coverage</th>
+            <th>Category</th>
+            <th>Size</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr>
+              <td>
+                <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
+                <div class="path">{{ item.content_path }}</div>
+                <div class="row-meta">
+                  <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
+                  {% for flag in item.check_flags[:2] %}
+                    <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
+                  {% endfor %}
+                </div>
+              </td>
+              <td>
+                <strong>{{ item.verdict or item.next_action }}</strong>
+                {% if item.reason %}<div class="muted clamp">{{ item.reason }}</div>{% endif %}
+                {% if item.tracker_summary %}<div class="tracker-summary">{{ item.tracker_summary }}</div>{% endif %}
+                {% if item.arr_summary %}<div class="tracker-summary">{{ item.arr_summary }}</div>{% endif %}
+              </td>
+              <td>
+                <div class="coverage-badges">
+                  {% for tracker in item.coverage %}
+                    <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
+                  {% else %}
+                    <span class="muted">No coverage</span>
+                  {% endfor %}
+                </div>
+                {% if item.missing_primary_trackers %}
+                  <div class="muted">Missing {{ item.missing_primary_trackers | join(", ") }}</div>
+                {% endif %}
+              </td>
+              <td>
+                {{ item.category or "-" }}
+                {% if item.tags %}<div class="muted clamp">{{ item.tags }}</div>{% endif %}
+              </td>
+              <td>{{ item.size | bytes }}</td>
+              <td>{{ item.updated_at | datetime }}</td>
+              <td class="actions">
+                <a class="button small" href="/items/{{ item.id }}">Open</a>
+                {% if item.status in ["baseline", "candidate", "blocked", "manual_review", "error"] %}
+                  <form method="post" action="/items/{{ item.id }}/recheck">
+                    <input type="hidden" name="return_to" value="{{ current_url }}">
+                    <button class="button small secondary" type="submit">Run recheck</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="7" class="empty">
+                <strong>No items in this view.</strong>
+                <span>Try another status, clear search, or loosen the coverage filters.</span>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="media-cards" aria-label="Media cards">
       {% for item in items %}
-        <tr>
-          <td>
+        <article class="media-card">
+          <header>
             <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
-            <div class="path">{{ item.content_path }}</div>
-            {% if item.check_flags %}
-              <div class="flag-list">
-                {% for flag in item.check_flags %}
-                  <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
-                {% endfor %}
-              </div>
-            {% endif %}
-          </td>
-          <td>
-            <span class="pill status-{{ item.status }}">{{ item.status }}</span>
-            <div class="stage-flow compact">
-              {% for step in item.stage_flow %}
-                <span class="stage-step {{ step.state }}">{{ step.label }}</span>
-              {% endfor %}
-            </div>
-          </td>
-          <td>
-            {% if item.verdict %}
-              <strong>{{ item.verdict }}</strong>
-              <div class="muted">{{ item.reason }}</div>
-              {% if item.tracker_summary %}
-                <div class="tracker-summary">{{ item.tracker_summary }}</div>
-              {% endif %}
-              {% if item.arr_summary %}
-                <div class="tracker-summary">{{ item.arr_summary }}</div>
-              {% endif %}
+            <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
+          </header>
+          <p class="path">{{ item.content_path }}</p>
+          <div class="card-facts">
+            <span>{{ item.size | bytes }}</span>
+            <span>{{ item.updated_at | datetime }}</span>
+            <span>{{ item.category or "No category" }}</span>
+          </div>
+          {% if item.reason %}<p class="muted">{{ item.reason }}</p>{% endif %}
+          <div class="coverage-badges">
+            {% for tracker in item.coverage[:6] %}
+              <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
             {% else %}
-              <span class="muted">-</span>
-            {% endif %}
-          </td>
-          <td>
-            <div class="coverage-badges">
-              {% for tracker in item.coverage %}
-                <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
-              {% else %}
-                <span class="muted">-</span>
-              {% endfor %}
-            </div>
-            {% if item.missing_primary_trackers %}
-              <div class="muted">Missing: {{ item.missing_primary_trackers | join(", ") }}</div>
-            {% endif %}
-          </td>
-          <td>
-            {{ item.category or "-" }}
-            {% if item.tags %}<div class="muted">{{ item.tags }}</div>{% endif %}
-          </td>
-          <td>{{ item.size | bytes }}</td>
-          <td>{{ item.updated_at | datetime }}</td>
-          <td class="actions">
+              <span class="muted">No coverage</span>
+            {% endfor %}
+          </div>
+          <footer>
             <a class="button small" href="/items/{{ item.id }}">Open</a>
-            {% if item.status in ["baseline", "candidate", "blocked"] %}
+            {% if item.status in ["baseline", "candidate", "blocked", "manual_review", "error"] %}
               <form method="post" action="/items/{{ item.id }}/recheck">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
                 <button class="button small secondary" type="submit">Run recheck</button>
               </form>
             {% endif %}
-          </td>
-        </tr>
+          </footer>
+        </article>
       {% else %}
-        <tr>
-          <td colspan="8" class="empty">No items in this view.</td>
-        </tr>
+        <section class="empty-card">
+          <strong>No items in this view.</strong>
+          <span>Try another status, clear search, or loosen the coverage filters.</span>
+        </section>
       {% endfor %}
-    </tbody>
-  </table>
-</section>
+    </div>
 
-{% if pagination.prev_url or pagination.next_url %}
-  <nav class="pagination" aria-label="Pagination">
-    {% if pagination.prev_url %}
-      <a class="button small secondary" href="{{ pagination.prev_url }}">Previous</a>
+    {% if pagination.prev_url or pagination.next_url %}
+      <nav class="pagination" aria-label="Pagination">
+        {% if pagination.prev_url %}
+          <a class="button small secondary" href="{{ pagination.prev_url }}">Previous</a>
+        {% endif %}
+        <span class="muted">Page {{ pagination.page }}</span>
+        {% if pagination.next_url %}
+          <a class="button small secondary" href="{{ pagination.next_url }}">Next</a>
+        {% endif %}
+      </nav>
     {% endif %}
-    <span class="muted">Page {{ pagination.page }}</span>
-    {% if pagination.next_url %}
-      <a class="button small secondary" href="{{ pagination.next_url }}">Next</a>
-    {% endif %}
-  </nav>
-{% endif %}
+  </section>
+</div>
 {% endblock %}

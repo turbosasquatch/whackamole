@@ -179,6 +179,80 @@ def test_items_api_filters_by_inventory_coverage(tmp_path, monkeypatch):
         assert item["missing_primary_trackers"] == ["ULCX", "IHD"]
 
 
+def test_items_api_search_filters_results(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "other123",
+                "name": "Different.Movie.2026.1080p.WEB-DL-GRP",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/different.mkv",
+                "progress": 1,
+            },
+            status="candidate",
+            baseline=False,
+        )
+
+        response = client.get("/api/items?q=Example.Show", headers=_auth_headers())
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["q"] == "Example.Show"
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == item_id
+        assert payload["items"][0]["display_status"]["label"] == "Ready"
+
+
+def test_dashboard_search_and_filtered_recheck_preserve_query(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "not-matching",
+                "name": "Different.Movie.2026.1080p.WEB-DL-GRP",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/different.mkv",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        other_id = int(next(row["id"] for row in db.list_items([], limit=10) if row["hash"] == "not-matching"))
+        db.update_status(
+            other_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: DP",
+            tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+            arr_results={},
+            increment_attempt=True,
+        )
+
+        page = client.get("/?view=candidates&q=Example.Show")
+        response = client.post(
+            "/items/recheck-filtered",
+            data={"view": "candidates", "q": "Example.Show"},
+            follow_redirects=False,
+        )
+
+        assert page.status_code == 200
+        assert 'name="q" value="Example.Show"' in page.text
+        assert "Different.Movie" not in page.text
+        assert response.status_code == 303
+        assert "q=Example.Show" in response.headers["location"]
+        assert db.get_item(item_id)["status"] == "queued"
+        assert db.get_item(other_id)["status"] == "candidate"
+
+
 def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

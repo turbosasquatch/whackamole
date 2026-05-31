@@ -430,6 +430,7 @@ class WhackamoleService:
                 files=torrent_files,
                 mediainfo_payloads=mediainfo_payloads,
             )
+            media_result["raw_mediainfo_payloads"] = mediainfo_payloads
             if len(video_files) > len(mediainfo_payloads):
                 media_result["mediainfo_truncated"] = True
         except Exception as exc:

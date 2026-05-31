@@ -421,3 +421,4 @@ def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, mo
     checks = json.loads(row["check_results"])
     stages = [stage["stage"] for stage in checks["diagnostics"]["stages"]]
     assert stages == ["media", "path", "ua", "arr", "policy"]
+    assert checks["media"]["raw_mediainfo_payloads"][0]["fileIndex"] == 1
