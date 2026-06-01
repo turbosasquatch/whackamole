@@ -67,6 +67,21 @@ DASHBOARD_TABS = [
     ("ignored", "Ignored", ["ignored"]),
     ("all", "All", []),
 ]
+MEDIA_FILTERS = [
+    {"key": "movie", "label": "Movies"},
+    {"key": "tv", "label": "TV shows"},
+    {"key": "episode", "label": "Episodes"},
+]
+REASON_FILTERS = [
+    {"key": "media_warning", "label": "MediaInfo warning", "applies_to": ["blocked", "manual"]},
+    {"key": "media_error", "label": "MediaInfo error", "applies_to": ["manual", "errors"]},
+    {"key": "arr_equal_or_better", "label": "Arr equal/better", "applies_to": ["blocked"]},
+    {"key": "banned_release_group", "label": "Banned release group", "applies_to": ["blocked"]},
+    {"key": "no_video", "label": "No video files", "applies_to": ["manual", "errors"]},
+    {"key": "path_error", "label": "Path or mount error", "applies_to": ["manual", "errors"]},
+    {"key": "ua_error", "label": "UA error", "applies_to": ["manual", "errors"]},
+    {"key": "manual_review", "label": "Manual review", "applies_to": ["manual"]},
+]
 
 
 def _format_datetime(value: Optional[int]) -> str:
@@ -121,6 +136,10 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
     item["display_status"] = _display_status(item)
     item["next_action"] = _next_action(item)
+    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
+    item["decision_notice"] = _decision_notice(item, check_results)
+    item["reason_categories"] = _reason_categories(item, check_results, arr_result)
+    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"])
     return item
 
 
@@ -231,6 +250,91 @@ def _next_action(item: Dict[str, Any]) -> str:
     return "Open"
 
 
+def _valid_for_trackers(
+    item: Dict[str, Any],
+    tracker_groups: Dict[str, List[str]],
+    arr_result: Dict[str, Any],
+    check_results: Dict[str, Any],
+) -> List[str]:
+    policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    policy_candidates = policy.get("candidate_trackers") if isinstance(policy.get("candidate_trackers"), list) else []
+    trackers = [str(tracker).upper() for tracker in policy_candidates if str(tracker).strip()]
+    if trackers:
+        return _dedupe_trackers(trackers)
+
+    decisions = arr_result.get("decisions") if isinstance(arr_result.get("decisions"), list) else []
+    trackers = [
+        str(decision.get("tracker") or "").upper()
+        for decision in decisions
+        if isinstance(decision, dict)
+        and str(decision.get("status") or "").lower() == "candidate"
+        and str(decision.get("tracker") or "").strip()
+    ]
+    if trackers:
+        return _dedupe_trackers(trackers)
+
+    if str(item.get("status") or "") == "candidate":
+        return _dedupe_trackers([str(tracker).upper() for tracker in tracker_groups.get("passed", [])])
+    return []
+
+
+def _decision_notice(item: Dict[str, Any], check_results: Dict[str, Any]) -> str:
+    flags = _check_flags(check_results)
+    for severity in ("blocker", "error", "warning"):
+        for flag in flags:
+            if str(flag.get("severity") or "").lower() == severity:
+                return str(flag.get("detail") or flag.get("message") or flag.get("label") or "").strip()
+    return str(item.get("reason") or item.get("display_status", {}).get("detail") or "").strip()
+
+
+def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[str]:
+    categories: List[str] = []
+    status_value = str(item.get("status") or "").lower()
+    verdict = str(item.get("verdict") or "").lower()
+    reason = str(item.get("reason") or "").lower()
+    flags = _check_flags(check_results)
+    flag_keys = {str(flag.get("key") or "").lower() for flag in flags}
+    flag_severities = {str(flag.get("severity") or "").lower() for flag in flags}
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+
+    if "warning" in flag_severities or "media_warning" in verdict or str(media.get("verdict") or "").lower() == "media_warning":
+        categories.append("media_warning")
+    if "error" in flag_severities or "media_error" in verdict or str(media.get("verdict") or "").lower() == "media_error":
+        categories.append("media_error")
+    if "equal-or-better" in reason or "equal-or-better" in json.dumps(arr_result).lower():
+        categories.append("arr_equal_or_better")
+    if "banned_release_group" in verdict or "banned_release_group" in flag_keys:
+        categories.append("banned_release_group")
+    if "no_video" in verdict or "video files" in reason:
+        categories.append("no_video")
+    if "path" in verdict or "path" in reason or "mount" in reason:
+        categories.append("path_error")
+    if "ua_error" in verdict:
+        categories.append("ua_error")
+    if status_value == "manual_review" or "manual_review" in verdict:
+        categories.append("manual_review")
+    return list(dict.fromkeys(categories))
+
+
+def _coverage_status(coverage: List[Dict[str, Any]], missing: List[str]) -> Dict[str, List[Dict[str, str]]]:
+    found_default = [
+        {"key": str(item.get("key") or ""), "label": str(item.get("label") or item.get("key") or "")}
+        for item in coverage
+        if item.get("primary")
+    ]
+    found_other = [
+        {"key": str(item.get("key") or ""), "label": str(item.get("label") or item.get("key") or "")}
+        for item in coverage
+        if not item.get("primary")
+    ]
+    missing_default = [{"key": tracker, "label": tracker} for tracker in missing]
+    return {"found_default": found_default, "found_other": found_other, "missing_default": missing_default}
+
+
+def _dedupe_trackers(trackers: Iterable[str]) -> List[str]:
+    return list(dict.fromkeys(str(tracker).upper() for tracker in trackers if str(tracker).strip()))
+
+
 def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     raw_torrent = _json_object(item.get("raw_torrent"))
     checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
@@ -306,6 +410,10 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "inventory_meta": item["inventory_meta"],
         "coverage": item["coverage"],
         "missing_primary_trackers": item["missing_primary_trackers"],
+        "valid_for_trackers": item["valid_for_trackers"],
+        "decision_notice": item["decision_notice"],
+        "reason_categories": item["reason_categories"],
+        "coverage_status": item["coverage_status"],
     }
 
 
@@ -651,8 +759,10 @@ def _filtered_rows(
     statuses: Sequence[str],
     limit: int,
     offset: int = 0,
-    media: str = "all",
+    media: Any = "all",
     missing: Optional[Iterable[str]] = None,
+    valid_for: Optional[Iterable[str]] = None,
+    reasons: Optional[Iterable[str]] = None,
     hide_any_primary: bool = False,
     due_errors_only: bool = False,
     q: str = "",
@@ -663,6 +773,8 @@ def _filtered_rows(
         offset=offset,
         media=media,
         missing=missing,
+        valid_for=valid_for,
+        reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
         q=q,
@@ -671,6 +783,8 @@ def _filtered_rows(
         statuses,
         media=media,
         missing=missing,
+        valid_for=valid_for,
+        reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
         q=q,
@@ -681,8 +795,10 @@ def _filtered_rows(
 def _dashboard_url(
     view: str,
     page: int = 1,
-    media: str = "all",
+    media: Any = "all",
     missing: Optional[Iterable[str]] = None,
+    valid_for: Optional[Iterable[str]] = None,
+    reasons: Optional[Iterable[str]] = None,
     hide_any_primary: bool = False,
     message: str = "",
     q: str = "",
@@ -691,11 +807,18 @@ def _dashboard_url(
     if q:
         params["q"] = q
     if view in FILTERABLE_VIEWS:
-        if media and media != "all":
-            params["media"] = media
+        selected_media = _selected_media_filter(media)
+        if selected_media:
+            params["media"] = selected_media
         selected_missing = [tracker for tracker in (missing or []) if tracker]
         if selected_missing:
             params["missing"] = selected_missing
+        selected_valid = [tracker for tracker in (valid_for or []) if tracker]
+        if selected_valid:
+            params["valid_for"] = selected_valid
+        selected_reasons = [reason for reason in (reasons or []) if reason]
+        if selected_reasons:
+            params["reason"] = selected_reasons
         if hide_any_primary:
             params["hide_any_primary"] = "true"
     if message:
@@ -707,6 +830,16 @@ def _safe_local_redirect(value: str, fallback: str) -> str:
     if value.startswith("/") and not value.startswith("//"):
         return value
     return fallback
+
+
+def _selected_media_filter(media: Any) -> List[str]:
+    raw_values = media if isinstance(media, (list, tuple, set)) else [media]
+    selected = []
+    for value in raw_values:
+        cleaned = str(value or "").strip().lower()
+        if cleaned and cleaned != "all":
+            selected.append(cleaned)
+    return list(dict.fromkeys(selected))
 
 
 @asynccontextmanager
@@ -731,8 +864,10 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 async def dashboard(
     request: Request,
     view: str = "active",
-    media: str = "all",
+    media: Optional[List[str]] = Query(None),
     missing: Optional[List[str]] = Query(None),
+    valid_for: Optional[List[str]] = Query(None),
+    reason: Optional[List[str]] = Query(None),
     hide_any_primary: bool = False,
     page: int = Query(1, ge=1),
     q: str = "",
@@ -740,11 +875,16 @@ async def dashboard(
 ) -> HTMLResponse:
     selected = view if view in DASHBOARD_VIEWS else "active"
     search_query = q.strip()
+    media_values = _selected_media_filter(media or [])
     missing_values = missing or []
+    valid_for_values = [tracker.upper() for tracker in (valid_for or []) if tracker.strip()]
+    reason_values = [value.strip().lower() for value in (reason or []) if value.strip()]
     limit = 100 if selected in {"baseline", "inventory"} else 150
     offset = (page - 1) * limit
-    filter_media = media if selected in FILTERABLE_VIEWS else "all"
+    filter_media = media_values if selected in FILTERABLE_VIEWS else []
     filter_missing = missing_values if selected in FILTERABLE_VIEWS else []
+    filter_valid_for = valid_for_values if selected in FILTERABLE_VIEWS else []
+    filter_reasons = reason_values if selected in FILTERABLE_VIEWS else []
     filter_hide_any = hide_any_primary if selected in FILTERABLE_VIEWS else False
     rows, filtered_total, coverage = _filtered_rows(
         request.app.state.db,
@@ -753,6 +893,8 @@ async def dashboard(
         offset=offset,
         media=filter_media,
         missing=filter_missing,
+        valid_for=filter_valid_for,
+        reasons=filter_reasons,
         hide_any_primary=filter_hide_any,
         due_errors_only=selected == "active",
         q=search_query,
@@ -767,10 +909,14 @@ async def dashboard(
         "service": service_snapshot,
         "message": message,
         "primary_trackers": PRIMARY_TRACKERS,
+        "media_filter_options": MEDIA_FILTERS,
+        "reason_filter_options": REASON_FILTERS,
         "filterable_views": FILTERABLE_VIEWS,
         "dashboard_filters": {
             "media": filter_media,
             "missing": [tracker.upper() for tracker in filter_missing],
+            "valid_for": filter_valid_for,
+            "reasons": filter_reasons,
             "hide_any_primary": filter_hide_any,
             "filtered_total": filtered_total,
             "displayed": len(rows),
@@ -792,12 +938,18 @@ async def dashboard(
             "total": filtered_total,
             "start": offset + 1 if filtered_total else 0,
             "end": offset + len(rows),
-            "prev_url": _dashboard_url(selected, page - 1, filter_media, filter_missing, filter_hide_any, q=search_query) if page > 1 else "",
-            "next_url": _dashboard_url(selected, page + 1, filter_media, filter_missing, filter_hide_any, q=search_query)
+            "prev_url": _dashboard_url(
+                selected, page - 1, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query
+            )
+            if page > 1
+            else "",
+            "next_url": _dashboard_url(
+                selected, page + 1, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query
+            )
             if offset + len(rows) < filtered_total
             else "",
         },
-        "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_hide_any, q=search_query),
+        "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query),
     }
     return templates.TemplateResponse(request, "dashboard.html", context)
 
@@ -831,24 +983,31 @@ async def recheck_item(item_id: int, return_to: str = Form("")) -> RedirectRespo
 
 @app.post("/baseline/recheck-filtered")
 async def recheck_filtered_baseline(
-    media: str = Form("all"),
+    media: Optional[List[str]] = Form(None),
     missing: Optional[List[str]] = Form(None),
+    valid_for: Optional[List[str]] = Form(None),
+    reason: Optional[List[str]] = Form(None),
     hide_any_primary: Optional[str] = Form(None),
     q: str = Form(""),
 ) -> RedirectResponse:
-    return await recheck_filtered_items("baseline", media, missing, hide_any_primary, q)
+    return await recheck_filtered_items("baseline", media, missing, valid_for, reason, hide_any_primary, q)
 
 
 @app.post("/items/recheck-filtered")
 async def recheck_filtered_items(
     view: str = Form("baseline"),
-    media: str = Form("all"),
+    media: Optional[List[str]] = Form(None),
     missing: Optional[List[str]] = Form(None),
+    valid_for: Optional[List[str]] = Form(None),
+    reason: Optional[List[str]] = Form(None),
     hide_any_primary: Optional[str] = Form(None),
     q: str = Form(""),
 ) -> RedirectResponse:
     selected = view if view in FILTERABLE_VIEWS else "baseline"
+    media_values = _selected_media_filter(media or [])
     missing_values = missing or []
+    valid_for_values = [tracker.upper() for tracker in (valid_for or []) if tracker.strip()]
+    reason_values = [value.strip().lower() for value in (reason or []) if value.strip()]
     hide_any = hide_any_primary == "true"
     search_query = q.strip()
     label = {
@@ -865,8 +1024,10 @@ async def recheck_filtered_items(
     )
     queued = app.state.db.bulk_requeue_filtered(
         DASHBOARD_VIEWS[selected],
-        media=media,
+        media=media_values,
         missing=missing_values,
+        valid_for=valid_for_values,
+        reasons=reason_values,
         hide_any_primary=hide_any,
         reason=reason,
         q=search_query,
@@ -875,8 +1036,10 @@ async def recheck_filtered_items(
         url=_dashboard_url(
             selected,
             page=1,
-            media=media,
+            media=media_values,
             missing=missing_values,
+            valid_for=valid_for_values,
+            reasons=reason_values,
             hide_any_primary=hide_any,
             message=f"Queued {queued} item{'s' if queued != 1 else ''}.",
             q=search_query,
@@ -1115,6 +1278,12 @@ async def api_status(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/service-errors/clear")
+async def clear_service_errors(return_to: str = Form("/")) -> RedirectResponse:
+    app.state.db.clear_service_errors()
+    return RedirectResponse(url=_safe_local_redirect(return_to, "/"), status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.get("/api/items")
 async def api_items(
     request: Request,
@@ -1122,22 +1291,29 @@ async def api_items(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     include_details: bool = Query(False),
-    media: str = Query("all"),
+    media: Optional[List[str]] = Query(None),
     missing: Optional[List[str]] = Query(None),
+    valid_for: Optional[List[str]] = Query(None),
+    reason: Optional[List[str]] = Query(None),
     hide_any_primary: bool = Query(False),
     q: str = Query(""),
 ) -> JSONResponse:
     _require_api_auth(request)
     statuses = _parse_status_filter(status_filter)
+    media_values = _selected_media_filter(media or [])
     missing_values = missing or []
+    valid_for_values = [tracker.upper() for tracker in (valid_for or []) if tracker.strip()]
+    reason_values = [value.strip().lower() for value in (reason or []) if value.strip()]
     search_query = q.strip()
     rows, total, coverage = _filtered_rows(
         request.app.state.db,
         statuses,
         limit=limit,
         offset=offset,
-        media=media,
+        media=media_values,
         missing=missing_values,
+        valid_for=valid_for_values,
+        reasons=reason_values,
         hide_any_primary=hide_any_primary,
         q=search_query,
     )
@@ -1151,8 +1327,10 @@ async def api_items(
             "offset": offset,
             "status": statuses,
             "include_details": include_details,
-            "media": media,
+            "media": media_values,
             "missing": [tracker.upper() for tracker in missing_values],
+            "valid_for": valid_for_values,
+            "reason": reason_values,
             "hide_any_primary": hide_any_primary,
             "q": search_query,
         }

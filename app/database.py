@@ -246,13 +246,17 @@ class Database:
         statuses: Iterable[str],
         limit: int = 100,
         offset: int = 0,
-        media: str = "all",
+        media: Any = "all",
         missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         due_errors_only: bool = False,
         q: str = "",
     ) -> List[sqlite3.Row]:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only, q)
+        where_sql, params = self._filtered_where(
+            statuses, media, missing, valid_for, reasons, hide_any_primary, due_errors_only, q
+        )
         offset = max(0, int(offset or 0))
         with self.connect() as conn:
             return conn.execute(
@@ -263,13 +267,17 @@ class Database:
     def count_items_filtered(
         self,
         statuses: Iterable[str],
-        media: str = "all",
+        media: Any = "all",
         missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         due_errors_only: bool = False,
         q: str = "",
     ) -> int:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, due_errors_only, q)
+        where_sql, params = self._filtered_where(
+            statuses, media, missing, valid_for, reasons, hide_any_primary, due_errors_only, q
+        )
         with self.connect() as conn:
             row = conn.execute(f"SELECT COUNT(*) AS count FROM items AS i {where_sql}", params).fetchone()
             return int(row["count"])
@@ -309,14 +317,18 @@ class Database:
 
     def bulk_requeue_baseline_filtered(
         self,
-        media: str = "all",
+        media: Any = "all",
         missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
     ) -> int:
         return self.bulk_requeue_filtered(
             ["baseline"],
             media=media,
             missing=missing,
+            valid_for=valid_for,
+            reasons=reasons,
             hide_any_primary=hide_any_primary,
             reason="Bulk recheck requested from baseline filtered set",
         )
@@ -324,13 +336,15 @@ class Database:
     def bulk_requeue_filtered(
         self,
         statuses: Iterable[str],
-        media: str = "all",
+        media: Any = "all",
         missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         reason: str = "Bulk recheck requested from filtered set",
         q: str = "",
     ) -> int:
-        where_sql, params = self._filtered_where(statuses, media, missing, hide_any_primary, q=q)
+        where_sql, params = self._filtered_where(statuses, media, missing, valid_for, reasons, hide_any_primary, q=q)
         now = int(time.time())
         with self.connect() as conn:
             rows = conn.execute(f"SELECT i.id FROM items AS i {where_sql}", params).fetchall()
@@ -353,8 +367,10 @@ class Database:
     def _filtered_where(
         self,
         statuses: Iterable[str],
-        media: str = "all",
+        media: Any = "all",
         missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
         hide_any_primary: bool = False,
         due_errors_only: bool = False,
         q: str = "",
@@ -377,11 +393,12 @@ class Database:
                 else:
                     status_clauses.append("i.status = 'error'")
             clauses.append(f"({' OR '.join(status_clauses)})")
-        media = (media or "all").lower()
-        if media not in {"", "all"}:
-            clauses.append("i.inventory_media_type = ?")
-            params.append(media)
-        selected_missing = [str(value).upper() for value in (missing or []) if str(value).upper()]
+        selected_media = _selected_media_values(media)
+        if selected_media:
+            placeholders = ",".join("?" for _ in selected_media)
+            clauses.append(f"i.inventory_media_type IN ({placeholders})")
+            params.extend(selected_media)
+        selected_missing = _selected_tracker_values(missing)
         if selected_missing:
             placeholders = ",".join("?" for _ in selected_missing)
             clauses.append(
@@ -400,6 +417,23 @@ class Database:
                 "AND c.inventory_tracker_primary = 1"
                 ")"
             )
+        selected_valid = _selected_tracker_values(valid_for)
+        if selected_valid:
+            tracker_clauses: List[str] = []
+            for tracker in selected_valid:
+                tracker_clauses.append(
+                    "("
+                    "(i.arr_results LIKE ? AND i.arr_results LIKE '%candidate%') "
+                    "OR (i.check_results LIKE ? AND i.check_results LIKE '%candidate%') "
+                    "OR (i.tracker_results LIKE ? AND i.status = 'candidate')"
+                    ")"
+                )
+                params.extend([f'%"{tracker}"%', f'%"{tracker}"%', f'%"{tracker}"%'])
+            clauses.append("(" + " OR ".join(tracker_clauses) + ")")
+        reason_clauses, reason_params = _reason_filter_clauses(reasons)
+        if reason_clauses:
+            clauses.append("(" + " OR ".join(reason_clauses) + ")")
+            params.extend(reason_params)
         query = str(q or "").strip().lower()
         if query:
             like = f"%{query}%"
@@ -723,6 +757,34 @@ class Database:
                 (reason, now, item_id),
             )
 
+    def append_service_error(self, message: str, occurred_at: Optional[int] = None, limit: int = 20) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+        timestamp = int(occurred_at or time.time())
+        entries = self.service_error_history()
+        if entries and entries[-1].get("message") == text:
+            entries[-1]["last_seen_at"] = timestamp
+            entries[-1]["count"] = int(entries[-1].get("count") or 1) + 1
+        else:
+            entries.append({"message": text, "first_seen_at": timestamp, "last_seen_at": timestamp, "count": 1})
+        entries = entries[-max(1, int(limit)) :]
+        self.set_kv("service_error_history", json.dumps(entries))
+        self.set_kv("last_service_error", text)
+
+    def service_error_history(self) -> List[Dict[str, Any]]:
+        try:
+            parsed = json.loads(self.get_kv("service_error_history") or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
+
+    def clear_service_errors(self) -> None:
+        self.set_kv("service_error_history", "[]")
+        self.set_kv("last_service_error", "")
+
 
 def _inventory_values(meta: Any) -> Tuple[str, str, str, str, str, int, int, int, int]:
     payload = meta if isinstance(meta, dict) else {}
@@ -738,6 +800,60 @@ def _inventory_values(meta: Any) -> Tuple[str, str, str, str, str, int, int, int
         1 if payload.get("is_upload") else 0,
         1 if payload.get("is_support") else 0,
     )
+
+
+def _selected_media_values(media: Any) -> List[str]:
+    raw_values = media if isinstance(media, (list, tuple, set)) else [media]
+    selected = []
+    for value in raw_values:
+        cleaned = str(value or "").strip().lower()
+        if cleaned and cleaned != "all":
+            selected.append(cleaned)
+    return list(dict.fromkeys(selected))
+
+
+def _selected_tracker_values(values: Any) -> List[str]:
+    raw_values = values if isinstance(values, (list, tuple, set)) else [values]
+    return list(dict.fromkeys(str(value).strip().upper() for value in raw_values if str(value or "").strip()))
+
+
+def _reason_filter_clauses(reasons: Optional[Iterable[str]]) -> Tuple[List[str], List[Any]]:
+    raw_values = reasons if isinstance(reasons, (list, tuple, set)) else [reasons]
+    selected = [str(value).strip().lower() for value in raw_values if str(value or "").strip()]
+    clauses: List[str] = []
+    params: List[Any] = []
+    for reason in selected:
+        if reason == "media_warning":
+            clauses.append(
+                "("
+                "LOWER(i.verdict) LIKE '%media_warning%' OR LOWER(i.reason) LIKE '%mediainfo%' "
+                "OR LOWER(i.check_results) LIKE '%\"severity\": \"warning\"%'"
+                ")"
+            )
+        elif reason == "media_error":
+            clauses.append(
+                "("
+                "LOWER(i.verdict) LIKE '%media_error%' OR LOWER(i.reason) LIKE '%mediainfo%' "
+                "OR LOWER(i.check_results) LIKE '%\"severity\": \"error\"%'"
+                ")"
+            )
+        elif reason == "arr_equal_or_better":
+            clauses.append("(LOWER(i.reason) LIKE '%equal-or-better%' OR LOWER(i.arr_results) LIKE '%equal-or-better%')")
+        elif reason == "banned_release_group":
+            clauses.append("(LOWER(i.verdict) LIKE '%banned_release_group%' OR LOWER(i.check_results) LIKE '%banned_release_group%')")
+        elif reason == "no_video":
+            clauses.append("(LOWER(i.verdict) LIKE '%no_video%' OR LOWER(i.reason) LIKE '%video files%')")
+        elif reason == "path_error":
+            clauses.append("(LOWER(i.verdict) LIKE '%path%' OR LOWER(i.reason) LIKE '%path%' OR LOWER(i.reason) LIKE '%mount%')")
+        elif reason == "ua_error":
+            clauses.append("(LOWER(i.verdict) LIKE '%ua_error%' OR LOWER(i.tracker_results) LIKE '%\"ua\"%')")
+        elif reason == "manual_review":
+            clauses.append("(i.status = 'manual_review' OR LOWER(i.verdict) LIKE '%manual_review%')")
+        else:
+            clauses.append("(LOWER(i.verdict) LIKE ? OR LOWER(i.reason) LIKE ? OR LOWER(i.check_results) LIKE ?)")
+            like = f"%{reason}%"
+            params.extend([like, like, like])
+    return clauses, params
 
 
 def _candidate_trackers_for_resolution(item: Dict[str, Any]) -> List[str]:

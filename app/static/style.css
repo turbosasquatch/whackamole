@@ -44,6 +44,10 @@ body.modal-open {
   overflow: hidden;
 }
 
+body.sidebar-modal-open {
+  overflow: hidden;
+}
+
 a {
   color: var(--primary-dark);
   text-decoration: none;
@@ -86,6 +90,10 @@ textarea {
 
 .app-shell.sidebar-collapsed {
   grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.sidebar-backdrop {
+  display: none;
 }
 
 .app-sidebar {
@@ -306,6 +314,91 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.notification-menu {
+  position: relative;
+}
+
+.notice-button {
+  flex-direction: row;
+  font-weight: 900;
+  position: relative;
+}
+
+.notice-button > span {
+  background: transparent;
+  height: auto;
+  width: auto;
+}
+
+.notice-button strong {
+  align-items: center;
+  background: var(--red);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: 10px;
+  height: 17px;
+  justify-content: center;
+  min-width: 17px;
+  padding: 0 5px;
+  position: absolute;
+  right: -5px;
+  top: -5px;
+}
+
+.notification-popout {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
+  min-width: 320px;
+  padding: 10px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 50;
+}
+
+.notification-popout header,
+.maintenance-control {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.notification-popout ol {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 10px 0 0;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.notification-popout li {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 3px;
+  padding-top: 8px;
+}
+
+.notification-popout time,
+.notification-popout em,
+.maintenance-control span {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.maintenance-control {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 5px 4px 9px;
 }
 
 .content-shell {
@@ -610,8 +703,41 @@ label {
 
 table {
   border-collapse: collapse;
-  min-width: 1000px;
+  min-width: 1180px;
+  table-layout: fixed;
   width: 100%;
+}
+
+.media-table th:nth-child(1),
+.media-table td:nth-child(1) {
+  width: 26%;
+}
+
+.media-table th:nth-child(2),
+.media-table td:nth-child(2),
+.media-table th:nth-child(4),
+.media-table td:nth-child(4),
+.media-table th:nth-child(7),
+.media-table td:nth-child(7),
+.media-table th:nth-child(8),
+.media-table td:nth-child(8),
+.media-table th:nth-child(9),
+.media-table td:nth-child(9),
+.media-table th:nth-child(10),
+.media-table td:nth-child(10) {
+  width: 9%;
+}
+
+.media-table th:nth-child(3),
+.media-table td:nth-child(3),
+.media-table th:nth-child(5),
+.media-table td:nth-child(5) {
+  width: 12%;
+}
+
+.media-table th:nth-child(6),
+.media-table td:nth-child(6) {
+  width: 15%;
 }
 
 .mini-table {
@@ -646,8 +772,15 @@ tr:last-child td {
   color: var(--ink);
   display: block;
   font-weight: 800;
-  max-width: 70ch;
+  max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.media-table .item-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .path,
@@ -663,7 +796,9 @@ tr:last-child td {
 .hero-badges,
 .coverage-badges,
 .flag-list,
-.tag-list {
+.tag-list,
+.tag-stack,
+.tracker-chip-list {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
@@ -688,6 +823,8 @@ tr:last-child td {
 .coverage-badge,
 .flag-badge,
 .tag-list span,
+.tag-stack span,
+.tracker-chip,
 .severity-pill {
   border-radius: 999px;
   display: inline-flex;
@@ -735,9 +872,21 @@ tr:last-child td {
   color: var(--primary-dark);
 }
 
-.coverage-badge.other {
+.coverage-badge.other,
+.coverage-badge.found-other {
   background: var(--surface-strong);
   color: #475569;
+}
+
+.coverage-badge.found-default,
+.tracker-chip.valid {
+  background: #dbeafe;
+  color: var(--primary-dark);
+}
+
+.coverage-badge.missing-default {
+  background: var(--red-bg);
+  color: var(--red);
 }
 
 .flag-badge {
@@ -768,6 +917,12 @@ tr:last-child td {
   color: var(--violet);
 }
 
+.tag-stack span {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: #475569;
+}
+
 .compact-tags span {
   font-size: 11px;
   padding: 4px 6px;
@@ -776,6 +931,11 @@ tr:last-child td {
 .actions {
   justify-content: flex-end;
   white-space: nowrap;
+}
+
+.action-row {
+  align-items: center;
+  flex-wrap: nowrap;
 }
 
 .actions form {
@@ -1204,7 +1364,46 @@ dd {
   }
 
   .app-sidebar {
-    display: none;
+    border-right: 0;
+    display: flex;
+    height: 100dvh;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    position: fixed;
+    transform: translateX(-100%);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    width: 100vw;
+    z-index: 60;
+  }
+
+  .app-shell.sidebar-open .app-sidebar {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+    width: 100vw;
+  }
+
+  .sidebar-collapsed .app-sidebar {
+    opacity: 0;
+    width: 100vw;
+  }
+
+  .sidebar-backdrop {
+    background: rgba(15, 23, 42, 0.46);
+    border: 0;
+    display: block;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    position: fixed;
+    transition: opacity 0.18s ease;
+    z-index: 55;
+  }
+
+  .app-shell.sidebar-open .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .topbar {
@@ -1320,6 +1519,12 @@ dd {
 
   .topbar-actions {
     flex: 1 1 100%;
+  }
+
+  .notification-popout {
+    min-width: min(92vw, 340px);
+    right: auto;
+    left: 0;
   }
 
   .button,

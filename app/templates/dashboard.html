@@ -34,38 +34,6 @@
   </div>
 </section>
 
-{% if service.last_service_error %}
-  <p class="alert">Last service error: {{ service.last_service_error }}</p>
-{% endif %}
-
-{% if service.maintenance.active %}
-  <section class="maintenance-banner active">
-    <div>
-      <strong>Maintenance pause active</strong>
-      <p>{{ service.maintenance.reason }}</p>
-    </div>
-    <form method="post" action="/maintenance/resume">
-      <input type="hidden" name="return_to" value="{{ current_url }}">
-      <button class="button small" type="submit">Resume</button>
-    </form>
-  </section>
-{% else %}
-  <section class="maintenance-banner">
-    <div>
-      <strong>Maintenance guard ready</strong>
-      {% if service.maintenance.dependency_configured %}
-        <p>Next pause starts {{ service.maintenance.lead_start_at | replace("T", " ") }}.</p>
-      {% else %}
-        <p>Add QUI URL and API key before the scheduled guard can monitor maintenance.</p>
-      {% endif %}
-    </div>
-    <form method="post" action="/maintenance/pause">
-      <input type="hidden" name="return_to" value="{{ current_url }}">
-      <button class="button small secondary" type="submit">Pause now</button>
-    </form>
-  </section>
-{% endif %}
-
 {% if message %}
   <p class="notice">{{ message }}</p>
 {% endif %}
@@ -80,29 +48,20 @@
       <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters">x</button>
     </div>
 
-    <nav class="filter-view-list">
-      {% for nav in dashboard_nav %}
-        <a href="{{ nav.href }}" class="{% if nav.selected %}active{% endif %}">
-          <span>{{ nav.label }}</span>
-          <strong data-count-view="{{ nav.key }}">{{ nav.total }}</strong>
-        </a>
-      {% endfor %}
-    </nav>
-
     <form class="filter-form" method="get" action="/">
       <input type="hidden" name="view" value="{{ view }}">
       {% if search_query %}
         <input type="hidden" name="q" value="{{ search_query }}">
       {% endif %}
-      <label>
-        Media
-        <select name="media" {% if view not in filterable_views %}disabled{% endif %}>
-          {% set media_options = [("all", "All"), ("movie", "Movies"), ("tv", "TV shows"), ("episode", "Episodes")] %}
-          {% for value, label in media_options %}
-            <option value="{{ value }}" {% if dashboard_filters.media == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
+      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
+        <legend>Media type</legend>
+        {% for option in media_filter_options %}
+          <label class="checkbox">
+            <input name="media" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.media %}checked{% endif %}>
+            {{ option.label }}
+          </label>
+        {% endfor %}
+      </fieldset>
 
       <fieldset {% if view not in filterable_views %}disabled{% endif %}>
         <legend>Missing tracker coverage</legend>
@@ -110,6 +69,36 @@
           <label class="checkbox">
             <input name="missing" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.missing %}checked{% endif %}>
             {{ tracker }}
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
+        <legend>Decision valid for</legend>
+        {% for tracker in primary_trackers %}
+          <label class="checkbox">
+            <input name="valid_for" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.valid_for %}checked{% endif %}>
+            {{ tracker }}
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
+        <legend>Blocked reason</legend>
+        {% for option in reason_filter_options if "blocked" in option.applies_to %}
+          <label class="checkbox">
+            <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}>
+            {{ option.label }}
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
+        <legend>Review reason</legend>
+        {% for option in reason_filter_options if "manual" in option.applies_to %}
+          <label class="checkbox">
+            <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}>
+            {{ option.label }}
           </label>
         {% endfor %}
       </fieldset>
@@ -127,12 +116,20 @@
 
     <form method="post" action="/items/recheck-filtered" class="bulk-action">
       <input type="hidden" name="view" value="{{ view }}">
-      <input type="hidden" name="media" value="{{ dashboard_filters.media }}">
+      {% for media in dashboard_filters.media %}
+        <input type="hidden" name="media" value="{{ media }}">
+      {% endfor %}
       {% if search_query %}
         <input type="hidden" name="q" value="{{ search_query }}">
       {% endif %}
       {% for tracker in dashboard_filters.missing %}
         <input type="hidden" name="missing" value="{{ tracker }}">
+      {% endfor %}
+      {% for tracker in dashboard_filters.valid_for %}
+        <input type="hidden" name="valid_for" value="{{ tracker }}">
+      {% endfor %}
+      {% for reason in dashboard_filters.reasons %}
+        <input type="hidden" name="reason" value="{{ reason }}">
       {% endfor %}
       {% if dashboard_filters.hide_any_primary %}
         <input type="hidden" name="hide_any_primary" value="true">
@@ -157,8 +154,11 @@
       <table>
         <thead>
           <tr>
-            <th>Name</th>
+            <th>Title</th>
+            <th>Tags</th>
             <th>Decision</th>
+            <th>Valid For</th>
+            <th>Decision Notice</th>
             <th>Coverage</th>
             <th>Category</th>
             <th>Size</th>
@@ -171,7 +171,6 @@
             <tr>
               <td>
                 <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
-                <div class="path">{{ item.content_path }}</div>
                 <div class="row-meta">
                   <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
                   {% for flag in item.check_flags[:2] %}
@@ -180,30 +179,55 @@
                 </div>
               </td>
               <td>
+                <div class="tag-stack">
+                  {% if item.tags %}
+                    {% for tag in item.tags.split(",") %}
+                      {% if tag.strip() %}<span>{{ tag.strip() }}</span>{% endif %}
+                    {% endfor %}
+                  {% else %}
+                    <span class="muted">No tags</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td>
                 <strong>{{ item.verdict or item.next_action }}</strong>
-                {% if item.reason %}<div class="muted clamp">{{ item.reason }}</div>{% endif %}
-                {% if item.tracker_summary %}<div class="tracker-summary">{{ item.tracker_summary }}</div>{% endif %}
-                {% if item.arr_summary %}<div class="tracker-summary">{{ item.arr_summary }}</div>{% endif %}
+                <div class="muted clamp">{{ item.next_action }}</div>
+              </td>
+              <td>
+                <div class="tracker-chip-list">
+                  {% for tracker in item.valid_for_trackers %}
+                    <span class="tracker-chip valid">{{ tracker }}</span>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endfor %}
+                </div>
+              </td>
+              <td>
+                <span class="muted clamp">{{ item.decision_notice or "-" }}</span>
               </td>
               <td>
                 <div class="coverage-badges">
-                  {% for tracker in item.coverage %}
-                    <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
+                  {% for tracker in item.coverage_status.found_default %}
+                    <span class="coverage-badge found-default">{{ tracker.label }}</span>
+                  {% endfor %}
+                  {% for tracker in item.coverage_status.found_other %}
+                    <span class="coverage-badge found-other">{{ tracker.label }}</span>
+                  {% endfor %}
+                  {% for tracker in item.coverage_status.missing_default %}
+                    <span class="coverage-badge missing-default">{{ tracker.label }}</span>
                   {% else %}
-                    <span class="muted">No coverage</span>
+                    {% if not item.coverage_status.found_default and not item.coverage_status.found_other %}
+                      <span class="muted">No coverage</span>
+                    {% endif %}
                   {% endfor %}
                 </div>
-                {% if item.missing_primary_trackers %}
-                  <div class="muted">Missing {{ item.missing_primary_trackers | join(", ") }}</div>
-                {% endif %}
               </td>
               <td>
                 {{ item.category or "-" }}
-                {% if item.tags %}<div class="muted clamp">{{ item.tags }}</div>{% endif %}
               </td>
               <td>{{ item.size | bytes }}</td>
               <td>{{ item.updated_at | datetime }}</td>
-              <td class="actions">
+              <td class="actions action-row">
                 <a class="button small" href="/items/{{ item.id }}">Open</a>
                 {% if item.status in ["baseline", "candidate", "covered", "blocked", "manual_review", "error"] %}
                   <form method="post" action="/items/{{ item.id }}/recheck">
@@ -215,7 +239,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="7" class="empty">
+              <td colspan="10" class="empty">
                 <strong>No items in this view.</strong>
                 <span>Try another status, clear search, or loosen the coverage filters.</span>
               </td>
@@ -232,18 +256,34 @@
             <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
             <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
           </header>
-          <p class="path">{{ item.content_path }}</p>
+          <div class="tag-stack">
+            {% if item.tags %}
+              {% for tag in item.tags.split(",") %}
+                {% if tag.strip() %}<span>{{ tag.strip() }}</span>{% endif %}
+              {% endfor %}
+            {% endif %}
+          </div>
           <div class="card-facts">
             <span>{{ item.size | bytes }}</span>
             <span>{{ item.updated_at | datetime }}</span>
             <span>{{ item.category or "No category" }}</span>
           </div>
-          {% if item.reason %}<p class="muted">{{ item.reason }}</p>{% endif %}
+          <p class="muted">{{ item.verdict or item.next_action }}</p>
+          {% if item.decision_notice %}<p class="muted">{{ item.decision_notice }}</p>{% endif %}
+          <div class="tracker-chip-list">
+            {% for tracker in item.valid_for_trackers %}
+              <span class="tracker-chip valid">{{ tracker }}</span>
+            {% endfor %}
+          </div>
           <div class="coverage-badges">
-            {% for tracker in item.coverage[:6] %}
-              <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
-            {% else %}
-              <span class="muted">No coverage</span>
+            {% for tracker in item.coverage_status.found_default %}
+              <span class="coverage-badge found-default">{{ tracker.label }}</span>
+            {% endfor %}
+            {% for tracker in item.coverage_status.found_other %}
+              <span class="coverage-badge found-other">{{ tracker.label }}</span>
+            {% endfor %}
+            {% for tracker in item.coverage_status.missing_default %}
+              <span class="coverage-badge missing-default">{{ tracker.label }}</span>
             {% endfor %}
           </div>
           <footer>

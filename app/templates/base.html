@@ -4,11 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul3">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul3" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul4">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul4" defer></script>
   </head>
   <body>
     <div class="app-shell" data-app-shell>
+      <button class="sidebar-backdrop" type="button" data-sidebar-close aria-label="Close menu"></button>
       <aside class="app-sidebar" aria-label="Primary navigation">
         <div class="sidebar-brand">
           <a class="brand-mark" href="/">W</a>
@@ -63,11 +64,17 @@
           {% if show_dashboard_search | default(false) %}
             <form class="top-search" method="get" action="/">
               <input type="hidden" name="view" value="{{ view }}">
-              {% if dashboard_filters.media and dashboard_filters.media != "all" %}
-                <input type="hidden" name="media" value="{{ dashboard_filters.media }}">
-              {% endif %}
+              {% for media in dashboard_filters.media %}
+                <input type="hidden" name="media" value="{{ media }}">
+              {% endfor %}
               {% for tracker in dashboard_filters.missing %}
                 <input type="hidden" name="missing" value="{{ tracker }}">
+              {% endfor %}
+              {% for tracker in dashboard_filters.valid_for %}
+                <input type="hidden" name="valid_for" value="{{ tracker }}">
+              {% endfor %}
+              {% for reason in dashboard_filters.reasons %}
+                <input type="hidden" name="reason" value="{{ reason }}">
               {% endfor %}
               {% if dashboard_filters.hide_any_primary %}
                 <input type="hidden" name="hide_any_primary" value="true">
@@ -82,6 +89,50 @@
 
           <div class="topbar-actions">
             {% block topbar_actions %}{% endblock %}
+            {% if service is defined %}
+              {% set service_errors = service.service_errors or [] %}
+              <div class="notification-menu" data-notification-menu>
+                <button class="icon-button notice-button" type="button" data-notification-toggle aria-label="Service errors">
+                  <span>!</span>
+                  {% if service_errors %}<strong>{{ service_errors | length }}</strong>{% endif %}
+                </button>
+                <section class="notification-popout" data-notification-popout hidden>
+                  <header>
+                    <strong>Service errors</strong>
+                    {% if service_errors %}
+                      <form method="post" action="/service-errors/clear">
+                        <input type="hidden" name="return_to" value="{{ current_url | default(request.url.path) }}">
+                        <button class="button small secondary" type="submit">Clear</button>
+                      </form>
+                    {% endif %}
+                  </header>
+                  {% if service_errors %}
+                    <ol>
+                      {% for error in service_errors | reverse %}
+                        <li>
+                          <time>{{ error.last_seen_at | datetime }}</time>
+                          <span>{{ error.message }}</span>
+                          {% if error.count and error.count > 1 %}<em>x{{ error.count }}</em>{% endif %}
+                        </li>
+                      {% endfor %}
+                    </ol>
+                  {% else %}
+                    <p>No service errors.</p>
+                  {% endif %}
+                </section>
+              </div>
+              <form
+                class="maintenance-control"
+                method="post"
+                action="{% if service.maintenance.active %}/maintenance/resume{% else %}/maintenance/pause{% endif %}"
+              >
+                <input type="hidden" name="return_to" value="{{ current_url | default(request.url.path) }}">
+                <span>{{ service.maintenance.state | replace("_", " ") | title }}</span>
+                <button class="button secondary small" type="submit">
+                  {% if service.maintenance.active %}Resume{% else %}Pause{% endif %}
+                </button>
+              </form>
+            {% endif %}
             <a class="button secondary small" href="/config">Settings</a>
           </div>
         </header>

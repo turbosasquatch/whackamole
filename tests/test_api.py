@@ -297,14 +297,18 @@ def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monk
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
 
-        page = client.get("/?view=candidates&media=episode&missing=DP")
+        page = client.get("/?view=candidates&media=episode&missing=DP&valid_for=IHD")
 
         assert page.status_code == 200
         assert 'name="view" value="candidates"' in page.text
         assert "Missing tracker coverage" in page.text
+        assert "Decision valid for" in page.text
+        assert "Blocked reason" in page.text
+        assert "Review reason" in page.text
         assert "/items/recheck-filtered" in page.text
         assert f'/items/{item_id}/recheck' in page.text
         assert "Run recheck" in page.text
+        assert "filter-view-list" not in page.text
 
 
 def test_manual_review_dashboard_includes_filters(tmp_path, monkeypatch):
@@ -349,6 +353,99 @@ def test_filtered_recheck_endpoint_requeues_candidate_view(tmp_path, monkeypatch
         assert response.headers["location"].startswith("/?view=candidates")
         assert row["status"] == "queued"
         assert row["reason"] == "Bulk recheck requested from candidate filtered set"
+
+
+def test_items_api_filters_by_multi_media_missing_and_valid_for(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "movie-candidate",
+                "name": "Different.Movie.2026.1080p.WEB-DL-GRP",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/different.mkv",
+                "progress": 1,
+            },
+            status="candidate",
+            baseline=False,
+        )
+
+        response = client.get(
+            "/api/items?status=candidate&media=episode&media=movie&missing=IHD&valid_for=IHD",
+            headers=_auth_headers(),
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["media"] == ["episode", "movie"]
+        assert payload["valid_for"] == ["IHD"]
+        assert payload["total"] == 1
+        assert payload["items"][0]["id"] == item_id
+        assert payload["items"][0]["valid_for_trackers"] == ["IHD"]
+
+
+def test_dashboard_reason_filter_and_table_shape(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "blocked-arr",
+                "name": "Blocked.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "ready,mediainfo-warning",
+                "content_path": "/media/torrents/tv/Blocked.Show.S01E01.1080p.WEB-DL-GRP",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "blocked",
+            "not_upgrade",
+            "UA passed, but Arr found equal-or-better torrent results.",
+            tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "blocked",
+                "reason": "UA passed, but Arr found equal-or-better torrent results.",
+                "decisions": [{"tracker": "DP", "status": "blocked", "reason": "equal-or-better"}],
+            },
+        )
+
+        page = client.get("/?view=blocked&reason=arr_equal_or_better")
+
+        assert page.status_code == 200
+        assert "Blocked.Show" in page.text
+        assert "Title" in page.text
+        assert "Valid For" in page.text
+        assert "Decision Notice" in page.text
+        assert "/media/torrents/tv/Blocked.Show" not in page.text
+        assert "coverage-badge missing-default" in page.text
+
+
+def test_service_error_history_popout_and_clear(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.append_service_error("QUI timeout", occurred_at=1779894904)
+        db.append_service_error("QUI timeout", occurred_at=1779894964)
+
+        page = client.get("/")
+        status_response = client.get("/api/status")
+        clear = client.post("/service-errors/clear", data={"return_to": "/"}, follow_redirects=False)
+
+        assert page.status_code == 200
+        assert "Service errors" in page.text
+        assert "QUI timeout" in page.text
+        assert "x2" in page.text
+        assert status_response.json()["service"]["service_errors"][0]["count"] == 2
+        assert clear.status_code == 303
+        assert db.service_error_history() == []
 
 
 def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypatch):

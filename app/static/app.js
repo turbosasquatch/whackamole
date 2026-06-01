@@ -8,14 +8,32 @@
     storage.setItem("whackamole.sidebarCollapsed", collapsed ? "true" : "false");
   }
 
+  function setMobileSidebar(open) {
+    if (!shell) return;
+    shell.classList.toggle("sidebar-open", open);
+    document.body.classList.toggle("sidebar-modal-open", open);
+  }
+
   if (shell) {
     setSidebar(storage.getItem("whackamole.sidebarCollapsed") === "true");
   }
 
   document.querySelectorAll("[data-sidebar-toggle]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (window.matchMedia("(max-width: 860px)").matches) {
+        setMobileSidebar(!shell.classList.contains("sidebar-open"));
+        return;
+      }
       setSidebar(!shell.classList.contains("sidebar-collapsed"));
     });
+  });
+
+  document.querySelectorAll("[data-sidebar-close]").forEach((button) => {
+    button.addEventListener("click", () => setMobileSidebar(false));
+  });
+
+  document.querySelectorAll(".sidebar-nav a, .sidebar-footer a").forEach((link) => {
+    link.addEventListener("click", () => setMobileSidebar(false));
   });
 
   function setFilters(open) {
@@ -36,6 +54,24 @@
     const target = event.target;
     if (panel && target instanceof Node && !panel.contains(target) && !target.closest("[data-filter-toggle]")) {
       setFilters(false);
+    }
+  });
+
+  const notificationMenu = document.querySelector("[data-notification-menu]");
+  const notificationToggle = document.querySelector("[data-notification-toggle]");
+  const notificationPopout = document.querySelector("[data-notification-popout]");
+  if (notificationToggle && notificationPopout) {
+    notificationToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      notificationPopout.hidden = !notificationPopout.hidden;
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!notificationMenu || !notificationPopout || notificationPopout.hidden) return;
+    const target = event.target;
+    if (target instanceof Node && !notificationMenu.contains(target)) {
+      notificationPopout.hidden = true;
     }
   });
 
@@ -111,6 +147,8 @@
     if (event.key === "Escape") {
       closeRawModal();
       setFilters(false);
+      setMobileSidebar(false);
+      if (notificationPopout) notificationPopout.hidden = true;
     }
   });
 

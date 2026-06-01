@@ -63,7 +63,7 @@ class WhackamoleService:
                     await self.poll_once()
                     await self.run_due_jobs()
             except Exception as exc:
-                self.db.set_kv("last_service_error", str(exc))
+                self.db.append_service_error(str(exc))
 
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=max(15, cfg.safety.poll_interval_seconds))
@@ -193,6 +193,7 @@ class WhackamoleService:
             "running_jobs": self._running_jobs,
             "last_ua_job_started_at": int(self._last_ua_job_started_at or 0),
             "last_service_error": self.db.get_kv("last_service_error") or "",
+            "service_errors": self.db.service_error_history(),
             "baseline_done": self.db.get_kv("baseline_done") == "true",
             "inventory_done": self.db.get_kv("inventory_done") == "true",
             "inventory_count": self.db.count_items([]),
