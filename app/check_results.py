@@ -16,6 +16,7 @@ class CheckResults:
     ua: Dict[str, Any] = field(default_factory=dict)
     arr: Dict[str, Any] = field(default_factory=dict)
     release_group_policy: Dict[str, Any] = field(default_factory=dict)
+    coverage_resolution: Dict[str, Any] = field(default_factory=dict)
     flags: List[Dict[str, Any]] = field(default_factory=list)
     diagnostics: Dict[str, Any] = field(default_factory=lambda: {"stages": [], "last_error": {}})
 
@@ -32,6 +33,7 @@ class CheckResults:
             ua=_dict_value(payload.get("ua")),
             arr=_dict_value(payload.get("arr")),
             release_group_policy=_dict_value(payload.get("release_group_policy")),
+            coverage_resolution=_dict_value(payload.get("coverage_resolution")),
             flags=_flag_list(payload.get("flags")),
             diagnostics={
                 "stages": [dict(stage) for stage in stages if isinstance(stage, Mapping)],
@@ -47,6 +49,7 @@ class CheckResults:
             "ua": self.ua,
             "arr": self.arr,
             "release_group_policy": self.release_group_policy,
+            "coverage_resolution": self.coverage_resolution,
             "flags": self.flags,
             "diagnostics": self.diagnostics,
         }

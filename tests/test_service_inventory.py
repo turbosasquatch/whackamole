@@ -86,6 +86,32 @@ class IncrementalQuiClient:
         }
 
 
+class KnownCandidateQuiClient:
+    calls = []
+
+    def __init__(self, _cfg, _api_key):
+        pass
+
+    async def list_torrents_page(self, page=0, limit=None):
+        self.calls.append(page)
+        if page:
+            return {"total": 1, "hasMore": False, "torrents": []}
+        return {
+            "total": 1,
+            "hasMore": False,
+            "torrents": [
+                {
+                    "hash": "candidate",
+                    "name": "Existing.Show.S01E01.1080p.WEB-DL-GRP",
+                    "category": "tv",
+                    "tags": "",
+                    "content_path": "/media/torrents/tv/Existing.Show.S01E01.1080p.WEB-DL-GRP",
+                    "progress": 1,
+                }
+            ],
+        }
+
+
 class InterruptedUploadAssistantClient:
     def __init__(self, _cfg, _bearer_token):
         pass
@@ -212,6 +238,68 @@ def test_incremental_poll_stops_after_all_known_page(tmp_path, monkeypatch):
     hashes = {row["hash"] for row in db.list_items([], limit=10)}
     assert IncrementalQuiClient.calls == [0]
     assert "should-not-fetch" not in hashes
+
+
+def test_poll_resolves_existing_candidate_from_current_inventory(tmp_path, monkeypatch):
+    KnownCandidateQuiClient.calls = []
+    monkeypatch.setattr("app.service.QuiClient", KnownCandidateQuiClient)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.qui.url = "http://qui.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("qui_api_key", "token")
+    db = Database(str(tmp_path / "whackamole.db"))
+    db.insert_discovered(
+        1,
+        {
+            "hash": "candidate",
+            "name": "Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "category": "tv",
+            "tags": "",
+            "content_path": "/media/torrents/tv/Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "progress": 1,
+        },
+        status="candidate",
+        baseline=False,
+    )
+    item_id = int(db.list_items(["candidate"], limit=1)[0]["id"])
+    db.update_status(
+        item_id,
+        "candidate",
+        "candidate",
+        "Valid upload candidate on: IHD",
+        tracker_results={"passed": ["IHD"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"decisions": [{"tracker": "IHD", "status": "candidate", "reason": "ok"}]},
+    )
+    db.insert_discovered(
+        1,
+        {
+            "hash": "ihd-upload",
+            "name": "Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "category": "uploads",
+            "tags": "upload",
+            "save_path": "/media/torrents/uploads/IHD",
+            "content_path": "/media/torrents/uploads/IHD/Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "progress": 1,
+        },
+        status="inventory",
+        baseline=True,
+    )
+    db.set_kv("baseline_done", "true")
+    db.set_kv("inventory_done", "true")
+    db.set_kv("inventory_full_crawl_v2_done", "true")
+
+    async def run_poll():
+        service = WhackamoleService(manager, secrets, db)
+        await service.poll_once()
+
+    asyncio.run(run_poll())
+
+    row = db.get_item(item_id)
+    assert KnownCandidateQuiClient.calls == [0]
+    assert row["status"] == "covered"
+    assert row["reason"] == "Covered in QUI: IHD"
 
 
 def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):

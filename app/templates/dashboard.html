@@ -27,6 +27,11 @@
     <strong>{{ service.maintenance.state | replace("_", " ") | title }}</strong>
     <span>{{ service.maintenance.dependency }}</span>
   </div>
+  <div>
+    <span class="eyebrow">Whacked</span>
+    <strong>{{ service.whacked.holes_filled }} hole{{ "" if service.whacked.holes_filled == 1 else "s" }}</strong>
+    <span>{{ service.whacked.cross_seed_count }} cross-seeds · {{ service.whacked.upload_count }} uploads</span>
+  </div>
 </section>
 
 {% if service.last_service_error %}
@@ -200,7 +205,7 @@
               <td>{{ item.updated_at | datetime }}</td>
               <td class="actions">
                 <a class="button small" href="/items/{{ item.id }}">Open</a>
-                {% if item.status in ["baseline", "candidate", "blocked", "manual_review", "error"] %}
+                {% if item.status in ["baseline", "candidate", "covered", "blocked", "manual_review", "error"] %}
                   <form method="post" action="/items/{{ item.id }}/recheck">
                     <input type="hidden" name="return_to" value="{{ current_url }}">
                     <button class="button small secondary" type="submit">Run recheck</button>
@@ -243,7 +248,7 @@
           </div>
           <footer>
             <a class="button small" href="/items/{{ item.id }}">Open</a>
-            {% if item.status in ["baseline", "candidate", "blocked", "manual_review", "error"] %}
+            {% if item.status in ["baseline", "candidate", "covered", "blocked", "manual_review", "error"] %}
               <form method="post" action="/items/{{ item.id }}/recheck">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
                 <button class="button small secondary" type="submit">Run recheck</button>

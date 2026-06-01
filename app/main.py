@@ -45,6 +45,7 @@ MAX_VIDEO_FILES = 200
 DASHBOARD_VIEWS = {
     "active": ["queued", "deferred", "checking", "error"],
     "candidates": ["candidate"],
+    "covered": ["covered"],
     "blocked": ["blocked"],
     "manual": ["manual_review"],
     "errors": ["error"],
@@ -53,10 +54,11 @@ DASHBOARD_VIEWS = {
     "ignored": ["ignored"],
     "all": [],
 }
-FILTERABLE_VIEWS = {"baseline", "candidates", "blocked", "manual"}
+FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "blocked", "manual"}
 DASHBOARD_TABS = [
     ("active", "Active", ["queued", "deferred", "checking", "error"]),
     ("candidates", "Candidates", ["candidate"]),
+    ("covered", "Covered", ["covered"]),
     ("blocked", "Blocked", ["blocked"]),
     ("manual", "Review", ["manual_review"]),
     ("errors", "Errors", ["error"]),
@@ -176,8 +178,10 @@ def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
         return {"label": "Queued", "group": "queued", "detail": "Waiting for a check slot"}
     if value == "candidate":
         return {"label": "Ready", "group": "ready", "detail": "Upload candidate"}
+    if value == "covered":
+        return {"label": "Covered", "group": "covered", "detail": "Coverage resolved in QUI"}
     if value == "blocked":
-        return {"label": "Covered", "group": "covered", "detail": "No upload needed"}
+        return {"label": "Blocked", "group": "covered", "detail": "No upload needed"}
     if value == "manual_review":
         return {"label": "Needs Review", "group": "attention", "detail": "Manual decision needed"}
     if value == "error":
@@ -203,6 +207,8 @@ def _next_action(item: Dict[str, Any]) -> str:
     status_value = str(item.get("status") or "")
     if status_value == "candidate":
         return "Review candidate"
+    if status_value == "covered":
+        return "Coverage resolved"
     if status_value == "blocked":
         return "Review coverage"
     if status_value == "manual_review":
@@ -323,6 +329,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
         "arr": stored_checks.get("arr") or arr,
         "release_group_policy": stored_checks.get("release_group_policy") or {},
+        "coverage_resolution": stored_checks.get("coverage_resolution") or {},
         "flags": item["check_flags"],
         "diagnostics": stored_checks.get("diagnostics") or {"stages": [], "last_error": {}},
     }
@@ -445,6 +452,7 @@ def _tracker_bucket_items(groups: Dict[str, List[str]]) -> Dict[str, List[Dict[s
 def _tracker_summary(groups: Dict[str, List[str]]) -> str:
     labels = {
         "passed": "Missing/upload-worthy",
+        "covered": "Covered in QUI",
         "dupe": "Dupes",
         "skipped": "Skipped",
         "error": "Errors",
@@ -460,7 +468,7 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
 def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
     status_value = str(item.get("status") or "")
     stage = str(item.get("check_stage") or "")
-    final_statuses = {"candidate", "blocked", "manual_review", "error", "ignored", "inventory", "baseline"}
+    final_statuses = {"candidate", "covered", "blocked", "manual_review", "error", "ignored", "inventory", "baseline"}
     media_done = bool(check_results.get("media"))
     ua_done = bool(check_results.get("ua"))
     arr_done = bool(check_results.get("arr") or arr_result)
@@ -491,7 +499,8 @@ def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
 def _status_label(value: str) -> str:
     labels = {
         "candidate": "Ready",
-        "blocked": "Covered",
+        "covered": "Covered",
+        "blocked": "Blocked",
         "manual_review": "Review",
         "error": "Error",
         "ignored": "Ignored",
@@ -513,11 +522,14 @@ def _arr_summary(result: Dict[str, Any]) -> str:
     if not isinstance(decisions, list) or not decisions:
         return ""
     valid = [str(item.get("tracker")) for item in decisions if item.get("status") == "candidate"]
+    covered = [str(item.get("tracker")) for item in decisions if item.get("status") == "covered"]
     blocked = [str(item.get("tracker")) for item in decisions if item.get("status") == "blocked"]
     manual = [str(item.get("tracker")) for item in decisions if item.get("status") == "manual_review"]
     parts = []
     if valid:
         parts.append(f"Valid: {', '.join(valid)}")
+    if covered:
+        parts.append(f"Covered: {', '.join(covered)}")
     if blocked:
         parts.append(f"Equal/better exists: {', '.join(blocked)}")
     if manual:
@@ -768,6 +780,7 @@ async def dashboard(
             "label": {
                 "baseline": "baseline",
                 "candidates": "candidate",
+                "covered": "covered",
                 "blocked": "blocked",
                 "manual": "manual review",
             }.get(selected, selected.replace("_", " ")),
@@ -841,6 +854,7 @@ async def recheck_filtered_items(
     label = {
         "baseline": "baseline",
         "candidates": "candidate",
+        "covered": "covered",
         "blocked": "blocked",
         "manual": "manual review",
     }[selected]

@@ -188,6 +188,7 @@
         <h2>UA Tracker Checks</h2>
         {% set buckets = [
           ("passed", "Eligible after UA", "UA says this content passed checks and can continue to ARR."),
+          ("covered", "Covered in QUI", "This tracker is now represented by a QUI cross-seed or upload."),
           ("dupe", "Duplicates", "UA found similar or matching content."),
           ("skipped", "Skipped", "UA skipped these trackers because of tracker-specific conditions."),
           ("error", "Errors", "UA could not complete checking.")

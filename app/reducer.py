@@ -7,7 +7,7 @@ from typing import Dict, List
 from app.ua_logs import normalize_ua_log
 
 
-TRACKER_BUCKETS = ("passed", "dupe", "skipped", "error")
+TRACKER_BUCKETS = ("passed", "covered", "dupe", "skipped", "error")
 INTERRUPTION_MARKERS = (
     "received sigterm",
     "web ui server stopped",

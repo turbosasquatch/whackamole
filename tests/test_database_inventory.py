@@ -114,6 +114,100 @@ def test_bulk_requeue_filtered_updates_selected_final_status_only(tmp_path):
     assert rows["manual"]["status"] == "manual_review"
 
 
+def test_resolve_covered_candidates_uses_arr_candidate_trackers(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "candidate", "Example.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    candidate_id = int(db.list_items(["candidate"], limit=1)[0]["id"])
+    db.update_status(
+        candidate_id,
+        "candidate",
+        "candidate",
+        "Valid upload candidate on: IHD, ULCX",
+        tracker_results={"passed": ["IHD", "ULCX"], "dupe": [], "skipped": [], "error": []},
+        arr_results={
+            "status": "candidate",
+            "reason": "Valid upload candidate on: IHD, ULCX",
+            "decisions": [
+                {"tracker": "IHD", "status": "candidate", "reason": "ok"},
+                {"tracker": "ULCX", "status": "candidate", "reason": "ok"},
+            ],
+        },
+    )
+    _insert(
+        db,
+        "ihd-upload",
+        "Example.Show.S01E01.1080p.WEB-DL-GRP",
+        status="inventory",
+        category="uploads",
+        tags="upload",
+        path_prefix="/media/torrents/uploads/IHD",
+    )
+
+    partial = db.resolve_covered_candidates()
+    assert partial == {"items": 0, "trackers": 0}
+    assert db.get_item(candidate_id)["status"] == "candidate"
+
+    _insert(
+        db,
+        "ulcx-cross",
+        "Example.Show.S01E01.1080p.WEB-DL-GRP",
+        status="inventory",
+        category="tv.cross",
+        tags="cross-seed",
+        path_prefix="/media/torrents/cross-seeds/ULCX",
+    )
+    resolved = db.resolve_covered_candidates()
+    row = db.get_item(candidate_id)
+
+    assert resolved == {"items": 1, "trackers": 2}
+    assert row["status"] == "covered"
+    assert row["verdict"] == "covered"
+    assert row["reason"] == "Covered in QUI: IHD, ULCX"
+    assert db.whacked_stats()["holes_filled"] == 2
+
+
+def test_resolve_covered_candidates_falls_back_to_passed_trackers(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "candidate", "Fallback.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    candidate_id = int(db.list_items(["candidate"], limit=1)[0]["id"])
+    db.update_status(
+        candidate_id,
+        "candidate",
+        "candidate",
+        "Valid upload candidate on: IHD",
+        tracker_results={"passed": ["IHD"], "dupe": [], "skipped": [], "error": []},
+        arr_results={},
+    )
+    _insert(
+        db,
+        "dp-cross",
+        "Fallback.Show.S01E01.1080p.WEB-DL-GRP",
+        status="inventory",
+        category="tv.cross",
+        tags="cross-seed",
+        path_prefix="/media/torrents/cross-seeds/DarkPeers",
+    )
+
+    unrelated = db.resolve_covered_candidates()
+    assert unrelated == {"items": 0, "trackers": 0}
+
+    _insert(
+        db,
+        "ihd-upload",
+        "Fallback.Show.S01E01.1080p.WEB-DL-GRP",
+        status="inventory",
+        category="uploads",
+        tags="upload",
+        path_prefix="/media/torrents/uploads/IHD",
+    )
+    resolved = db.resolve_covered_candidates()
+    row = db.get_item(candidate_id)
+
+    assert resolved == {"items": 1, "trackers": 1}
+    assert row["status"] == "covered"
+    assert '"covered": ["IHD"]' in row["tracker_results"]
+
+
 def test_active_filter_only_includes_due_errors(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     now = int(time.time())

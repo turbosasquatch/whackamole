@@ -135,6 +135,45 @@ def test_items_api_can_include_full_details(tmp_path, monkeypatch):
         assert API_TOKEN not in response.text
 
 
+def test_covered_items_api_and_dashboard_widget(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "ihd-upload",
+                "name": "Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+                "category": "uploads",
+                "tags": "upload",
+                "save_path": "/media/torrents/uploads/IHD",
+                "content_path": "/media/torrents/uploads/IHD/Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+                "progress": 1,
+            },
+            status="inventory",
+            baseline=True,
+        )
+
+        resolved = db.resolve_covered_candidates()
+        response = client.get("/api/items?status=covered&include_details=true", headers=_auth_headers())
+        page = client.get("/?view=covered")
+
+        assert resolved == {"items": 1, "trackers": 1}
+        assert response.status_code == 200
+        item = response.json()["items"][0]
+        assert item["id"] == item_id
+        assert item["status"] == "covered"
+        assert item["tracker_results"]["covered"] == ["IHD"]
+        assert item["tracker_summary"] == "Covered in QUI: IHD"
+        assert item["arr_summary"] == "Covered: IHD"
+        assert item["checks"]["coverage_resolution"]["resolved_trackers"] == ["IHD"]
+        assert page.status_code == 200
+        assert "Whacked" in page.text
+        assert "1 hole" in page.text
+        assert "1 uploads" in page.text
+
+
 def test_items_api_filters_by_inventory_coverage(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

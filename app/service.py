@@ -165,6 +165,7 @@ class WhackamoleService:
             self.db.set_kv("inventory_done", "true")
         if full_crawl:
             self.db.set_kv("inventory_full_crawl_v2_done", "true")
+        self.db.resolve_covered_candidates()
 
     async def run_due_jobs(self) -> None:
         cfg = self.config_manager.load()
@@ -196,6 +197,7 @@ class WhackamoleService:
             "inventory_done": self.db.get_kv("inventory_done") == "true",
             "inventory_count": self.db.count_items([]),
             "queue": self.db.queue_counts(),
+            "whacked": self.db.whacked_stats(),
             "maintenance": self.maintenance_snapshot(cfg),
         }
 

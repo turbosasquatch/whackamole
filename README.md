@@ -61,6 +61,8 @@ Leave API key fields blank after saving to keep the encrypted stored values.
 
 Whackamole paginates through QUI and stores completed source torrents, cross-seeds, and uploads. Cross-seeds/uploads are used as tracker coverage signals on the dashboard. DP, ULCX, and IHD are highlighted as primary trackers; other detected trackers are shown as secondary coverage.
 
+When a previous upload candidate gains the exact tracker coverage it was valid for, Whackamole moves it to the Covered view during the next QUI poll. This reconciliation also works for candidates and inventory rows that were already stored before the poll.
+
 Use the Baseline view filters to narrow the backlog:
 
 - Media type: all, movie, TV/season pack, or episode.

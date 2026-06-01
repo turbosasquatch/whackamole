@@ -21,3 +21,9 @@ def test_tracker_summary_labels_passed_as_upload_worthy():
     summary = _tracker_summary({"passed": ["IHD", "DP"], "dupe": [], "skipped": [], "error": []})
 
     assert summary == "Missing/upload-worthy: IHD, DP"
+
+
+def test_tracker_summary_labels_covered_trackers():
+    summary = _tracker_summary({"passed": [], "covered": ["IHD"], "dupe": [], "skipped": [], "error": []})
+
+    assert summary == "Covered in QUI: IHD"

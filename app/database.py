@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.inventory import build_inventory_meta, item_inventory_meta, sort_coverage_values
+from app.reducer import TRACKER_BUCKETS
 
 
 class Database:
@@ -454,6 +455,107 @@ class Database:
         counts["active"] = counts["queued"] + counts["deferred"] + counts["checking"] + counts["due_errors"]
         return counts
 
+    def whacked_stats(self) -> Dict[str, int]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN status = 'inventory' AND inventory_is_cross_seed = 1 THEN 1 ELSE 0 END) AS cross_seed_count,
+                    SUM(CASE WHEN status = 'inventory' AND inventory_is_upload = 1 THEN 1 ELSE 0 END) AS upload_count,
+                    SUM(CASE WHEN status = 'inventory' AND inventory_is_support = 1 THEN 1 ELSE 0 END) AS support_total,
+                    SUM(CASE WHEN status = 'covered' THEN 1 ELSE 0 END) AS covered_items
+                FROM items
+                """
+            ).fetchone()
+            covered_rows = conn.execute("SELECT check_results FROM items WHERE status = 'covered'").fetchall()
+
+        holes_filled = 0
+        for covered_row in covered_rows:
+            check_results = _json_dict(covered_row["check_results"])
+            resolution = check_results.get("coverage_resolution")
+            if not isinstance(resolution, dict):
+                continue
+            trackers = resolution.get("resolved_trackers")
+            if isinstance(trackers, list):
+                holes_filled += len([tracker for tracker in trackers if str(tracker).strip()])
+
+        return {
+            "cross_seed_count": int(row["cross_seed_count"] or 0) if row else 0,
+            "upload_count": int(row["upload_count"] or 0) if row else 0,
+            "support_total": int(row["support_total"] or 0) if row else 0,
+            "covered_items": int(row["covered_items"] or 0) if row else 0,
+            "holes_filled": holes_filled,
+        }
+
+    def resolve_covered_candidates(self) -> Dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM items WHERE status = 'candidate'").fetchall()
+        if not rows:
+            return {"items": 0, "trackers": 0}
+
+        row_payloads = [dict(row) for row in rows]
+        group_keys = [
+            str(row.get("inventory_group_key") or item_inventory_meta(row).get("group_key") or "")
+            for row in row_payloads
+        ]
+        coverage = self.coverage_for_group_keys(group_keys)
+        now = int(time.time())
+        updates: List[Tuple[str, str, str, str, int, int, int]] = []
+        resolved_tracker_count = 0
+
+        for row in row_payloads:
+            group_key = str(row.get("inventory_group_key") or item_inventory_meta(row).get("group_key") or "")
+            present_trackers = {str(item.get("key") or "").upper() for item in coverage.get(group_key, [])}
+            candidate_trackers = _candidate_trackers_for_resolution(row)
+            if not candidate_trackers or not set(candidate_trackers).issubset(present_trackers):
+                continue
+
+            tracker_results = _covered_tracker_results(row.get("tracker_results"), row.get("verdict"), candidate_trackers)
+            arr_results = _covered_arr_results(row.get("arr_results"), candidate_trackers, now)
+            reason = f"Covered in QUI: {', '.join(candidate_trackers)}"
+            check_results = _covered_check_results(
+                row.get("check_results"),
+                tracker_results,
+                arr_results,
+                candidate_trackers,
+                reason,
+                now,
+            )
+            updates.append(
+                (
+                    reason,
+                    json.dumps(tracker_results),
+                    json.dumps(arr_results),
+                    json.dumps(check_results),
+                    now,
+                    now,
+                    int(row["id"]),
+                )
+            )
+            resolved_tracker_count += len(candidate_trackers)
+
+        if updates:
+            with self.connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE items
+                    SET status = 'covered',
+                        verdict = 'covered',
+                        reason = ?,
+                        tracker_results = ?,
+                        arr_results = ?,
+                        check_results = ?,
+                        check_stage = 'done',
+                        next_check_at = NULL,
+                        last_checked_at = COALESCE(last_checked_at, ?),
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    updates,
+                )
+
+        return {"items": len(updates), "trackers": resolved_tracker_count}
+
     def recover_stale_checking(self, next_check_at: int) -> int:
         now = int(time.time())
         reason = "Whackamole restarted while this check was running. It will retry after backoff."
@@ -636,3 +738,143 @@ def _inventory_values(meta: Any) -> Tuple[str, str, str, str, str, int, int, int
         1 if payload.get("is_upload") else 0,
         1 if payload.get("is_support") else 0,
     )
+
+
+def _candidate_trackers_for_resolution(item: Dict[str, Any]) -> List[str]:
+    arr_results = _json_dict(item.get("arr_results"))
+    decisions = arr_results.get("decisions")
+    if isinstance(decisions, list):
+        trackers = [
+            str(decision.get("tracker") or "").upper()
+            for decision in decisions
+            if isinstance(decision, dict)
+            and str(decision.get("status") or "").lower() == "candidate"
+            and str(decision.get("tracker") or "").strip()
+        ]
+        trackers = _dedupe_trackers(trackers)
+        if trackers:
+            return trackers
+
+    tracker_results = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
+    return _dedupe_trackers([str(tracker).upper() for tracker in tracker_results.get("passed", [])])
+
+
+def _covered_tracker_results(value: Any, verdict: Any, covered_trackers: List[str]) -> Dict[str, List[str]]:
+    groups = _tracker_result_groups(value, verdict)
+    covered = set(covered_trackers)
+    groups["passed"] = [tracker for tracker in groups.get("passed", []) if str(tracker).upper() not in covered]
+    groups["covered"] = _dedupe_trackers(list(groups.get("covered", [])) + covered_trackers)
+    return groups
+
+
+def _covered_arr_results(value: Any, covered_trackers: List[str], resolved_at: int) -> Dict[str, Any]:
+    payload = _json_dict(value)
+    if not payload:
+        return {}
+    covered = set(covered_trackers)
+    decisions = payload.get("decisions")
+    if isinstance(decisions, list):
+        updated_decisions = []
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                updated_decisions.append(decision)
+                continue
+            updated = dict(decision)
+            tracker = str(updated.get("tracker") or "").upper()
+            if str(updated.get("status") or "").lower() == "candidate" and tracker in covered:
+                updated["status"] = "covered"
+                updated["reason"] = "Tracker coverage is now present in QUI."
+                updated["coverage_resolved_at"] = resolved_at
+            updated_decisions.append(updated)
+        payload["decisions"] = updated_decisions
+    payload["status"] = "covered"
+    payload["reason"] = f"Covered in QUI: {', '.join(covered_trackers)}"
+    payload["coverage_resolved_at"] = resolved_at
+    return payload
+
+
+def _covered_check_results(
+    value: Any,
+    tracker_results: Dict[str, List[str]],
+    arr_results: Dict[str, Any],
+    covered_trackers: List[str],
+    reason: str,
+    resolved_at: int,
+) -> Dict[str, Any]:
+    payload = _json_dict(value)
+    payload.setdefault("version", 1)
+    ua = payload.get("ua") if isinstance(payload.get("ua"), dict) else {}
+    ua = {**ua, "status": "covered", "verdict": "covered", "reason": reason, "tracker_results": tracker_results}
+    payload["ua"] = ua
+    if arr_results:
+        payload["arr"] = arr_results
+    payload["coverage_resolution"] = {
+        "status": "covered",
+        "reason": reason,
+        "resolved_trackers": covered_trackers,
+        "resolved_at": resolved_at,
+    }
+
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+    stages = diagnostics.get("stages") if isinstance(diagnostics.get("stages"), list) else []
+    stages = list(stages)
+    stages.append(
+        {
+            "stage": "coverage",
+            "status": "covered",
+            "reason": reason,
+            "covered_trackers": covered_trackers,
+            "at": resolved_at,
+        }
+    )
+    payload["diagnostics"] = {
+        "stages": stages,
+        "last_error": diagnostics.get("last_error") if isinstance(diagnostics.get("last_error"), dict) else {},
+    }
+    return payload
+
+
+def _tracker_result_groups(value: Any, verdict: Any = "") -> Dict[str, List[str]]:
+    groups: Dict[str, List[str]] = {bucket: [] for bucket in TRACKER_BUCKETS}
+    parsed: Any
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value or "[]")
+        except (TypeError, json.JSONDecodeError):
+            parsed = []
+    else:
+        parsed = value if value is not None else []
+
+    if isinstance(parsed, dict):
+        raw_groups = parsed.get("groups") if isinstance(parsed.get("groups"), dict) else parsed
+        for bucket in TRACKER_BUCKETS:
+            values = raw_groups.get(bucket, [])
+            if isinstance(values, list):
+                groups[bucket] = [str(item) for item in values if str(item).strip()]
+        return groups
+
+    if isinstance(parsed, list):
+        if verdict == "dupe":
+            bucket = "dupe"
+        elif verdict == "skipped":
+            bucket = "skipped"
+        elif verdict in {"error", "http_error", "ua_error", "path_mapping"}:
+            bucket = "error"
+        else:
+            bucket = "passed"
+        groups[bucket] = [str(item) for item in parsed if str(item).strip()]
+    return groups
+
+
+def _json_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _dedupe_trackers(trackers: Iterable[str]) -> List[str]:
+    return list(dict.fromkeys(str(tracker).upper() for tracker in trackers if str(tracker).strip()))
