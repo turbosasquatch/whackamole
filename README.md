@@ -63,6 +63,8 @@ Whackamole paginates through QUI and stores completed source torrents, cross-see
 
 When a previous upload candidate gains the exact tracker coverage it was valid for, Whackamole moves it to the Covered view during the next QUI poll. This reconciliation also works for candidates and inventory rows that were already stored before the poll.
 
+Saving tracker release-group policy settings reapplies those rules to stored candidates without rerunning Upload Assistant or Arr searches.
+
 Use the Baseline view filters to narrow the backlog:
 
 - Media type: all, movie, TV/season pack, or episode.

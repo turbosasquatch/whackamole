@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.inventory import build_inventory_meta, item_inventory_meta, sort_coverage_values
+from app.media_identity import extract_release_group
+from app.media_policy import apply_release_group_policy
 from app.reducer import TRACKER_BUCKETS
 
 
@@ -590,6 +592,95 @@ class Database:
 
         return {"items": len(updates), "trackers": resolved_tracker_count}
 
+    def reapply_release_group_policy(self, tracker_policies: Dict[str, Any]) -> Dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM items WHERE status = 'candidate'").fetchall()
+        if not rows:
+            return {"items": 0, "blocked_items": 0, "blocked_trackers": 0}
+
+        now = int(time.time())
+        updates: List[Tuple[str, str, str, str, str, str, int, int]] = []
+        blocked_items = 0
+        blocked_trackers = 0
+
+        for raw_row in rows:
+            row = dict(raw_row)
+            tracker_results = _tracker_result_groups(row.get("tracker_results"), row.get("verdict"))
+            arr_results = _json_dict(row.get("arr_results"))
+            check_results = _json_dict(row.get("check_results"))
+            release_group = _release_group_for_policy(row, check_results)
+            status, verdict, reason, policy_result, flags = apply_release_group_policy(
+                tracker_results=tracker_results,
+                arr_results=arr_results,
+                release_group=release_group,
+                tracker_policies=tracker_policies,
+                flags=check_results.get("flags") if isinstance(check_results.get("flags"), list) else [],
+                item_name=str(row.get("name") or ""),
+            )
+            if status not in {"candidate", "blocked"}:
+                continue
+
+            updated_tracker_results = _policy_tracker_results(tracker_results, policy_result)
+            if not _policy_effect_changed(
+                row,
+                tracker_results,
+                check_results,
+                status,
+                verdict,
+                reason,
+                policy_result,
+                updated_tracker_results,
+            ):
+                continue
+            updated_arr_results = _policy_arr_results(arr_results, policy_result, status, reason, now)
+            updated_check_results = _policy_check_results(
+                check_results,
+                updated_tracker_results,
+                updated_arr_results,
+                policy_result,
+                flags,
+                status,
+                reason,
+                now,
+            )
+            payload = (
+                status,
+                verdict,
+                reason,
+                json.dumps(updated_tracker_results),
+                json.dumps(updated_arr_results),
+                json.dumps(updated_check_results),
+                now,
+                int(row["id"]),
+            )
+            updates.append(payload)
+            blocked = list(policy_result.get("blocked_trackers") or [])
+            if blocked:
+                blocked_trackers += len(blocked)
+            if status == "blocked":
+                blocked_items += 1
+
+        if updates:
+            with self.connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE items
+                    SET status = ?,
+                        verdict = ?,
+                        reason = ?,
+                        tracker_results = ?,
+                        arr_results = ?,
+                        check_results = ?,
+                        check_stage = 'done',
+                        next_check_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    updates,
+                )
+
+        return {"items": len(updates), "blocked_items": blocked_items, "blocked_trackers": blocked_trackers}
+
     def recover_stale_checking(self, next_check_at: int) -> int:
         now = int(time.time())
         reason = "Whackamole restarted while this check was running. It will retry after backoff."
@@ -854,6 +945,122 @@ def _reason_filter_clauses(reasons: Optional[Iterable[str]]) -> Tuple[List[str],
             like = f"%{reason}%"
             params.extend([like, like, like])
     return clauses, params
+
+
+def _release_group_for_policy(item: Dict[str, Any], check_results: Dict[str, Any]) -> str:
+    policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    return str(policy.get("release_group") or media.get("release_group") or extract_release_group(str(item.get("name") or "")))
+
+
+def _policy_tracker_results(
+    tracker_results: Dict[str, List[str]],
+    policy_result: Dict[str, Any],
+) -> Dict[str, List[str]]:
+    updated = {bucket: list(tracker_results.get(bucket, [])) for bucket in TRACKER_BUCKETS}
+    allowed = _dedupe_trackers(policy_result.get("candidate_trackers") or [])
+    blocked = set(_dedupe_trackers(policy_result.get("blocked_trackers") or []))
+    if allowed or blocked:
+        updated["passed"] = allowed
+    return updated
+
+
+def _policy_arr_results(
+    arr_results: Dict[str, Any],
+    policy_result: Dict[str, Any],
+    status: str,
+    reason: str,
+    updated_at: int,
+) -> Dict[str, Any]:
+    if not arr_results:
+        return {}
+    updated = dict(arr_results)
+    policy_decisions = {
+        str(decision.get("tracker") or "").upper(): decision
+        for decision in policy_result.get("decisions", [])
+        if isinstance(decision, dict) and str(decision.get("tracker") or "").strip()
+    }
+    decisions = arr_results.get("decisions")
+    if isinstance(decisions, list):
+        updated_decisions = []
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                updated_decisions.append(decision)
+                continue
+            tracker = str(decision.get("tracker") or "").upper()
+            policy_decision = policy_decisions.get(tracker)
+            if policy_decision and str(decision.get("status") or "").lower() in {"candidate", "blocked"}:
+                merged = {**decision, **policy_decision, "policy_reapplied_at": updated_at}
+                updated_decisions.append(merged)
+            else:
+                updated_decisions.append(decision)
+        updated["decisions"] = updated_decisions
+    updated["status"] = status
+    updated["reason"] = reason
+    updated["policy_reapplied_at"] = updated_at
+    return updated
+
+
+def _policy_check_results(
+    check_results: Dict[str, Any],
+    tracker_results: Dict[str, List[str]],
+    arr_results: Dict[str, Any],
+    policy_result: Dict[str, Any],
+    flags: List[Dict[str, Any]],
+    status: str,
+    reason: str,
+    updated_at: int,
+) -> Dict[str, Any]:
+    updated = dict(check_results)
+    updated.setdefault("version", 1)
+    ua = updated.get("ua") if isinstance(updated.get("ua"), dict) else {}
+    updated["ua"] = {**ua, "tracker_results": tracker_results}
+    if arr_results:
+        updated["arr"] = arr_results
+    updated["release_group_policy"] = policy_result
+    updated["flags"] = flags
+
+    diagnostics = updated.get("diagnostics") if isinstance(updated.get("diagnostics"), dict) else {}
+    stages = diagnostics.get("stages") if isinstance(diagnostics.get("stages"), list) else []
+    stages = list(stages)
+    stages.append(
+        {
+            "stage": "policy",
+            "status": status,
+            "reason": reason,
+            "at": updated_at,
+            "candidate_trackers": list(policy_result.get("candidate_trackers") or []),
+            "blocked_trackers": list(policy_result.get("blocked_trackers") or []),
+            "policy_only": True,
+        }
+    )
+    updated["diagnostics"] = {
+        "stages": stages,
+        "last_error": diagnostics.get("last_error") if isinstance(diagnostics.get("last_error"), dict) else {},
+    }
+    return updated
+
+
+def _policy_effect_changed(
+    row: Dict[str, Any],
+    current_tracker_results: Dict[str, List[str]],
+    check_results: Dict[str, Any],
+    status: str,
+    verdict: str,
+    reason: str,
+    policy_result: Dict[str, Any],
+    updated_tracker_results: Dict[str, List[str]],
+) -> bool:
+    current_policy = (
+        check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    )
+    return (
+        str(row.get("status") or "") != status
+        or str(row.get("verdict") or "") != verdict
+        or str(row.get("reason") or "") != reason
+        or current_tracker_results != updated_tracker_results
+        or current_policy != policy_result
+    )
 
 
 def _candidate_trackers_for_resolution(item: Dict[str, Any]) -> List[str]:

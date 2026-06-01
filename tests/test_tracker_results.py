@@ -1,4 +1,4 @@
-from app.main import _tracker_result_groups, _tracker_summary
+from app.main import _arr_summary, _tracker_result_groups, _tracker_summary
 
 
 def test_tracker_result_groups_support_new_shape():
@@ -27,3 +27,16 @@ def test_tracker_summary_labels_covered_trackers():
     summary = _tracker_summary({"passed": [], "covered": ["IHD"], "dupe": [], "skipped": [], "error": []})
 
     assert summary == "Covered in QUI: IHD"
+
+
+def test_arr_summary_labels_policy_blocked_decisions():
+    summary = _arr_summary(
+        {
+            "decisions": [
+                {"tracker": "DP", "status": "blocked", "reason": "GRP is banned on DP.", "banned_match": "GRP"},
+                {"tracker": "IHD", "status": "candidate", "reason": "ok"},
+            ]
+        }
+    )
+
+    assert summary == "Valid: IHD | Policy blocked: DP"

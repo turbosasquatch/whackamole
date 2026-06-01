@@ -631,13 +631,25 @@ def _arr_summary(result: Dict[str, Any]) -> str:
         return ""
     valid = [str(item.get("tracker")) for item in decisions if item.get("status") == "candidate"]
     covered = [str(item.get("tracker")) for item in decisions if item.get("status") == "covered"]
-    blocked = [str(item.get("tracker")) for item in decisions if item.get("status") == "blocked"]
+    policy_blocked = [
+        str(item.get("tracker"))
+        for item in decisions
+        if item.get("status") == "blocked"
+        and ("banned_match" in item or "banned" in str(item.get("reason") or "").lower())
+    ]
+    blocked = [
+        str(item.get("tracker"))
+        for item in decisions
+        if item.get("status") == "blocked" and str(item.get("tracker")) not in policy_blocked
+    ]
     manual = [str(item.get("tracker")) for item in decisions if item.get("status") == "manual_review"]
     parts = []
     if valid:
         parts.append(f"Valid: {', '.join(valid)}")
     if covered:
         parts.append(f"Covered: {', '.join(covered)}")
+    if policy_blocked:
+        parts.append(f"Policy blocked: {', '.join(policy_blocked)}")
     if blocked:
         parts.append(f"Equal/better exists: {', '.join(blocked)}")
     if manual:
@@ -1189,7 +1201,16 @@ async def save_config(
     _update_secret(secrets, "whackamole_api_token", whackamole_api_token, clear_whackamole_api_token)
 
     manager.save(cfg)
-    return templates.TemplateResponse(request, "config.html", _config_context(request, message="Settings saved."))
+    policy_reapply = request.app.state.db.reapply_release_group_policy(cfg.tracker_policies)
+    message = "Settings saved."
+    if policy_reapply["items"]:
+        message = (
+            f"Settings saved. Reapplied release group policy to {policy_reapply['items']} candidate"
+            f"{'' if policy_reapply['items'] == 1 else 's'}"
+            f"; {policy_reapply['blocked_trackers']} tracker"
+            f"{'' if policy_reapply['blocked_trackers'] == 1 else 's'} blocked."
+        )
+    return templates.TemplateResponse(request, "config.html", _config_context(request, message=message))
 
 
 @app.post("/config/probe", response_class=HTMLResponse)

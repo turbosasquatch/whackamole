@@ -102,6 +102,24 @@ def test_config_page_saves_maintenance_guard_settings(tmp_path, monkeypatch):
         assert cfg.maintenance.resume_signal == "qui_down_up"
 
 
+def test_config_save_reapplies_release_group_policy_to_candidates(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+
+        response = client.post(
+            "/config",
+            data={
+                "policy_ihd_banned": "GRP",
+            },
+        )
+        row = client.app.state.db.get_item(item_id)
+
+        assert response.status_code == 200
+        assert "Reapplied release group policy to 1 candidate" in response.text
+        assert row["status"] == "blocked"
+        assert row["verdict"] == "banned_release_group"
+
+
 def test_items_api_returns_paginated_summaries_without_logs(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

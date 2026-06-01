@@ -1,3 +1,4 @@
+import json
 import time
 
 from app.database import Database
@@ -206,6 +207,70 @@ def test_resolve_covered_candidates_falls_back_to_passed_trackers(tmp_path):
     assert resolved == {"items": 1, "trackers": 1}
     assert row["status"] == "covered"
     assert '"covered": ["IHD"]' in row["tracker_results"]
+
+
+def test_reapply_release_group_policy_updates_candidate_without_recheck(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "candidate", "Policy.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    candidate_id = int(db.list_items(["candidate"], limit=1)[0]["id"])
+    db.update_status(
+        candidate_id,
+        "candidate",
+        "candidate",
+        "Valid upload candidate on: DP, IHD",
+        tracker_results={"passed": ["DP", "IHD"], "covered": [], "dupe": [], "skipped": [], "error": []},
+        arr_results={
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP, IHD",
+            "decisions": [
+                {"tracker": "DP", "status": "candidate", "reason": "ok"},
+                {"tracker": "IHD", "status": "candidate", "reason": "ok"},
+            ],
+        },
+    )
+
+    result = db.reapply_release_group_policy(
+        {
+            "DP": {"banned_release_groups": ["GRP"], "ranked_release_groups": []},
+            "IHD": {"banned_release_groups": [], "ranked_release_groups": []},
+        }
+    )
+    row = db.get_item(candidate_id)
+    tracker_results = json.loads(row["tracker_results"])
+    arr_results = json.loads(row["arr_results"])
+    check_results = json.loads(row["check_results"])
+
+    assert result == {"items": 1, "blocked_items": 0, "blocked_trackers": 1}
+    assert row["status"] == "candidate"
+    assert row["reason"] == "Valid upload candidate on: IHD"
+    assert tracker_results["passed"] == ["IHD"]
+    assert arr_results["decisions"][0]["status"] == "blocked"
+    assert arr_results["decisions"][0]["banned_match"] == "GRP"
+    assert check_results["release_group_policy"]["blocked_trackers"] == ["DP"]
+
+
+def test_reapply_release_group_policy_blocks_candidate_when_all_trackers_banned(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "candidate", "Blocked.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    candidate_id = int(db.list_items(["candidate"], limit=1)[0]["id"])
+    db.update_status(
+        candidate_id,
+        "candidate",
+        "candidate",
+        "Valid upload candidate on: IHD",
+        tracker_results={"passed": ["IHD"], "covered": [], "dupe": [], "skipped": [], "error": []},
+        arr_results={"decisions": [{"tracker": "IHD", "status": "candidate", "reason": "ok"}]},
+    )
+
+    result = db.reapply_release_group_policy(
+        {"IHD": {"banned_release_groups": ["GRP"], "ranked_release_groups": []}}
+    )
+    row = db.get_item(candidate_id)
+
+    assert result == {"items": 1, "blocked_items": 1, "blocked_trackers": 1}
+    assert row["status"] == "blocked"
+    assert row["verdict"] == "banned_release_group"
+    assert row["reason"] == "GRP is banned on every otherwise valid tracker."
 
 
 def test_active_filter_only_includes_due_errors(tmp_path):
