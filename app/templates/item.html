@@ -44,26 +44,23 @@
   <section class="decision-panel">
     <div>
       <span class="eyebrow">Decision</span>
-      <strong>{{ item.next_action }}</strong>
-      <p>{{ item.reason or item.display_status.detail or "No decision reason recorded yet." }}</p>
+      <strong>{{ item.verdict or item.next_action }}</strong>
+      <p>{{ item.decision_notice or item.reason or item.display_status.detail or "No decision reason recorded yet." }}</p>
+    </div>
+    <div>
+      <span class="eyebrow">Valid For</span>
+      <div class="big-trackers">
+        {% for tracker in item.valid_for_trackers %}
+          <span class="big-tracker">{{ tracker }}</span>
+        {% else %}
+          <span class="muted">No tracker eligibility recorded.</span>
+        {% endfor %}
+      </div>
     </div>
     <div>
       <span class="eyebrow">Size</span>
       <strong>{{ item.size | bytes }}</strong>
       <p>Updated {{ item.updated_at | datetime }}</p>
-    </div>
-    <div>
-      <span class="eyebrow">Attempts</span>
-      <strong>{{ item.attempt_count }}</strong>
-      <p>Next check {{ item.next_check_at | datetime }}</p>
-    </div>
-  </section>
-
-  <section class="stage-card">
-    <div class="stage-flow">
-      {% for step in item.stage_flow %}
-        <span class="stage-step {{ step.state }}">{{ step.label }}</span>
-      {% endfor %}
     </div>
   </section>
 
@@ -86,28 +83,24 @@
     <div class="tab-list" role="tablist" aria-label="Item sections">
       <button class="active" type="button" data-tab-target="overview">Overview</button>
       <button type="button" data-tab-target="checks">Checks</button>
+      <button type="button" data-tab-target="mediainfo">Media Info</button>
       <button type="button" data-tab-target="trackers">Trackers</button>
-      <button type="button" data-tab-target="arr">ARR</button>
-      <button type="button" data-tab-target="files">Files & Paths</button>
-      <button type="button" data-tab-target="diagnostics">Diagnostics</button>
+      <button type="button" data-tab-target="discovarr">Discovarr</button>
     </div>
 
     <div class="tab-panel active" data-tab-panel="overview">
       <div class="info-grid">
         <section>
-          <h2>Identity</h2>
-          <dl>
-            <dt>Release</dt>
-            <dd>{{ media.release_title or item.name }}</dd>
-            <dt>Group</dt>
-            <dd>{{ media.release_group or "-" }}</dd>
-            <dt>Media type</dt>
-            <dd>{{ item.inventory_meta.media_type or item.category or "-" }}</dd>
-            <dt>Category</dt>
-            <dd>{{ item.category or "-" }}</dd>
-            <dt>Tags</dt>
-            <dd>{{ item.tags or "-" }}</dd>
-          </dl>
+          <h2>Checks Summary</h2>
+          <div class="check-summary">
+            {% for check in item.overview_checks %}
+              <div class="check-summary-row">
+                <strong>{{ check.label }}</strong>
+                <span class="check-state {{ check.group }}">{{ check.state }}</span>
+                <span class="muted">{{ check.notes }}</span>
+              </div>
+            {% endfor %}
+          </div>
         </section>
         <section>
           <h2>Coverage</h2>
@@ -126,6 +119,80 @@
     </div>
 
     <div class="tab-panel" data-tab-panel="checks">
+      {% if policy.decisions %}
+        <section class="details-panel">
+          <h2>Release Group Policy</h2>
+          <div class="decision-list">
+            {% for decision in policy.decisions %}
+              <article class="decision-card {{ decision.status }}">
+                <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
+                <span>{{ decision.reason }}</span>
+                {% if decision.rank %}<span>Rank {{ decision.rank }}</span>{% endif %}
+              </article>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+
+      <section class="details-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Diagnostics</span>
+            <h2>Stage History</h2>
+          </div>
+          <button class="button secondary small" type="button" data-raw-open data-raw-title="Check diagnostics" data-raw-kind="json" data-raw-source="raw-diagnostics">Raw</button>
+        </div>
+        <table class="mini-table">
+          <thead><tr><th>Stage</th><th>Status</th><th>When</th><th>Reason</th></tr></thead>
+          <tbody>
+            {% for stage in checks.diagnostics.stages or [] %}
+              <tr>
+                <td>{{ stage.stage }}</td>
+                <td>{{ stage.status }}</td>
+                <td>{{ stage.at | datetime }}</td>
+                <td>{{ stage.reason or stage.error or "-" }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="muted">No diagnostics recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <div class="info-grid">
+        <section class="details-panel">
+          <h2>Paths</h2>
+          <dl>
+            <dt>QUI path</dt>
+            <dd>{{ item.content_path }}</dd>
+            <dt>UA path</dt>
+            <dd>{{ item.mapped_path or "-" }}</dd>
+            <dt>UA args</dt>
+            <dd>{{ item.ua_args or "-" }}</dd>
+          </dl>
+        </section>
+        <section class="details-panel">
+          <h2>Video Files</h2>
+          {% if item.video_files.files %}
+            <ul class="file-list">
+              {% for file in item.video_files.files %}
+                <li>
+                  <span>{{ file.relative_path }}</span>
+                  <small>{{ file.size | bytes }}</small>
+                </li>
+              {% endfor %}
+            </ul>
+            {% if item.video_files.truncated %}
+              <p class="muted">Showing first {{ item.video_files.files | length }} video files.</p>
+            {% endif %}
+          {% else %}
+            <p class="muted">{{ item.video_files.message or "-" }}</p>
+          {% endif %}
+        </section>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-tab-panel="mediainfo">
       <section class="details-panel">
         <div class="panel-heading">
           <div>
@@ -167,20 +234,38 @@
         </table>
       </section>
 
-      {% if policy.decisions %}
-        <section class="details-panel">
-          <h2>Release Group Policy</h2>
-          <div class="decision-list">
-            {% for decision in policy.decisions %}
-              <article class="decision-card {{ decision.status }}">
-                <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
-                <span>{{ decision.reason }}</span>
-                {% if decision.rank %}<span>Rank {{ decision.rank }}</span>{% endif %}
-              </article>
+      <section class="details-panel">
+        <h2>QUI MediaInfo Files</h2>
+        <table class="mini-table">
+          <thead><tr><th>File</th><th>Tags</th><th>Default audio</th></tr></thead>
+          <tbody>
+            {% for media_file in media.mediainfo_files or [] %}
+              <tr>
+                <td>{{ media_file.name or ("File " ~ media_file.index) }}</td>
+                <td>
+                  {% if media_file.tags %}
+                    <div class="tag-list compact-tags">
+                      {% for tag in media_file.tags %}
+                        <span>{{ tag }}</span>
+                      {% endfor %}
+                    </div>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% set audio = media_file.default_audio or {} %}
+                  {{ audio.format or "-" }}
+                  {% if audio.channels %} · {{ audio.channels }}ch{% endif %}
+                  {% if audio.language %} · {{ audio.language }}{% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="3" class="muted">No QUI MediaInfo file details recorded.</td></tr>
             {% endfor %}
-          </div>
-        </section>
-      {% endif %}
+          </tbody>
+        </table>
+      </section>
     </div>
 
     <div class="tab-panel" data-tab-panel="trackers">
@@ -224,14 +309,14 @@
       </section>
     </div>
 
-    <div class="tab-panel" data-tab-panel="arr">
+    <div class="tab-panel" data-tab-panel="discovarr">
       <section class="details-panel">
         <div class="panel-heading">
           <div>
-            <span class="eyebrow">ARR</span>
-            <h2>{{ item.arr_result.status or "No ARR comparison" }}</h2>
+            <span class="eyebrow">Discovarr</span>
+            <h2>{{ item.arr_result.status or "No Discovarr comparison" }}</h2>
           </div>
-          <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw ARR result" data-raw-kind="json" data-raw-source="raw-arr">Raw</button>
+          <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Discovarr result" data-raw-kind="json" data-raw-source="raw-arr">Raw</button>
         </div>
         {% if item.arr_result.reason %}<p>{{ item.arr_result.reason }}</p>{% endif %}
         {% set traits = item.arr_result.local_traits or {} %}
@@ -247,6 +332,7 @@
         {% endif %}
         <div class="decision-list">
           {% for decision in item.arr_result.decisions or [] %}
+            {% set releases = item.arr_release_views.get(decision.tracker, []) %}
             <article class="decision-card {{ decision.status }}">
               <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
               <span>{{ decision.reason }}</span>
@@ -254,16 +340,30 @@
               {% if decision.best_release %}
                 <span><b>Best match:</b> {{ decision.best_release.title }}{% if decision.best_release.quality %} · {{ decision.best_release.quality }}{% endif %}{% if decision.best_release.seeders is not none %} · {{ decision.best_release.seeders }} seeders{% endif %}</span>
               {% endif %}
-              {% if decision.results %}
+              {% if releases %}
                 <details>
-                  <summary>ARR releases</summary>
-                  <table class="mini-table">
-                    <thead><tr><th>Indexer</th><th>Title</th><th>Seeders</th></tr></thead>
+                  <summary>Discovarr releases</summary>
+                  <table class="mini-table comparison-table">
+                    <thead><tr><th>Indexer</th><th>Title</th><th>Lane Matches</th><th>Ranking</th><th>Seeders</th></tr></thead>
                     <tbody>
-                      {% for release in decision.results %}
+                      {% for release in releases %}
                         <tr>
                           <td>{{ release.indexer or "-" }}</td>
                           <td>{{ release.title }}</td>
+                          <td>
+                            <div class="comparison-tags">
+                              {% for tag in release.lane_tags %}
+                                <span class="lane-tag {{ tag.group }}">{{ tag.label }}: {{ tag.detail }}</span>
+                              {% endfor %}
+                            </div>
+                          </td>
+                          <td>
+                            <div class="comparison-tags">
+                              {% for tag in release.ranking_tags %}
+                                <span class="rank-tag {{ tag.group }}">{{ tag.label }}: {{ tag.detail }}</span>
+                              {% endfor %}
+                            </div>
+                          </td>
                           <td>{{ release.seeders if release.seeders is not none else "-" }}</td>
                         </tr>
                       {% endfor %}
@@ -273,103 +373,9 @@
               {% endif %}
             </article>
           {% else %}
-            <p class="muted">No Arr comparison recorded.</p>
+            <p class="muted">No Discovarr comparison recorded.</p>
           {% endfor %}
         </div>
-      </section>
-    </div>
-
-    <div class="tab-panel" data-tab-panel="files">
-      <div class="info-grid">
-        <section>
-          <h2>Paths</h2>
-          <dl>
-            <dt>QUI path</dt>
-            <dd>{{ item.content_path }}</dd>
-            <dt>UA path</dt>
-            <dd>{{ item.mapped_path or "-" }}</dd>
-            <dt>UA args</dt>
-            <dd>{{ item.ua_args or "-" }}</dd>
-          </dl>
-        </section>
-        <section>
-          <h2>Video Files</h2>
-          {% if item.video_files.files %}
-            <ul class="file-list">
-              {% for file in item.video_files.files %}
-                <li>
-                  <span>{{ file.relative_path }}</span>
-                  <small>{{ file.size | bytes }}</small>
-                </li>
-              {% endfor %}
-            </ul>
-            {% if item.video_files.truncated %}
-              <p class="muted">Showing first {{ item.video_files.files | length }} video files.</p>
-            {% endif %}
-          {% else %}
-            <p class="muted">{{ item.video_files.message or "-" }}</p>
-          {% endif %}
-        </section>
-      </div>
-
-      <section class="details-panel">
-        <h2>QUI MediaInfo Files</h2>
-        <table class="mini-table">
-          <thead><tr><th>File</th><th>Tags</th><th>Default audio</th></tr></thead>
-          <tbody>
-            {% for media_file in media.mediainfo_files or [] %}
-              <tr>
-                <td>{{ media_file.name or ("File " ~ media_file.index) }}</td>
-                <td>
-                  {% if media_file.tags %}
-                    <div class="tag-list compact-tags">
-                      {% for tag in media_file.tags %}
-                        <span>{{ tag }}</span>
-                      {% endfor %}
-                    </div>
-                  {% else %}
-                    <span class="muted">-</span>
-                  {% endif %}
-                </td>
-                <td>
-                  {% set audio = media_file.default_audio or {} %}
-                  {{ audio.format or "-" }}
-                  {% if audio.channels %} · {{ audio.channels }}ch{% endif %}
-                  {% if audio.language %} · {{ audio.language }}{% endif %}
-                </td>
-              </tr>
-            {% else %}
-              <tr><td colspan="3" class="muted">No QUI MediaInfo file details recorded.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
-    </div>
-
-    <div class="tab-panel" data-tab-panel="diagnostics">
-      <section class="details-panel">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">Diagnostics</span>
-            <h2>Stage History</h2>
-          </div>
-          <button class="button secondary small" type="button" data-raw-open data-raw-title="Check diagnostics" data-raw-kind="json" data-raw-source="raw-diagnostics">Raw</button>
-        </div>
-        <table class="mini-table">
-          <thead><tr><th>Stage</th><th>Status</th><th>When</th><th>Reason</th></tr></thead>
-          <tbody>
-            {% for stage in checks.diagnostics.stages or [] %}
-              <tr>
-                <td>{{ stage.stage }}</td>
-                <td>{{ stage.status }}</td>
-                <td>{{ stage.at | datetime }}</td>
-                <td>{{ stage.reason or stage.error or "-" }}</td>
-              </tr>
-            {% else %}
-              <tr><td colspan="4" class="muted">No diagnostics recorded.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
       </section>
     </div>
   </section>

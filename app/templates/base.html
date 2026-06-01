@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul5">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul5" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul6">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul6" defer></script>
   </head>
   <body>
     <div class="app-shell" data-app-shell>
@@ -33,9 +33,20 @@
         <div class="sidebar-footer">
           <a class="sidebar-link {% if section == 'settings' %}active{% endif %}" href="/config">Settings</a>
           {% if service is defined %}
+            <form
+              class="sidebar-maintenance"
+              method="post"
+              action="{% if service.maintenance.active %}/maintenance/resume{% else %}/maintenance/pause{% endif %}"
+            >
+              <input type="hidden" name="return_to" value="{{ current_url | default(request.url.path) }}">
+              <button class="button secondary small" type="submit">
+                {% if service.maintenance.active %}Resume maintenance{% else %}Pause maintenance{% endif %}
+              </button>
+            </form>
             <div class="sidebar-status">
-              <span class="state-dot {% if service.running %}ok{% else %}bad{% endif %}"></span>
-              <span>{{ "Running" if service.running else "Stopped" }}</span>
+              {% set footer_state = "Paused" if service.maintenance.active else ("Running" if service.running_jobs or service.queue.active else "Ready") %}
+              <span class="state-dot {% if footer_state == 'Ready' %}ok{% elif footer_state == 'Paused' %}warn{% else %}run{% endif %}" data-service-footer-dot></span>
+              <span data-service-footer>{{ footer_state }}</span>
             </div>
           {% endif %}
         </div>
@@ -121,19 +132,7 @@
                   {% endif %}
                 </section>
               </div>
-              <form
-                class="maintenance-control"
-                method="post"
-                action="{% if service.maintenance.active %}/maintenance/resume{% else %}/maintenance/pause{% endif %}"
-              >
-                <input type="hidden" name="return_to" value="{{ current_url | default(request.url.path) }}">
-                <span>{{ service.maintenance.state | replace("_", " ") | title }}</span>
-                <button class="button secondary small" type="submit">
-                  {% if service.maintenance.active %}Resume{% else %}Pause{% endif %}
-                </button>
-              </form>
             {% endif %}
-            <a class="button secondary small" href="/config">Settings</a>
           </div>
         </header>
 

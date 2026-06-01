@@ -1,6 +1,24 @@
 (function () {
   const shell = document.querySelector("[data-app-shell]");
-  const storage = window.localStorage;
+  const memoryStorage = new Map();
+  const storage = {
+    getItem(key) {
+      try {
+        return window.localStorage ? window.localStorage.getItem(key) : memoryStorage.get(key) || null;
+      } catch {
+        return memoryStorage.get(key) || null;
+      }
+    },
+    setItem(key, value) {
+      try {
+        if (window.localStorage) {
+          window.localStorage.setItem(key, value);
+          return;
+        }
+      } catch {}
+      memoryStorage.set(key, value);
+    },
+  };
 
   function setSidebar(collapsed) {
     if (!shell) return;
@@ -73,6 +91,46 @@
     if (target instanceof Node && !notificationMenu.contains(target)) {
       notificationPopout.hidden = true;
     }
+  });
+
+  document.querySelectorAll("[data-resizable-table]").forEach((table) => {
+    const key = `whackamole.table.${table.dataset.resizableTable}.widths`;
+    const headers = Array.from(table.querySelectorAll("th[data-column-key]"));
+    let saved = {};
+    try {
+      saved = JSON.parse(storage.getItem(key) || "{}");
+    } catch {}
+    headers.forEach((header) => {
+      const columnKey = header.dataset.columnKey;
+      if (saved[columnKey]) header.style.width = `${saved[columnKey]}px`;
+      const handle = document.createElement("span");
+      handle.className = "column-resizer";
+      handle.setAttribute("aria-hidden", "true");
+      header.appendChild(handle);
+      let startX = 0;
+      let startWidth = 0;
+      handle.addEventListener("pointerdown", (event) => {
+        startX = event.clientX;
+        startWidth = header.getBoundingClientRect().width;
+        handle.setPointerCapture(event.pointerId);
+        document.body.classList.add("is-resizing-column");
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!document.body.classList.contains("is-resizing-column")) return;
+        const width = Math.max(72, Math.round(startWidth + event.clientX - startX));
+        header.style.width = `${width}px`;
+      });
+      handle.addEventListener("pointerup", (event) => {
+        handle.releasePointerCapture(event.pointerId);
+        document.body.classList.remove("is-resizing-column");
+        let widths = {};
+        try {
+          widths = JSON.parse(storage.getItem(key) || "{}");
+        } catch {}
+        widths[columnKey] = Math.round(header.getBoundingClientRect().width);
+        storage.setItem(key, JSON.stringify(widths));
+      });
+    });
   });
 
   document.querySelectorAll("[data-tabs]").forEach((tabs) => {
@@ -212,6 +270,14 @@
         setText("[data-service-running]", service.running ? "Running" : "Stopped");
         setText('[data-queue-field="running_jobs"]', String(service.running_jobs || 0));
         setText('[data-queue-field="active"]', String(queue.active || 0));
+        const maintenance = service.maintenance || {};
+        const footer = maintenance.active ? "Paused" : ((service.running_jobs || queue.active) ? "Running" : "Ready");
+        setText("[data-service-footer]", footer);
+        document.querySelectorAll("[data-service-footer-dot]").forEach((node) => {
+          node.classList.toggle("ok", footer === "Ready");
+          node.classList.toggle("warn", footer === "Paused");
+          node.classList.toggle("run", footer === "Running");
+        });
       })
       .catch(() => {});
   }

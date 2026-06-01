@@ -140,6 +140,9 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["decision_notice"] = _decision_notice(item, check_results)
     item["reason_categories"] = _reason_categories(item, check_results, arr_result)
     item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"])
+    item["source_label"] = _source_label(item, tracker_groups)
+    item["overview_checks"] = _overview_checks(item, check_results, arr_result)
+    item["arr_release_views"] = _arr_release_views(arr_result)
     return item
 
 
@@ -331,6 +334,134 @@ def _coverage_status(coverage: List[Dict[str, Any]], missing: List[str]) -> Dict
     return {"found_default": found_default, "found_other": found_other, "missing_default": missing_default}
 
 
+def _source_label(item: Dict[str, Any], tracker_groups: Dict[str, List[str]]) -> str:
+    values = " ".join(
+        str(item.get(key) or "")
+        for key in ("category", "tags", "content_path", "mapped_path", "inventory_tracker_label", "inventory_tracker_key")
+    ).lower()
+    if "usenet" in values:
+        return "Usenet"
+    tracker = item.get("inventory_meta", {}).get("tracker") if isinstance(item.get("inventory_meta"), dict) else {}
+    if isinstance(tracker, dict) and str(tracker.get("label") or tracker.get("key") or "").strip():
+        return str(tracker.get("label") or tracker.get("key"))
+    for bucket in ("passed", "covered", "dupe", "skipped", "error"):
+        trackers = tracker_groups.get(bucket) or []
+        if trackers:
+            return ", ".join(str(tracker) for tracker in trackers[:3])
+    return "Tracker"
+
+
+def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    ua = check_results.get("ua") if isinstance(check_results.get("ua"), dict) else {}
+    arr_status = str(arr_result.get("status") or "")
+    return [
+        _check_summary("MediaInfo", str(media.get("status") or media.get("verdict") or ""), str(media.get("reason") or "")),
+        _check_summary("UA", str(ua.get("status") or item.get("status") or ""), str(ua.get("reason") or item.get("tracker_summary") or "")),
+        _check_summary("Discovarr", arr_status, str(arr_result.get("reason") or item.get("arr_summary") or "")),
+    ]
+
+
+def _check_summary(label: str, status_value: str, notes: str) -> Dict[str, str]:
+    value = status_value.lower()
+    if any(token in value for token in ("error", "fail", "manual")):
+        state = "Fail"
+        group = "error"
+    elif "warning" in value:
+        state = "Warning"
+        group = "warning"
+    elif value:
+        state = "Pass"
+        group = "pass"
+    else:
+        state = "Not run"
+        group = "neutral"
+    return {"label": label, "state": state, "group": group, "notes": notes or "-"}
+
+
+def _arr_release_views(arr_result: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    local = arr_result.get("local_traits") if isinstance(arr_result.get("local_traits"), dict) else {}
+    views: Dict[str, List[Dict[str, Any]]] = {}
+    for decision in arr_result.get("decisions", []) if isinstance(arr_result.get("decisions"), list) else []:
+        if not isinstance(decision, dict):
+            continue
+        rows = []
+        for release in decision.get("results", []) if isinstance(decision.get("results"), list) else []:
+            if not isinstance(release, dict):
+                continue
+            remote = release.get("traits") if isinstance(release.get("traits"), dict) else {}
+            rows.append(
+                {
+                    **release,
+                    "lane_tags": _lane_tags(local, remote),
+                    "ranking_tags": _ranking_tags(local, remote),
+                }
+            )
+        views[str(decision.get("tracker") or "")] = rows
+    return views
+
+
+def _lane_tags(local: Dict[str, Any], remote: Dict[str, Any]) -> List[Dict[str, str]]:
+    return [
+        _compare_tag("Resolution", _resolution_height_label(local.get("resolution")), _resolution_height_label(remote.get("resolution"))),
+        _compare_tag("Source", str(local.get("source_label") or local.get("source") or ""), str(remote.get("source_label") or remote.get("source") or "")),
+        _compare_tag(
+            "Version",
+            ", ".join(str(item) for item in local.get("movie_versions", []) or []) or "Standard",
+            ", ".join(str(item) for item in remote.get("movie_versions", []) or []) or "Standard",
+        ),
+    ]
+
+
+def _ranking_tags(local: Dict[str, Any], remote: Dict[str, Any]) -> List[Dict[str, str]]:
+    return [
+        _same_rank_tag("Scan", str(local.get("scan_type") or ""), str(remote.get("scan_type") or "")),
+        _rank_tag("HDR", _int_value(remote.get("hdr_rank")), _int_value(local.get("hdr_rank")), str(remote.get("hdr_label") or "SDR")),
+        _rank_tag("Audio", _int_value(remote.get("audio_format_rank")), _int_value(local.get("audio_format_rank")), str(remote.get("audio_format") or "-")),
+        _rank_tag("Channels", _float_value(remote.get("audio_channels")), _float_value(local.get("audio_channels")), str(remote.get("audio_channels") or "-")),
+        _same_rank_tag("Codec", str(local.get("codec") or ""), str(remote.get("codec") or "")),
+    ]
+
+
+def _compare_tag(label: str, local: str, remote: str) -> Dict[str, str]:
+    ok = bool(local and remote and local == remote)
+    detail = remote if ok else f"{remote or '-'} != {local or '-'}"
+    return {"label": label, "detail": detail, "group": "match" if ok else "mismatch"}
+
+
+def _same_rank_tag(label: str, local: str, remote: str) -> Dict[str, str]:
+    ok = bool(local and remote and local == remote)
+    detail = remote if ok else f"{remote or '-'} != {local or '-'}"
+    return {"label": label, "detail": detail, "group": "better" if ok else "worse"}
+
+
+def _rank_tag(label: str, remote_rank: float, local_rank: float, detail: str) -> Dict[str, str]:
+    ok = remote_rank <= local_rank
+    return {"label": label, "detail": detail, "group": "better" if ok else "worse"}
+
+
+def _resolution_height_label(value: Any) -> str:
+    text = str(value or "")
+    for prefix in ("2160", "1080", "720", "576", "480"):
+        if prefix in text:
+            return prefix
+    return text
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _dedupe_trackers(trackers: Iterable[str]) -> List[str]:
     return list(dict.fromkeys(str(tracker).upper() for tracker in trackers if str(tracker).strip()))
 
@@ -414,6 +545,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "decision_notice": item["decision_notice"],
         "reason_categories": item["reason_categories"],
         "coverage_status": item["coverage_status"],
+        "source_label": item["source_label"],
     }
 
 

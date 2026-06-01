@@ -118,23 +118,24 @@
     </div>
 
     <div class="table-wrap media-table" aria-label="Media table">
-      <table>
+      <table data-resizable-table="media-list">
         <thead>
           <tr>
-            <th>Title</th>
-            <th>Flags</th>
-            <th>Status</th>
+            <th data-column-key="title">Title</th>
+            <th data-column-key="flags">Flags</th>
+            <th data-column-key="status">Status</th>
             {% if problem_view %}
-            <th>Decision</th>
-            <th>Decision Notice</th>
+            <th data-column-key="decision">Decision</th>
+            <th data-column-key="notice">Decision Notice</th>
             {% else %}
-            <th>Valid For</th>
+            <th data-column-key="valid-for">Valid For</th>
             {% endif %}
-            <th>Coverage</th>
-            <th>Category</th>
-            <th>Size</th>
-            <th>Updated</th>
-            <th></th>
+            <th data-column-key="coverage">Coverage</th>
+            <th data-column-key="source">Source</th>
+            <th data-column-key="category">Category</th>
+            <th data-column-key="size">Size</th>
+            <th data-column-key="updated">Updated</th>
+            <th data-column-key="actions"></th>
           </tr>
         </thead>
         <tbody>
@@ -186,6 +187,7 @@
                   {% endfor %}
                 </div>
               </td>
+              <td>{{ item.source_label }}</td>
               <td>
                 {{ item.category or "-" }}
               </td>
@@ -202,7 +204,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="9" class="empty">
+              <td colspan="10" class="empty">
                 <strong>No items in this view.</strong>
                 <span>Try another status, clear search, or loosen the coverage filters.</span>
               </td>
@@ -235,6 +237,7 @@
             </div>
           {% endif %}
           <div class="card-facts">
+            <span>{{ item.source_label }}</span>
             <span>{{ item.size | bytes }}</span>
             <span>{{ item.updated_at | datetime }}</span>
             <span>{{ item.category or "No category" }}</span>
