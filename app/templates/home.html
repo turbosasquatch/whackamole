@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Home · Whackamole{% endblock %}
+{% block page_label %}Home{% endblock %}
+{% block content %}
+<section class="home-shell">
+  <div class="home-heading">
+    <span class="eyebrow">Whackamole</span>
+    <h1>Dashboard</h1>
+    <p class="muted">Summary, health, and queue signals for the arrival triage service.</p>
+  </div>
+
+  <section class="status-strip home-summary" aria-label="Service summary">
+    {% for card in summary_cards %}
+      <a class="summary-card" href="{% if card.label == 'Queue' %}/dashboard?view=active{% elif card.label == 'Whacked' %}/dashboard?view=covered{% else %}/dashboard?view=all{% endif %}">
+        <span class="eyebrow">{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+        <span>{{ card.detail }}</span>
+      </a>
+    {% endfor %}
+  </section>
+</section>
+{% endblock %}

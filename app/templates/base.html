@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul4">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul4" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul5">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul5" defer></script>
   </head>
   <body>
     <div class="app-shell" data-app-shell>
@@ -62,7 +62,7 @@
           </div>
 
           {% if show_dashboard_search | default(false) %}
-            <form class="top-search" method="get" action="/">
+            <form class="top-search" method="get" action="/dashboard">
               <input type="hidden" name="view" value="{{ view }}">
               {% for media in dashboard_filters.media %}
                 <input type="hidden" name="media" value="{{ media }}">
@@ -82,7 +82,7 @@
               <label for="global-search">Search media</label>
               <input id="global-search" name="q" value="{{ search_query }}" placeholder="Search name, hash, tracker, reason">
               {% if search_query %}
-                <a class="clear-search" href="/?view={{ view }}" aria-label="Clear search">Clear</a>
+                <a class="clear-search" href="/dashboard?view={{ view }}" aria-label="Clear search">Clear</a>
               {% endif %}
             </form>
           {% endif %}
@@ -92,7 +92,7 @@
             {% if service is defined %}
               {% set service_errors = service.service_errors or [] %}
               <div class="notification-menu" data-notification-menu>
-                <button class="icon-button notice-button" type="button" data-notification-toggle aria-label="Service errors">
+                <button class="notification-button" type="button" data-notification-toggle aria-label="Service errors">
                   <span>!</span>
                   {% if service_errors %}<strong>{{ service_errors | length }}</strong>{% endif %}
                 </button>

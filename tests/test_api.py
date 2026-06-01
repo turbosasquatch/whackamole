@@ -158,6 +158,23 @@ def test_covered_items_api_and_dashboard_widget(tmp_path, monkeypatch):
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
         db = client.app.state.db
+        db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: IHD",
+            tracker_results={"passed": ["IHD"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "candidate",
+                "reason": "Valid upload candidate on: IHD",
+                "decisions": [{"tracker": "IHD", "status": "candidate", "reason": "ok"}],
+            },
+            check_results={
+                "version": 1,
+                "release_group_policy": {"candidate_trackers": ["IHD"], "blocked_trackers": []},
+                "flags": [{"key": "note", "label": "ULCX note", "severity": "warning", "detail": "ULCX appears in diagnostics only."}],
+            },
+        )
         db.insert_discovered(
             1,
             {
@@ -175,7 +192,8 @@ def test_covered_items_api_and_dashboard_widget(tmp_path, monkeypatch):
 
         resolved = db.resolve_covered_candidates()
         response = client.get("/api/items?status=covered&include_details=true", headers=_auth_headers())
-        page = client.get("/?view=covered")
+        home = client.get("/")
+        page = client.get("/dashboard?view=covered")
 
         assert resolved == {"items": 1, "trackers": 1}
         assert response.status_code == 200
@@ -186,10 +204,12 @@ def test_covered_items_api_and_dashboard_widget(tmp_path, monkeypatch):
         assert item["tracker_summary"] == "Covered in QUI: IHD"
         assert item["arr_summary"] == "Covered: IHD"
         assert item["checks"]["coverage_resolution"]["resolved_trackers"] == ["IHD"]
+        assert home.status_code == 200
+        assert "Whacked" in home.text
+        assert "1 hole" in home.text
+        assert "1 uploads" in home.text
         assert page.status_code == 200
-        assert "Whacked" in page.text
-        assert "1 hole" in page.text
-        assert "1 uploads" in page.text
+        assert "Example.Show" in page.text
 
 
 def test_items_api_filters_by_inventory_coverage(tmp_path, monkeypatch):
@@ -294,7 +314,7 @@ def test_dashboard_search_and_filtered_recheck_preserve_query(tmp_path, monkeypa
             increment_attempt=True,
         )
 
-        page = client.get("/?view=candidates&q=Example.Show")
+        page = client.get("/dashboard?view=candidates&q=Example.Show")
         response = client.post(
             "/items/recheck-filtered",
             data={"view": "candidates", "q": "Example.Show"},
@@ -315,7 +335,7 @@ def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monk
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
 
-        page = client.get("/?view=candidates&media=episode&missing=DP&valid_for=IHD")
+        page = client.get("/dashboard?view=candidates&media=episode&missing=DP&valid_for=IHD")
 
         assert page.status_code == 200
         assert 'name="view" value="candidates"' in page.text
@@ -347,7 +367,7 @@ def test_manual_review_dashboard_includes_filters(tmp_path, monkeypatch):
             baseline=False,
         )
 
-        page = client.get("/?view=manual")
+        page = client.get("/dashboard?view=manual")
 
         assert page.status_code == 200
         assert 'name="view" value="manual"' in page.text
@@ -368,7 +388,7 @@ def test_filtered_recheck_endpoint_requeues_candidate_view(tmp_path, monkeypatch
         row = client.app.state.db.get_item(item_id)
 
         assert response.status_code == 303
-        assert response.headers["location"].startswith("/?view=candidates")
+        assert response.headers["location"].startswith("/dashboard?view=candidates")
         assert row["status"] == "queued"
         assert row["reason"] == "Bulk recheck requested from candidate filtered set"
 
@@ -405,6 +425,10 @@ def test_items_api_filters_by_multi_media_missing_and_valid_for(tmp_path, monkey
         assert payload["items"][0]["id"] == item_id
         assert payload["items"][0]["valid_for_trackers"] == ["IHD"]
 
+        wrong_tracker = client.get("/api/items?status=candidate&valid_for=ULCX", headers=_auth_headers())
+        assert wrong_tracker.status_code == 200
+        assert wrong_tracker.json()["total"] == 0
+
 
 def test_dashboard_reason_filter_and_table_shape(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
@@ -436,12 +460,12 @@ def test_dashboard_reason_filter_and_table_shape(tmp_path, monkeypatch):
             },
         )
 
-        page = client.get("/?view=blocked&reason=arr_equal_or_better")
+        page = client.get("/dashboard?view=blocked&reason=arr_equal_or_better")
 
         assert page.status_code == 200
         assert "Blocked.Show" in page.text
         assert "Title" in page.text
-        assert "Valid For" in page.text
+        assert "Decision" in page.text
         assert "Decision Notice" in page.text
         assert "/media/torrents/tv/Blocked.Show" not in page.text
         assert "coverage-badge missing-default" in page.text
@@ -607,8 +631,8 @@ def test_dashboard_active_view_hides_waiting_errors_but_errors_view_keeps_them(t
         db.update_status(int(rows["due-error"]["id"]), "error", "ua_error", "Due now", next_check_at=now - 1)
         db.update_status(int(rows["future-error"]["id"]), "error", "ua_error", "Waiting", next_check_at=now + 3600)
 
-        active = client.get("/?view=active")
-        errors = client.get("/?view=errors")
+        active = client.get("/dashboard?view=active")
+        errors = client.get("/dashboard?view=errors")
 
         assert active.status_code == 200
         assert "Due.Error.Show" in active.text

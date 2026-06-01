@@ -720,6 +720,27 @@ def _shell_context(request: Request, section: str = "", view: str = "", q: str =
     }
 
 
+def _home_context(request: Request) -> Dict[str, Any]:
+    service = request.app.state.service.snapshot()
+    counts = request.app.state.db.status_counts()
+    total = sum(int(value or 0) for value in counts.values())
+    return {
+        **_shell_context(request, section="home"),
+        "request": request,
+        "summary_cards": [
+            {"label": "Service", "value": "Running" if service["running"] else "Stopped", "detail": f"{service['running_jobs']} UA active"},
+            {"label": "Queue", "value": service["queue"]["active"], "detail": f"{service['queue']['waiting_errors']} waiting errors"},
+            {"label": "Baseline", "value": "Complete" if service["baseline_done"] else "Pending", "detail": f"{total} stored items"},
+            {"label": "Maintenance", "value": str(service["maintenance"]["state"]).replace("_", " ").title(), "detail": service["maintenance"]["dependency"]},
+            {
+                "label": "Whacked",
+                "value": f"{service['whacked']['holes_filled']} hole{'' if service['whacked']['holes_filled'] == 1 else 's'}",
+                "detail": f"{service['whacked']['cross_seed_count']} cross-seeds · {service['whacked']['upload_count']} uploads",
+            },
+        ],
+    }
+
+
 def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = "", q: str = "") -> List[Dict[str, Any]]:
     rows = []
     queue = service.get("queue") if isinstance(service.get("queue"), dict) else {}
@@ -779,13 +800,32 @@ def _filtered_rows(
     due_errors_only: bool = False,
     q: str = "",
 ) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
+    selected_valid = [str(tracker).upper() for tracker in (valid_for or []) if str(tracker).strip()]
+    if selected_valid:
+        rows = db.list_items_filtered(
+            statuses,
+            limit=5000,
+            offset=0,
+            media=media,
+            missing=missing,
+            reasons=reasons,
+            hide_any_primary=hide_any_primary,
+            due_errors_only=due_errors_only,
+            q=q,
+        )
+        coverage = _coverage_for_rows(db, rows)
+        decorated = [_row_dict(row, coverage) for row in rows]
+        wanted = set(selected_valid)
+        filtered = [item for item in decorated if wanted.intersection(set(item.get("valid_for_trackers") or []))]
+        total = len(filtered)
+        return filtered[offset : offset + limit], total, coverage
+
     rows = db.list_items_filtered(
         statuses,
         limit=limit,
         offset=offset,
         media=media,
         missing=missing,
-        valid_for=valid_for,
         reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
@@ -795,7 +835,6 @@ def _filtered_rows(
         statuses,
         media=media,
         missing=missing,
-        valid_for=valid_for,
         reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
@@ -835,7 +874,7 @@ def _dashboard_url(
             params["hide_any_primary"] = "true"
     if message:
         params["message"] = message
-    return f"/?{urlencode(params, doseq=True)}"
+    return f"/dashboard?{urlencode(params, doseq=True)}"
 
 
 def _safe_local_redirect(value: str, fallback: str) -> str:
@@ -873,6 +912,13 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 
 
 @app.get("/", response_class=HTMLResponse)
+async def home(request: Request) -> HTMLResponse:
+    if request.query_params.get("view"):
+        return RedirectResponse(url=f"/dashboard?{request.url.query}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    return templates.TemplateResponse(request, "home.html", _home_context(request))
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
     view: str = "active",
@@ -962,6 +1008,7 @@ async def dashboard(
             else "",
         },
         "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query),
+        "problem_view": selected in {"blocked", "manual", "errors"},
     }
     return templates.TemplateResponse(request, "dashboard.html", context)
 
