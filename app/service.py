@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,7 +16,7 @@ from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
-from app.media_identity import traits_from_payload
+from app.media_identity import ReleaseTraits, traits_from_payload
 from app.media_policy import (
     analyze_mediainfo,
     apply_release_group_policy,
@@ -27,6 +28,28 @@ from app.media_policy import (
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
 from app.ua_execution import UaExecutionCoordinator
+
+
+def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> ReleaseTraits:
+    local = traits_from_payload(media_result.get("local_traits") if isinstance(media_result.get("local_traits"), Mapping) else {})
+    files = media_result.get("mediainfo_files") if isinstance(media_result.get("mediainfo_files"), list) else []
+    for file_info in files:
+        if not isinstance(file_info, Mapping):
+            continue
+        file_traits = traits_from_payload(file_info.get("traits") if isinstance(file_info.get("traits"), Mapping) else {})
+        updates: Dict[str, Any] = {}
+        if file_traits.hdr_rank > local.hdr_rank or (file_traits.hdr_formats and not local.hdr_formats):
+            updates["hdr_rank"] = file_traits.hdr_rank
+            updates["hdr_formats"] = file_traits.hdr_formats
+            updates["dv_profile"] = file_traits.dv_profile
+        for field in ("audio_format", "audio_format_rank", "audio_channels", "audio_objects", "codec", "bit_depth", "chroma"):
+            value = getattr(file_traits, field)
+            if value:
+                updates[field] = value
+        if updates:
+            local = replace(local, **updates)
+        break
+    return local
 
 
 class WhackamoleService:
@@ -702,9 +725,7 @@ class WhackamoleService:
         if reduction.status == "candidate" and reduction.tracker_results.get("passed"):
             self.db.update_check_stage(item_id, "arr", "Running Arr comparison.", check_results)
             arr_started_at = time.perf_counter()
-            local_traits = traits_from_payload(
-                media_result.get("local_traits") if isinstance(media_result.get("local_traits"), Mapping) else {}
-            )
+            local_traits = _arr_local_traits_from_media_result(media_result)
             async with self._arr_lock:
                 arr_results = await compare_item_with_arr(
                     item_name=item["name"],

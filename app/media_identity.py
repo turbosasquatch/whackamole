@@ -556,7 +556,7 @@ def same_release_lane(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
     return (
         _resolution_height(local.resolution) == _resolution_height(remote.resolution)
         and local.source == remote.source
-        and tuple(local.movie_versions) == tuple(remote.movie_versions)
+        and _lane_movie_versions(local) == _lane_movie_versions(remote)
     )
 
 
@@ -569,7 +569,7 @@ def release_is_equal_or_better(local: ReleaseTraits, remote: ReleaseTraits) -> b
         return True
     return (
         _scan_rank(remote) >= _scan_rank(local)
-        and remote.hdr_rank >= local.hdr_rank
+        and _hdr_satisfies(local, remote)
         and remote.audio_format_rank >= local.audio_format_rank
         and remote.audio_channels >= local.audio_channels
         and CODEC_RANKS.get(remote.codec, 0) >= CODEC_RANKS.get(local.codec, 0)
@@ -580,13 +580,35 @@ def release_score(release: Mapping[str, Any], traits: ReleaseTraits) -> Tuple[in
     return (
         1 if traits.season_pack else 0,
         _scan_rank(traits),
-        traits.hdr_rank,
+        _score_hdr_rank(traits),
         CODEC_RANKS.get(traits.codec, 0),
         traits.audio_format_rank,
         traits.audio_channels,
         int(release.get("seeders") or 0),
         int(release.get("size") or 0),
     )
+
+
+def _lane_movie_versions(traits: ReleaseTraits) -> Tuple[str, ...]:
+    return tuple(version for version in traits.movie_versions if version != "Hybrid")
+
+
+def _hdr_satisfies(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
+    if remote.hdr_rank >= local.hdr_rank:
+        return True
+    local_formats = set(local.hdr_formats)
+    remote_formats = set(remote.hdr_formats)
+    if not remote_formats and remote.hdr_rank == 0:
+        return True
+    if "HDR10+" in local_formats and "HDR10+" in remote_formats:
+        return True
+    return False
+
+
+def _score_hdr_rank(traits: ReleaseTraits) -> int:
+    if traits.hdr_rank == 0 and not traits.hdr_formats and _resolution_height_int(traits.resolution) >= 2160 and traits.source == "web":
+        return 1
+    return traits.hdr_rank
 
 
 def _validate_media_file(title_traits: ReleaseTraits, file_result: Mapping[str, Any]) -> List[Dict[str, Any]]:

@@ -531,7 +531,7 @@ def _lane_tags(local: Dict[str, Any], remote: Dict[str, Any]) -> List[Dict[str, 
 def _ranking_tags(local: Dict[str, Any], remote: Dict[str, Any]) -> List[Dict[str, str]]:
     return [
         _same_rank_tag("Scan", str(local.get("scan_type") or ""), str(remote.get("scan_type") or "")),
-        _rank_tag("HDR", _int_value(remote.get("hdr_rank")), _int_value(local.get("hdr_rank")), str(remote.get("hdr_label") or "SDR")),
+        _hdr_rank_tag(local, remote),
         _rank_tag("Audio", _int_value(remote.get("audio_format_rank")), _int_value(local.get("audio_format_rank")), str(remote.get("audio_format") or "-")),
         _rank_tag("Channels", _float_value(remote.get("audio_channels")), _float_value(local.get("audio_channels")), str(remote.get("audio_channels") or "-")),
         _same_rank_tag("Codec", str(local.get("codec") or ""), str(remote.get("codec") or "")),
@@ -558,6 +558,22 @@ def _rank_tag(label: str, remote_rank: float, local_rank: float, detail: str) ->
     else:
         group = "worse"
     return {"label": label, "detail": detail, "group": group}
+
+
+def _hdr_rank_tag(local: Dict[str, Any], remote: Dict[str, Any]) -> Dict[str, str]:
+    local_rank = _int_value(local.get("hdr_rank"))
+    remote_rank = _int_value(remote.get("hdr_rank"))
+    local_formats = {str(value) for value in local.get("hdr_formats", []) or []}
+    remote_formats = {str(value) for value in remote.get("hdr_formats", []) or []}
+    if remote_rank == local_rank or ("HDR10+" in local_formats and "HDR10+" in remote_formats):
+        group = "same"
+    elif remote_rank == 0 and not remote_formats:
+        group = "same"
+    elif remote_rank < local_rank:
+        group = "better"
+    else:
+        group = "worse"
+    return {"label": "HDR", "detail": str(remote.get("hdr_label") or "SDR"), "group": group}
 
 
 def _resolution_height_label(value: Any) -> str:

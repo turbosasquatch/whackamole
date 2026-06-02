@@ -3,7 +3,42 @@ import json
 
 from app.config import ConfigManager, SecretStore
 from app.database import Database
-from app.service import WhackamoleService
+from app.service import WhackamoleService, _arr_local_traits_from_media_result
+
+
+def test_arr_local_traits_promotes_confirmed_mediainfo_file_traits():
+    traits = _arr_local_traits_from_media_result(
+        {
+            "local_traits": {
+                "title": "Greenland.2.Migration.2026.2160p.WebRip.Atmos.EAC3.5.1.HDR.x265-Lootera",
+                "resolution": "2160p",
+                "source": "web",
+                "source_tag": "WEBRip",
+                "hdr_rank": 1,
+                "hdr_formats": ["HDR10"],
+                "audio_format": "DD+ Atmos",
+                "audio_format_rank": 13,
+                "audio_channels": 5.1,
+                "codec": "HEVC",
+            },
+            "mediainfo_files": [
+                {
+                    "traits": {
+                        "hdr_rank": 2,
+                        "hdr_formats": ["HDR10+", "HDR10"],
+                        "audio_format": "DD+ Atmos",
+                        "audio_format_rank": 13,
+                        "audio_channels": 5.1,
+                        "codec": "HEVC",
+                    }
+                }
+            ],
+        }
+    )
+
+    assert traits.hdr_rank == 2
+    assert traits.hdr_formats == ("HDR10+", "HDR10")
+    assert traits.audio_format == "DD+ Atmos"
 
 
 class FakeQuiClient:

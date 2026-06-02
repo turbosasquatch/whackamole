@@ -529,6 +529,15 @@ def test_discovarr_ranking_tags_mark_equal_values_as_same():
     assert groups["Codec"] == "worse"
 
 
+def test_discovarr_ranking_tags_treat_shared_hdr10plus_as_same():
+    tags = main_module._ranking_tags(
+        {"hdr_rank": 4, "hdr_label": "DV/HDR fallback", "hdr_formats": ["Dolby Vision", "HDR10+", "HDR10"]},
+        {"hdr_rank": 2, "hdr_label": "HDR10+", "hdr_formats": ["HDR10+", "HDR10"]},
+    )
+
+    assert {tag["label"]: tag["group"] for tag in tags}["HDR"] == "same"
+
+
 def test_service_error_history_popout_and_clear(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         db = client.app.state.db

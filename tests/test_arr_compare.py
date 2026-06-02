@@ -147,6 +147,41 @@ def test_release_comparison_treats_movie_versions_as_variety_lanes():
     assert release_is_equal_or_better(local_theatrical, remote_theatrical)
 
 
+def test_release_comparison_treats_hybrid_as_same_lane_and_shared_hdr10plus_as_same_class():
+    local = parse_release_traits("Tom.Clancys.Jack.Ryan.S04.2160p.AMZN.WEB-DL.Hybrid.H265.DV.HDR10Plus.DDP.Atmos.5.1-HONE")
+    remote = parse_release_traits("Tom.Clancys.Jack.Ryan.S04.2160p.AMZN.WEB-DL.DDP5.1.Atmos.HDR10Plus.H.265-NTb")
+
+    assert release_is_equal_or_better(local, remote)
+
+
+def test_tracker_decisions_choose_better_matching_audio_when_remote_hdr_is_unknown():
+    local = parse_release_traits("Greenland.2.Migration.2026.2160p.WebRip.Atmos.EAC3.5.1.HDR10Plus.x265-Lootera")
+    releases = [
+        {
+            "protocol": "torrent",
+            "indexer": "Darkpeers (API) (Prowlarr)",
+            "title": "Greenland.2.Migration.2026.HDR.2160p.WEB.h265-ETHEL.mkv",
+            "seeders": 30,
+        },
+        {
+            "protocol": "torrent",
+            "indexer": "Darkpeers (API) (Prowlarr)",
+            "title": "Greenland.2.Migration.2026.REPACK.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-BYNDR.mkv",
+            "seeders": 32,
+        },
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["DP"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "Darkpeers (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "blocked"
+    assert decisions[0]["best_release"]["title"].endswith("BYNDR.mkv")
+
+
 def test_season_pack_beats_episode_only_results():
     local_pack = parse_release_traits("Show.S03.1080p.WEB-DL.DDP2.0.H.264-GRP")
     remote_episode = parse_release_traits("Show.S03E01.1080p.WEB-DL.DDP2.0.H.264-GRP")
