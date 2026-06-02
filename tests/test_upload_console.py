@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -65,6 +66,14 @@ def test_item_page_upload_console_prefills_trackers_and_missing_service(tmp_path
         assert response.status_code == 200
         assert "Upload Assistant" in response.text
         assert '--trackers dp,ulcx --service AMZN' in response.text
+
+
+def test_upload_console_full_snapshots_are_not_terminal_replacements():
+    script = Path("app/static/app.js").read_text()
+
+    assert "lastFullSnapshotText" in script
+    assert 'payload.type === "html_full"' in script
+    assert 'if (replace) output.innerHTML = "";' not in script
 
 
 def test_item_page_upload_console_does_not_duplicate_service_when_title_has_it(tmp_path, monkeypatch):

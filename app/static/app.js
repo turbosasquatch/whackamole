@@ -331,9 +331,22 @@
       line.innerHTML = escapeHtml(text);
       appendNode(line);
     };
+    let lastFullSnapshotText = "";
+    const snapshotText = (html) => sanitizeFragment(html).textContent.replace(/\s+/g, " ").trim();
     const appendHtml = (html, replace = false) => {
-      if (replace) output.innerHTML = "";
-      appendNode(sanitizeFragment(html));
+      if (!replace) {
+        appendNode(sanitizeFragment(html));
+        return;
+      }
+      const text = snapshotText(html);
+      if (!text || text === lastFullSnapshotText) return;
+      if (lastFullSnapshotText && text.startsWith(lastFullSnapshotText)) {
+        const delta = text.slice(lastFullSnapshotText.length).trim();
+        if (delta) appendLine(delta, "system");
+      } else {
+        appendNode(sanitizeFragment(html));
+      }
+      lastFullSnapshotText = text;
     };
     const setRunning = (value, label) => {
       running = value;
@@ -431,6 +444,7 @@
     executeButton.addEventListener("click", () => {
       if (!canExecute || running) return;
       output.innerHTML = "";
+      lastFullSnapshotText = "";
       appendLine("Starting Upload Assistant...");
       setRunning(true, "Running");
       openStream(consoleRoot.dataset.executeUrl, {
@@ -443,6 +457,7 @@
     clearButton.addEventListener("click", () => {
       if (running) return;
       output.innerHTML = "";
+      lastFullSnapshotText = "";
       appendLine("Upload Assistant console ready.");
       scrollLatest();
     });
@@ -460,6 +475,7 @@
       }
       if (streamController) streamController.abort();
       output.innerHTML = "";
+      lastFullSnapshotText = "";
       appendLine("Upload Assistant console ready.");
       sessionId = "";
       setRunning(false, "Idle");
@@ -489,6 +505,7 @@
 
     if (sessionId) {
       output.innerHTML = "";
+      lastFullSnapshotText = "";
       appendLine("Reattaching to active Upload Assistant session...");
       setRunning(true, "Running");
       const url = `${consoleRoot.dataset.streamUrl}?session_id=${encodeURIComponent(sessionId)}`;

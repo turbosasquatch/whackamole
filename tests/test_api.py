@@ -3,6 +3,7 @@ import time
 
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.main import app
 
 
@@ -348,6 +349,32 @@ def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monk
         assert f'/items/{item_id}/recheck' in page.text
         assert "Run recheck" in page.text
         assert "filter-view-list" not in page.text
+
+
+def test_dashboard_valid_for_filter_excludes_other_tracker_candidates(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_item(client)
+
+        page = client.get("/dashboard?view=candidates&valid_for=ULCX")
+
+        assert page.status_code == 200
+        assert "Example.Show.S01E01" not in page.text
+        assert "No items in this view." in page.text
+
+
+def test_dashboard_list_does_not_build_detail_release_views(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_item(client)
+
+        def fail_detail_builder(*args, **kwargs):
+            raise AssertionError("detail release views should not be built for dashboard rows")
+
+        monkeypatch.setattr(main_module, "_arr_release_views", fail_detail_builder)
+
+        page = client.get("/dashboard?view=candidates")
+
+        assert page.status_code == 200
+        assert "Example.Show.S01E01" in page.text
 
 
 def test_manual_review_dashboard_includes_filters(tmp_path, monkeypatch):

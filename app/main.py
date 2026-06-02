@@ -152,6 +152,29 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     return item
 
 
+def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+    item = dict(row)
+    tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
+    arr_result = _arr_result(item.get("arr_results"))
+    check_results = _check_results(item.get("check_results"))
+    inventory_meta = item_inventory_meta(item)
+    item_coverage = coverage_for_item(item, coverage or {})
+    item["tracker_results"] = tracker_groups
+    item["check_results"] = check_results
+    item["check_flags"] = _check_flags(check_results)
+    item["arr_result"] = arr_result
+    item["inventory_meta"] = inventory_meta
+    item["coverage"] = item_coverage
+    item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
+    item["display_status"] = _display_status(item)
+    item["next_action"] = _next_action(item)
+    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
+    item["decision_notice"] = _decision_notice(item, check_results)
+    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"])
+    item["source_label"] = _source_label(item, tracker_groups)
+    return item
+
+
 def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     item = _row_dict(row, coverage)
     item["nfo_info"] = _nfo_info_for_item(item)
@@ -1268,6 +1291,67 @@ def _filtered_rows(
     return rows, total, _coverage_for_rows(db, rows)
 
 
+def _filtered_dashboard_items(
+    db: Database,
+    statuses: Sequence[str],
+    limit: int,
+    offset: int = 0,
+    media: Any = "all",
+    missing: Optional[Iterable[str]] = None,
+    valid_for: Optional[Iterable[str]] = None,
+    reasons: Optional[Iterable[str]] = None,
+    hide_any_primary: bool = False,
+    due_errors_only: bool = False,
+    q: str = "",
+) -> tuple[List[Dict[str, Any]], int]:
+    selected_valid = [str(tracker).upper() for tracker in (valid_for or []) if str(tracker).strip()]
+    if selected_valid:
+        rows = db.list_items_filtered(
+            statuses,
+            limit=5000,
+            offset=0,
+            media=media,
+            missing=missing,
+            valid_for=selected_valid,
+            reasons=reasons,
+            hide_any_primary=hide_any_primary,
+            due_errors_only=due_errors_only,
+            q=q,
+        )
+        coverage = _coverage_for_rows(db, rows)
+        wanted = set(selected_valid)
+        filtered = [
+            item
+            for item in (_dashboard_row_dict(row, coverage) for row in rows)
+            if wanted.intersection(set(item.get("valid_for_trackers") or []))
+        ]
+        total = len(filtered)
+        return filtered[offset : offset + limit], total
+
+    rows = db.list_items_filtered(
+        statuses,
+        limit=limit,
+        offset=offset,
+        media=media,
+        missing=missing,
+        reasons=reasons,
+        hide_any_primary=hide_any_primary,
+        due_errors_only=due_errors_only,
+        q=q,
+    )
+    total = db.count_items_filtered(
+        statuses,
+        media=media,
+        missing=missing,
+        reasons=reasons,
+        hide_any_primary=hide_any_primary,
+        due_errors_only=due_errors_only,
+        q=q,
+    )
+    coverage = _coverage_for_rows(db, rows)
+    return [_dashboard_row_dict(row, coverage) for row in rows], total
+
+
 def _dashboard_url(
     view: str,
     page: int = 1,
@@ -1371,7 +1455,7 @@ async def dashboard(
     filter_valid_for = valid_for_values if selected in FILTERABLE_VIEWS else []
     filter_reasons = reason_values if selected in FILTERABLE_VIEWS else []
     filter_hide_any = hide_any_primary if selected in FILTERABLE_VIEWS else False
-    rows, filtered_total, coverage = _filtered_rows(
+    items, filtered_total = _filtered_dashboard_items(
         request.app.state.db,
         DASHBOARD_VIEWS[selected],
         limit=limit,
@@ -1388,7 +1472,7 @@ async def dashboard(
     context = {
         **_shell_context(request, section="dashboard", view=selected, q=search_query),
         "request": request,
-        "items": [_row_dict(row, coverage) for row in rows],
+        "items": items,
         "view": selected,
         "counts": request.app.state.db.status_counts(),
         "service": service_snapshot,
@@ -1404,7 +1488,7 @@ async def dashboard(
             "reasons": filter_reasons,
             "hide_any_primary": filter_hide_any,
             "filtered_total": filtered_total,
-            "displayed": len(rows),
+            "displayed": len(items),
             "limit": limit,
             "view": selected,
             "q": search_query,
@@ -1422,7 +1506,7 @@ async def dashboard(
             "offset": offset,
             "total": filtered_total,
             "start": offset + 1 if filtered_total else 0,
-            "end": offset + len(rows),
+            "end": offset + len(items),
             "prev_url": _dashboard_url(
                 selected, page - 1, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query
             )
@@ -1431,7 +1515,7 @@ async def dashboard(
             "next_url": _dashboard_url(
                 selected, page + 1, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query
             )
-            if offset + len(rows) < filtered_total
+            if offset + len(items) < filtered_total
             else "",
         },
         "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query),
