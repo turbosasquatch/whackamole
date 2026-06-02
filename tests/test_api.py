@@ -499,6 +499,36 @@ def test_dashboard_reason_filter_and_table_shape(tmp_path, monkeypatch):
         assert "coverage-badge missing-default" in page.text
 
 
+def test_discovarr_ranking_tags_mark_equal_values_as_same():
+    tags = main_module._ranking_tags(
+        {
+            "scan_type": "progressive",
+            "hdr_rank": 2,
+            "hdr_label": "HDR10",
+            "audio_format_rank": 7,
+            "audio_format": "DD+",
+            "audio_channels": 5.1,
+            "codec": "AVC",
+        },
+        {
+            "scan_type": "progressive",
+            "hdr_rank": 2,
+            "hdr_label": "HDR10",
+            "audio_format_rank": 4,
+            "audio_format": "AAC",
+            "audio_channels": 7.1,
+            "codec": "HEVC",
+        },
+    )
+
+    groups = {tag["label"]: tag["group"] for tag in tags}
+    assert groups["Scan"] == "same"
+    assert groups["HDR"] == "same"
+    assert groups["Audio"] == "better"
+    assert groups["Channels"] == "worse"
+    assert groups["Codec"] == "worse"
+
+
 def test_service_error_history_popout_and_clear(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         db = client.app.state.db

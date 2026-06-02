@@ -547,12 +547,17 @@ def _compare_tag(label: str, local: str, remote: str) -> Dict[str, str]:
 def _same_rank_tag(label: str, local: str, remote: str) -> Dict[str, str]:
     ok = bool(local and remote and local == remote)
     detail = remote if ok else f"{remote or '-'} != {local or '-'}"
-    return {"label": label, "detail": detail, "group": "better" if ok else "worse"}
+    return {"label": label, "detail": detail, "group": "same" if ok else "worse"}
 
 
 def _rank_tag(label: str, remote_rank: float, local_rank: float, detail: str) -> Dict[str, str]:
-    ok = remote_rank <= local_rank
-    return {"label": label, "detail": detail, "group": "better" if ok else "worse"}
+    if remote_rank == local_rank:
+        group = "same"
+    elif remote_rank < local_rank:
+        group = "better"
+    else:
+        group = "worse"
+    return {"label": label, "detail": detail, "group": group}
 
 
 def _resolution_height_label(value: Any) -> str:

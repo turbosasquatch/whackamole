@@ -1195,6 +1195,11 @@ tr:last-child td {
   color: var(--amber);
 }
 
+.rank-tag.same {
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+
 .check-state.error,
 .lane-tag.mismatch,
 .rank-tag.worse {
