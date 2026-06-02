@@ -47,6 +47,7 @@ VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".
 NFO_EXTENSIONS = {".nfo"}
 MAX_VIDEO_FILES = 200
 MAX_NFO_BYTES = 262144
+SOURCE_PROVIDER_FIELD_RE = re.compile(r"(?:site|network|source|service|provider|streaming)", re.IGNORECASE)
 DASHBOARD_VIEWS = {
     "active": ["queued", "deferred", "checking", "error"],
     "candidates": ["candidate"],
@@ -439,9 +440,7 @@ def _discovarr_local_traits(
     nfo = nfo_info if isinstance(nfo_info, dict) else {}
     provider = (
         str(nfo.get("provider_abbreviation") or "")
-        or provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
-        or _source_provider_from_arr_results(arr_result)
-        or extract_provider_abbreviation(str(item.get("name") or ""))
+        or _source_provider_from_mediainfo(media)
     )
     if provider:
         traits["source_provider_abbreviation"] = provider
@@ -820,43 +819,47 @@ def _upload_console_args(item: Dict[str, Any]) -> str:
 
 
 def _source_provider_for_item(item: Dict[str, Any]) -> str:
-    traits = item.get("discovarr_local_traits") if isinstance(item.get("discovarr_local_traits"), dict) else {}
-    provider = str(traits.get("source_provider_abbreviation") or "").strip()
-    if provider:
-        return provider
     nfo = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else {}
     provider = str(nfo.get("provider_abbreviation") or "").strip()
     if provider:
         return provider
-    arr = item.get("arr_result") if isinstance(item.get("arr_result"), dict) else {}
-    provider = _source_provider_from_arr_results(arr)
-    if provider:
-        return provider
-    return ""
+    checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
+    media = checks.get("media") if isinstance(checks.get("media"), dict) else {}
+    return _source_provider_from_mediainfo(media)
 
 
-def _source_provider_from_arr_results(arr_result: Mapping[str, Any]) -> str:
-    providers: List[str] = []
-    decisions = arr_result.get("decisions") if isinstance(arr_result.get("decisions"), list) else []
-    for decision in decisions:
-        if not isinstance(decision, Mapping):
+def _source_provider_from_mediainfo(media: Mapping[str, Any]) -> str:
+    fields: List[str] = []
+    files = media.get("mediainfo_files") if isinstance(media.get("mediainfo_files"), list) else []
+    for file_info in files:
+        if not isinstance(file_info, Mapping):
             continue
-        results = decision.get("results") if isinstance(decision.get("results"), list) else []
-        for result in results:
-            if not isinstance(result, Mapping):
-                continue
-            traits = result.get("traits") if isinstance(result.get("traits"), Mapping) else {}
-            if str(traits.get("source") or "").lower() != "web":
-                continue
-            provider = provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
-            if provider:
-                providers.append(provider)
-                continue
-            provider = extract_provider_abbreviation(str(traits.get("title") or result.get("title") or ""))
-            if provider:
-                providers.append(provider)
-    unique = list(dict.fromkeys(providers))
-    return unique[0] if len(unique) == 1 else ""
+        traits = file_info.get("traits") if isinstance(file_info.get("traits"), Mapping) else {}
+        provider = provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
+        if provider:
+            return provider
+        _collect_source_provider_fields(file_info, fields)
+    payloads = media.get("raw_mediainfo_payloads") if isinstance(media.get("raw_mediainfo_payloads"), list) else []
+    for payload in payloads:
+        _collect_source_provider_fields(payload, fields)
+    return extract_provider_abbreviation(*fields)
+
+
+def _collect_source_provider_fields(value: Any, fields: List[str]) -> None:
+    if isinstance(value, Mapping):
+        field_name = str(value.get("name") or value.get("@name") or "")
+        if field_name and SOURCE_PROVIDER_FIELD_RE.search(field_name) and "value" in value:
+            fields.append(f"{field_name}: {value.get('value')}")
+        for key, nested in value.items():
+            key_text = str(key or "")
+            if SOURCE_PROVIDER_FIELD_RE.search(key_text) and isinstance(nested, (str, int, float)):
+                fields.append(f"{key_text}: {nested}")
+            elif isinstance(nested, (Mapping, list, tuple)):
+                _collect_source_provider_fields(nested, fields)
+        return
+    if isinstance(value, (list, tuple)):
+        for nested in value:
+            _collect_source_provider_fields(nested, fields)
 
 
 def _is_web_release(item: Dict[str, Any]) -> bool:
