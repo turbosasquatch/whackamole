@@ -26,13 +26,21 @@ from app.media_policy import (
 )
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
+from app.ua_execution import UaExecutionCoordinator
 
 
 class WhackamoleService:
-    def __init__(self, config_manager: ConfigManager, secrets: SecretStore, db: Database) -> None:
+    def __init__(
+        self,
+        config_manager: ConfigManager,
+        secrets: SecretStore,
+        db: Database,
+        ua_execution: Optional[UaExecutionCoordinator] = None,
+    ) -> None:
         self.config_manager = config_manager
         self.secrets = secrets
         self.db = db
+        self.ua_execution = ua_execution or UaExecutionCoordinator()
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._running_jobs = 0
@@ -182,7 +190,6 @@ class WhackamoleService:
             if wait_for > 0:
                 return
             self._running_jobs += 1
-            self._last_ua_job_started_at = time.time()
             asyncio.create_task(self._run_item(item["id"]))
 
     def snapshot(self) -> dict:
@@ -200,6 +207,7 @@ class WhackamoleService:
             "queue": self.db.queue_counts(),
             "whacked": self.db.whacked_stats(),
             "maintenance": self.maintenance_snapshot(cfg),
+            "ua_execution": self.ua_execution.snapshot(),
         }
 
     def manual_pause(self) -> None:
@@ -378,35 +386,48 @@ class WhackamoleService:
         if item is None:
             return
 
-        check_results = empty_check_results()
-        media_result, check_results, terminal = await self._run_media_stage(item_id, item, cfg, check_results)
-        if terminal:
-            return
-
-        mapped_path, check_results, terminal = self._run_path_stage(item_id, item, cfg, check_results)
-        if terminal or not mapped_path:
-            return
-
-        ua_log, reduction, check_results, terminal = await self._run_ua_stage(
-            item_id,
-            item,
-            cfg,
-            mapped_path,
-            check_results,
+        lease = await self.ua_execution.acquire(
+            kind="check",
+            label=f"Checking item {item_id}",
+            item_id=item_id,
+            session_id=str(item["hash"] or item_id),
+            wait=True,
         )
-        if terminal or reduction is None:
+        if lease is None:
             return
+        self._last_ua_job_started_at = time.time()
+        try:
+            check_results = empty_check_results()
+            media_result, check_results, terminal = await self._run_media_stage(item_id, item, cfg, check_results)
+            if terminal:
+                return
 
-        await self._run_arr_and_policy_stage(
-            item_id,
-            item,
-            cfg,
-            mapped_path,
-            ua_log,
-            reduction,
-            media_result,
-            check_results,
-        )
+            mapped_path, check_results, terminal = self._run_path_stage(item_id, item, cfg, check_results)
+            if terminal or not mapped_path:
+                return
+
+            ua_log, reduction, check_results, terminal = await self._run_ua_stage(
+                item_id,
+                item,
+                cfg,
+                mapped_path,
+                check_results,
+            )
+            if terminal or reduction is None:
+                return
+
+            await self._run_arr_and_policy_stage(
+                item_id,
+                item,
+                cfg,
+                mapped_path,
+                ua_log,
+                reduction,
+                media_result,
+                check_results,
+            )
+        finally:
+            await lease.release()
 
     async def _run_media_stage(
         self,

@@ -266,6 +266,238 @@
     });
   }
 
+  document.querySelectorAll("[data-upload-console]").forEach((consoleRoot) => {
+    const output = consoleRoot.querySelector("[data-upload-output]");
+    const argsInput = consoleRoot.querySelector("[data-upload-args]");
+    const executeButton = consoleRoot.querySelector("[data-upload-execute]");
+    const clearButton = consoleRoot.querySelector("[data-upload-clear]");
+    const killButton = consoleRoot.querySelector("[data-upload-kill]");
+    const inputForm = consoleRoot.querySelector("[data-upload-input-form]");
+    const inputField = consoleRoot.querySelector("[data-upload-input]");
+    const sendButton = consoleRoot.querySelector("[data-upload-send]");
+    const stateBadge = consoleRoot.querySelector("[data-upload-state]");
+    const latestButton = consoleRoot.querySelector("[data-upload-latest]");
+    const canExecute = consoleRoot.dataset.canExecute === "true";
+    let sessionId = consoleRoot.dataset.activeSession || "";
+    let streamController = null;
+    let followingLatest = true;
+    let running = Boolean(sessionId);
+
+    if (!output || !argsInput || !executeButton || !clearButton || !killButton || !inputForm || !inputField || !sendButton) {
+      return;
+    }
+
+    const isNearBottom = () => output.scrollHeight - output.scrollTop - output.clientHeight < 28;
+    const scrollLatest = () => {
+      output.scrollTop = output.scrollHeight;
+      followingLatest = true;
+      if (latestButton) latestButton.hidden = true;
+    };
+    const syncScroll = () => {
+      if (followingLatest) {
+        window.requestAnimationFrame(scrollLatest);
+      } else if (latestButton) {
+        latestButton.hidden = false;
+      }
+    };
+    const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[char]));
+    const sanitizeFragment = (html) => {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = String(html || "");
+      wrapper.querySelectorAll("script, style, iframe, object, embed").forEach((node) => node.remove());
+      wrapper.querySelectorAll("*").forEach((node) => {
+        Array.from(node.attributes).forEach((attr) => {
+          if (/^on/i.test(attr.name) || /javascript:/i.test(attr.value)) {
+            node.removeAttribute(attr.name);
+          }
+        });
+      });
+      return wrapper;
+    };
+    const appendNode = (node) => {
+      followingLatest = followingLatest && isNearBottom();
+      output.appendChild(node);
+      syncScroll();
+    };
+    const appendLine = (text, kind = "system") => {
+      const line = document.createElement("div");
+      line.className = `console-line ${kind}`;
+      line.innerHTML = escapeHtml(text);
+      appendNode(line);
+    };
+    const appendHtml = (html, replace = false) => {
+      if (replace) output.innerHTML = "";
+      appendNode(sanitizeFragment(html));
+    };
+    const setRunning = (value, label) => {
+      running = value;
+      executeButton.disabled = value || !canExecute;
+      clearButton.hidden = value;
+      killButton.hidden = !value;
+      inputField.disabled = !value;
+      sendButton.disabled = !value;
+      if (stateBadge) {
+        stateBadge.textContent = label || (value ? "Running" : "Idle");
+        stateBadge.classList.toggle("running", value);
+        stateBadge.classList.toggle("idle", !value);
+        stateBadge.classList.remove("busy");
+      }
+    };
+    const processEvent = (payload) => {
+      if (!payload || payload.type === "keepalive") return;
+      if (payload.type === "html" || payload.type === "html_full") {
+        appendHtml(payload.data || "", payload.type === "html_full");
+        return;
+      }
+      if (payload.type === "exit") {
+        appendLine(`Process exited with code ${payload.code}`, "system");
+        setRunning(false, "Idle");
+        sessionId = "";
+        return;
+      }
+      appendLine(payload.data || payload.message || payload.error || "", payload.type === "error" ? "error" : "system");
+    };
+    const consumeStream = async (response) => {
+      sessionId = response.headers.get("X-UA-Session-ID") || sessionId;
+      const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+      if (!reader) {
+        appendLine("Upload Assistant stream did not return a readable body.", "error");
+        return;
+      }
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n");
+        buffer = parts.pop() || "";
+        parts.forEach((line) => {
+          if (!line.startsWith("data: ")) return;
+          try {
+            processEvent(JSON.parse(line.slice(6)));
+          } catch {
+            appendLine(line.slice(6), "system");
+          }
+        });
+      }
+      if (buffer.startsWith("data: ")) {
+        try {
+          processEvent(JSON.parse(buffer.slice(6)));
+        } catch {
+          appendLine(buffer.slice(6), "system");
+        }
+      }
+    };
+    const openStream = async (url, options = {}) => {
+      try {
+        streamController = new AbortController();
+        const response = await fetch(url, { ...options, signal: streamController.signal });
+        if (!response.ok) {
+          const text = await response.text();
+          let message = text || `Request failed with ${response.status}`;
+          try {
+            message = JSON.parse(text).error || message;
+          } catch {}
+          appendLine(message, "error");
+          setRunning(false, "Idle");
+          return;
+        }
+        await consumeStream(response);
+      } catch (error) {
+        if (!streamController || !streamController.signal.aborted) {
+          appendLine(error.message || String(error), "error");
+        }
+      } finally {
+        streamController = null;
+        setRunning(false, "Idle");
+      }
+    };
+
+    output.addEventListener("scroll", () => {
+      followingLatest = isNearBottom();
+      if (latestButton) latestButton.hidden = followingLatest;
+    });
+    if (latestButton) {
+      latestButton.addEventListener("click", scrollLatest);
+    }
+
+    executeButton.addEventListener("click", () => {
+      if (!canExecute || running) return;
+      output.innerHTML = "";
+      appendLine("Starting Upload Assistant...");
+      setRunning(true, "Running");
+      openStream(consoleRoot.dataset.executeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ args: argsInput.value || "" }),
+      });
+    });
+
+    clearButton.addEventListener("click", () => {
+      if (running) return;
+      output.innerHTML = "";
+      appendLine("Upload Assistant console ready.");
+      scrollLatest();
+    });
+
+    killButton.addEventListener("click", async () => {
+      if (!running) return;
+      try {
+        await fetch(consoleRoot.dataset.killUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+      } catch (error) {
+        appendLine(error.message || String(error), "error");
+      }
+      if (streamController) streamController.abort();
+      output.innerHTML = "";
+      appendLine("Upload Assistant console ready.");
+      sessionId = "";
+      setRunning(false, "Idle");
+      scrollLatest();
+    });
+
+    inputForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!running || !inputField.value) return;
+      const value = inputField.value;
+      inputField.value = "";
+      appendLine(`> ${value}`, "input");
+      try {
+        const response = await fetch(consoleRoot.dataset.inputUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, input: value }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          appendLine(payload.error || `Input failed with ${response.status}`, "error");
+        }
+      } catch (error) {
+        appendLine(error.message || String(error), "error");
+      }
+    });
+
+    if (sessionId) {
+      output.innerHTML = "";
+      appendLine("Reattaching to active Upload Assistant session...");
+      setRunning(true, "Running");
+      const url = `${consoleRoot.dataset.streamUrl}?session_id=${encodeURIComponent(sessionId)}`;
+      openStream(url, { method: "GET" });
+    } else {
+      setRunning(false, stateBadge ? stateBadge.textContent : "Idle");
+    }
+  });
+
   function setText(selector, text) {
     document.querySelectorAll(selector).forEach((node) => {
       node.textContent = text;
@@ -299,7 +531,8 @@
         setText('[data-queue-field="running_jobs"]', String(service.running_jobs || 0));
         setText('[data-queue-field="active"]', String(queue.active || 0));
         const maintenance = service.maintenance || {};
-        const footer = maintenance.active ? "Paused" : ((service.running_jobs || queue.active) ? "Running" : "Ready");
+        const uaExecution = service.ua_execution || {};
+        const footer = maintenance.active ? "Paused" : ((uaExecution.busy || service.running_jobs || queue.active) ? "Running" : "Ready");
         setText("[data-service-footer]", footer);
         document.querySelectorAll("[data-service-footer-dot]").forEach((node) => {
           node.classList.toggle("ok", footer === "Ready");

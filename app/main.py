@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from hmac import compare_digest
 from contextlib import asynccontextmanager
@@ -11,7 +12,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette import status
@@ -38,6 +39,7 @@ from app.inventory import (
 from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
 from app.source_providers import extract_provider_abbreviation, provider_abbreviation_for_label
+from app.ua_execution import UaExecutionCoordinator, UploadConsoleManager
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -157,6 +159,7 @@ def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]
     item["arr_release_views"] = _arr_release_views(item["arr_result"], item["discovarr_local_traits"])
     item["video_files"] = _video_files_for_item(item)
     item["raw_payloads"] = _raw_payloads(item)
+    item["upload_console"] = _upload_console_context(item)
     return item
 
 
@@ -742,6 +745,90 @@ def _video_file_payload(path: Path, base: Path) -> Dict[str, Any]:
     }
 
 
+def _upload_console_context(item: Dict[str, Any]) -> Dict[str, Any]:
+    path_info = _upload_console_path(item)
+    args = _upload_console_args(item)
+    warnings = list(path_info.get("warnings") or [])
+    if _is_web_release(item) and not _source_provider_for_item(item):
+        warnings.append("Source Missing: detected WEB-DL/WEBRip but no streaming service provider is known yet.")
+    return {
+        "path": path_info["path"],
+        "path_label": path_info["label"],
+        "path_kind": path_info["kind"],
+        "args": args,
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
+    video_files = item.get("video_files") if isinstance(item.get("video_files"), dict) else {}
+    files = video_files.get("files") if isinstance(video_files.get("files"), list) else []
+    root = str(item.get("mapped_path") or item.get("content_path") or "").strip()
+    warnings: List[str] = []
+    if len(files) == 1 and str(files[0].get("path") or "").strip():
+        selected = str(files[0]["path"])
+        label = str(files[0].get("relative_path") or files[0].get("name") or selected)
+        kind = "file"
+    else:
+        selected = root
+        label = root
+        kind = "folder" if len(files) != 1 else "path"
+    if not selected:
+        warnings.append("No mapped Upload Assistant path is recorded for this item.")
+    else:
+        try:
+            if not Path(selected).exists():
+                warnings.append("Path is not visible inside the Whackamole container; Upload Assistant may still see it if mappings differ.")
+        except OSError as exc:
+            warnings.append(f"Could not inspect path visibility: {str(exc)[:160]}")
+    return {"path": selected, "label": label, "kind": kind, "warnings": warnings}
+
+
+def _upload_console_args(item: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    trackers = [str(tracker).strip().lower() for tracker in item.get("valid_for_trackers") or [] if str(tracker).strip()]
+    if trackers:
+        parts.append(f"--trackers {','.join(dict.fromkeys(trackers))}")
+    provider = _source_provider_for_item(item)
+    if provider and _is_web_release(item) and not _release_title_has_provider(str(item.get("name") or ""), provider):
+        parts.append(f"--service {provider}")
+    return " ".join(parts)
+
+
+def _source_provider_for_item(item: Dict[str, Any]) -> str:
+    traits = item.get("discovarr_local_traits") if isinstance(item.get("discovarr_local_traits"), dict) else {}
+    provider = str(traits.get("source_provider_abbreviation") or "").strip()
+    if provider:
+        return provider
+    nfo = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else {}
+    provider = str(nfo.get("provider_abbreviation") or "").strip()
+    if provider:
+        return provider
+    return ""
+
+
+def _is_web_release(item: Dict[str, Any]) -> bool:
+    traits = item.get("discovarr_local_traits") if isinstance(item.get("discovarr_local_traits"), dict) else {}
+    values = " ".join(
+        str(value or "")
+        for value in (
+            item.get("name"),
+            traits.get("rip_type"),
+            traits.get("source_tag"),
+            traits.get("source"),
+            traits.get("source_label"),
+            traits.get("type"),
+        )
+    )
+    return bool(re.search(r"\b(?:WEB[-_. ]?DL|WEBDL|WEBRIP|WEB[-_. ]?RIP)\b", values, re.IGNORECASE))
+
+
+def _release_title_has_provider(title: str, provider: str) -> bool:
+    if not title or not provider:
+        return False
+    return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(provider)}(?![A-Za-z0-9])", title, re.IGNORECASE))
+
+
 def _nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
     checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
     stored = checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
@@ -1202,7 +1289,9 @@ async def lifespan(app: FastAPI):
     app.state.secrets = SecretStore(_config_dir())
     app.state.db = Database(str(Path(_config_dir()) / "whackamole.db"))
     app.state.db.backfill_inventory_columns()
-    app.state.service = WhackamoleService(app.state.config_manager, app.state.secrets, app.state.db)
+    app.state.ua_execution = UaExecutionCoordinator()
+    app.state.upload_console = UploadConsoleManager(app.state.ua_execution)
+    app.state.service = WhackamoleService(app.state.config_manager, app.state.secrets, app.state.db, app.state.ua_execution)
     app.state.service.start()
     try:
         yield
@@ -1326,6 +1415,7 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             {**_shell_context(request, section="items"), "request": request, "item": None},
             status_code=404,
         )
+    cfg = request.app.state.config_manager.load()
     return templates.TemplateResponse(
         request,
         "item.html",
@@ -1333,6 +1423,8 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             **_shell_context(request, section="items"),
             "request": request,
             "item": _row_detail_dict(row, _coverage_for_row(request.app.state.db, row)),
+            "upload_console_configured": bool(cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token")),
+            "upload_console_session": request.app.state.upload_console.snapshot(),
         },
     )
 
@@ -1352,6 +1444,99 @@ async def grab_item_nfo(request: Request, item_id: int, return_to: str = Form(""
     checks = _check_results(row["check_results"])
     request.app.state.db.update_check_results(item_id, merge_check_results(checks, nfo=nfo))
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#discovarr"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/api/items/{item_id}/upload-assistant/execute")
+async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        return JSONResponse({"error": "Item not found", "success": False}, status_code=404)
+    cfg = request.app.state.config_manager.load()
+    if not cfg.upload_assistant.url or not request.app.state.secrets.has("ua_bearer_token"):
+        return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
+
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    console = item["upload_console"]
+    path = str(console.get("path") or "").strip()
+    if not path:
+        return JSONResponse({"error": "No Upload Assistant path is available for this item.", "success": False}, status_code=400)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    args = str(payload.get("args") if isinstance(payload, dict) else console.get("args") or "").strip()
+    if not args:
+        args = str(console.get("args") or "").strip()
+
+    session, busy = await request.app.state.upload_console.start(
+        item_id=item_id,
+        path=path,
+        args=args,
+        config=cfg,
+        secrets=request.app.state.secrets,
+    )
+    if session is None:
+        owner = busy.get("owner") if isinstance(busy.get("owner"), dict) else {}
+        message = "Check running" if owner.get("kind") == "check" else str(busy.get("message") or "Upload Assistant is busy.")
+        return JSONResponse({"error": message, "success": False, "owner": owner}, status_code=409)
+
+    return StreamingResponse(
+        session.subscribe(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-UA-Session-ID": session.session_id},
+    )
+
+
+@app.get("/api/items/{item_id}/upload-assistant/stream")
+async def stream_item_upload_assistant(request: Request, item_id: int, session_id: str = "") -> Any:
+    session = request.app.state.upload_console.get(session_id)
+    if session is None or session.item_id != item_id:
+        return JSONResponse({"error": "No active Upload Assistant session for this item.", "success": False}, status_code=404)
+    return StreamingResponse(
+        session.subscribe(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-UA-Session-ID": session.session_id},
+    )
+
+
+@app.post("/api/items/{item_id}/upload-assistant/input")
+async def send_item_upload_assistant_input(request: Request, item_id: int) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    session_id = str(payload.get("session_id") or "") if isinstance(payload, dict) else ""
+    user_input = str(payload.get("input") or "") if isinstance(payload, dict) else ""
+    session = request.app.state.upload_console.get(session_id)
+    if session is None or session.item_id != item_id:
+        return JSONResponse({"error": "No active Upload Assistant session for this item.", "success": False}, status_code=404)
+    try:
+        result = await session.send_input(user_input)
+    except httpx.HTTPStatusError as exc:
+        return JSONResponse({"error": f"Upload Assistant HTTP error {exc.response.status_code}", "success": False}, status_code=exc.response.status_code)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc), "success": False}, status_code=500)
+    return JSONResponse(result)
+
+
+@app.post("/api/items/{item_id}/upload-assistant/kill")
+async def kill_item_upload_assistant(request: Request, item_id: int) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    session_id = str(payload.get("session_id") or "") if isinstance(payload, dict) else ""
+    session = request.app.state.upload_console.get(session_id)
+    if session is None or session.item_id != item_id:
+        return JSONResponse({"error": "No active Upload Assistant session for this item.", "success": False}, status_code=404)
+    try:
+        result = await session.kill()
+    except httpx.HTTPStatusError as exc:
+        return JSONResponse({"error": f"Upload Assistant HTTP error {exc.response.status_code}", "success": False}, status_code=exc.response.status_code)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc), "success": False}, status_code=500)
+    return JSONResponse(result)
 
 
 @app.post("/baseline/recheck-filtered")

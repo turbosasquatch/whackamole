@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 
@@ -163,6 +163,43 @@ class UploadAssistantClient:
                         continue
                     lines.append(line)
         return "\n".join(lines)
+
+    async def execute_upload_stream(self, path: str, args: str, session_id: str) -> AsyncIterator[str]:
+        payload = {"path": path, "args": args, "session_id": session_id}
+        timeout = httpx.Timeout(self.config.upload_assistant.request_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self.config.upload_assistant.url.rstrip('/')}/api/execute",
+                headers={**self._headers(), "Accept": "text/event-stream"},
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_text():
+                    if chunk:
+                        yield chunk
+
+    async def send_input(self, session_id: str, user_input: str) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{self.config.upload_assistant.url.rstrip('/')}/api/input",
+                headers=self._headers(),
+                json={"session_id": session_id, "input": user_input},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else {"success": True}
+
+    async def kill_session(self, session_id: str) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{self.config.upload_assistant.url.rstrip('/')}/api/kill",
+                headers=self._headers(),
+                json={"session_id": session_id},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else {"success": True}
 
     def _headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.bearer_token or ''}"}

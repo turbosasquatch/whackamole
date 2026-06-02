@@ -16,6 +16,13 @@
   {% set checks = item.check_results %}
   {% set media = checks.media or {} %}
   {% set policy = checks.release_group_policy or {} %}
+  {% set ua_owner = service.ua_execution or {} %}
+  {% set ua_console = item.upload_console or {} %}
+  {% set ua_session = upload_console_session or {} %}
+  {% set ua_busy = ua_owner.busy %}
+  {% set ua_busy_this_item = ua_busy and ua_owner.kind == "upload" and ua_owner.item_id == item.id %}
+  {% set ua_check_busy = ua_busy and ua_owner.kind == "check" %}
+  {% set ua_execute_disabled = (not upload_console_configured) or (not ua_console.path) or (ua_busy and not ua_busy_this_item) %}
 
   <section class="item-hero">
     <div>
@@ -89,6 +96,7 @@
       <button type="button" data-tab-target="checks">Checks</button>
       <button type="button" data-tab-target="mediainfo">Media Info</button>
       <button type="button" data-tab-target="trackers">Trackers</button>
+      <button type="button" data-tab-target="upload-assistant">Upload Assistant</button>
       <button type="button" data-tab-target="discovarr">Discovarr</button>
     </div>
 
@@ -310,6 +318,74 @@
             {% endif %}
           </tbody>
         </table>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab-panel="upload-assistant">
+      <section
+        class="details-panel upload-console"
+        data-upload-console
+        data-item-id="{{ item.id }}"
+        data-execute-url="/api/items/{{ item.id }}/upload-assistant/execute"
+        data-stream-url="/api/items/{{ item.id }}/upload-assistant/stream"
+        data-input-url="/api/items/{{ item.id }}/upload-assistant/input"
+        data-kill-url="/api/items/{{ item.id }}/upload-assistant/kill"
+        data-active-session="{% if ua_busy_this_item %}{{ ua_owner.session_id or ua_session.session_id }}{% endif %}"
+        data-can-execute="{% if upload_console_configured and ua_console.path and not (ua_busy and not ua_busy_this_item) %}true{% else %}false{% endif %}"
+      >
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Upload Assistant</span>
+            <h2>Manual Upload Console</h2>
+          </div>
+          <span class="upload-console-state {% if ua_busy_this_item %}running{% elif ua_busy %}busy{% else %}idle{% endif %}" data-upload-state>
+            {% if ua_busy_this_item %}Running{% elif ua_check_busy %}Check running{% elif ua_busy %}Busy{% else %}Idle{% endif %}
+          </span>
+        </div>
+
+        <div class="upload-console-grid">
+          <label>
+            <span>Selected {{ ua_console.path_kind or "path" }}</span>
+            <input data-upload-path value="{{ ua_console.path or '' }}" readonly>
+          </label>
+          <label>
+            <span>Additional Arguments</span>
+            <input data-upload-args value="{{ ua_console.args or '' }}" placeholder="--trackers dp,ulcx --service AMZN">
+          </label>
+        </div>
+
+        {% if ua_console.path_label and ua_console.path_label != ua_console.path %}
+          <p class="muted path">{{ ua_console.path_label }}</p>
+        {% endif %}
+        {% if not upload_console_configured %}
+          <p class="upload-console-warning">Upload Assistant URL or bearer token is not configured.</p>
+        {% endif %}
+        {% for warning in ua_console.warnings or [] %}
+          <p class="upload-console-warning">{{ warning }}</p>
+        {% endfor %}
+        {% if ua_busy and not ua_busy_this_item %}
+          <p class="upload-console-warning">{{ ua_owner.label or "Upload Assistant is busy." }}</p>
+        {% endif %}
+
+        <div class="upload-console-actions">
+          <button class="button" type="button" data-upload-execute {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
+            {% if ua_check_busy %}Check running{% elif ua_busy and not ua_busy_this_item %}Busy{% else %}Execute Upload{% endif %}
+          </button>
+          <button class="button secondary" type="button" data-upload-clear {% if ua_busy_this_item %}hidden{% endif %}>Clear</button>
+          <button class="button danger" type="button" data-upload-kill {% if not ua_busy_this_item %}hidden{% endif %}>Kill &amp; Clear</button>
+        </div>
+
+        <div class="upload-console-terminal-wrap">
+          <div class="upload-console-terminal" data-upload-output role="log" aria-live="polite">
+            <div class="console-line system">Upload Assistant console ready.</div>
+          </div>
+          <button class="button secondary small latest-button" type="button" data-upload-latest hidden>Latest</button>
+        </div>
+
+        <form class="upload-console-input" data-upload-input-form>
+          <input data-upload-input placeholder="Type input and press Enter" autocomplete="off" {% if not ua_busy_this_item %}disabled{% endif %}>
+          <button class="button" type="submit" data-upload-send {% if not ua_busy_this_item %}disabled{% endif %}>Send</button>
+        </form>
       </section>
     </div>
 
