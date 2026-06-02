@@ -810,43 +810,36 @@ label {
 
 table {
   border-collapse: collapse;
-  min-width: 1260px;
+  min-width: 1320px;
   table-layout: fixed;
-  width: 100%;
+  width: 1320px;
 }
 
-.media-table th:nth-child(1),
-.media-table td:nth-child(1) {
-  width: 28%;
+.media-table col[data-column-key="title"] {
+  width: 360px;
 }
 
-.media-table th:nth-child(2),
-.media-table td:nth-child(2) {
-  width: 13%;
+.media-table col[data-column-key="flags"] {
+  width: 170px;
 }
 
-.media-table th:nth-child(3),
-.media-table td:nth-child(3),
-.media-table th:nth-child(4),
-.media-table td:nth-child(4),
-.media-table th:nth-child(5),
-.media-table td:nth-child(5),
-.media-table th:nth-child(6),
-.media-table td:nth-child(6),
-.media-table th:nth-child(7),
-.media-table td:nth-child(7),
-.media-table th:nth-child(8),
-.media-table td:nth-child(8),
-.media-table th:nth-child(9),
-.media-table td:nth-child(9),
-.media-table th:nth-child(10),
-.media-table td:nth-child(10) {
-  width: 10%;
+.media-table col[data-column-key="status"],
+.media-table col[data-column-key="valid-for"],
+.media-table col[data-column-key="decision"],
+.media-table col[data-column-key="source"],
+.media-table col[data-column-key="category"],
+.media-table col[data-column-key="size"],
+.media-table col[data-column-key="updated"] {
+  width: 120px;
 }
 
-.media-table th:nth-child(11),
-.media-table td:nth-child(11) {
-  width: 108px;
+.media-table col[data-column-key="notice"],
+.media-table col[data-column-key="coverage"] {
+  width: 170px;
+}
+
+.media-table col[data-column-key="actions"] {
+  width: 130px;
 }
 
 .mini-table {
@@ -908,25 +901,29 @@ th[data-column-key] {
   cursor: col-resize;
   display: block;
   position: absolute;
-  right: -4px;
+  right: -7px;
   top: 0;
-  width: 8px;
+  width: 14px;
   z-index: 2;
 }
 
 .column-resizer::after {
-  background: transparent;
-  bottom: 8px;
+  background: var(--line-strong);
+  bottom: 7px;
   content: "";
   position: absolute;
-  right: 3px;
-  top: 8px;
-  width: 1px;
+  right: 6px;
+  top: 7px;
+  width: 2px;
 }
 
 th:hover .column-resizer::after,
 body.is-resizing-column .column-resizer::after {
   background: var(--primary);
+}
+
+th:hover .column-resizer {
+  background: rgba(37, 99, 235, 0.08);
 }
 
 body.is-resizing-column {
@@ -1210,7 +1207,7 @@ tr:last-child td {
 }
 
 .actions {
-  justify-content: flex-start;
+  justify-content: flex-end;
   white-space: nowrap;
 }
 

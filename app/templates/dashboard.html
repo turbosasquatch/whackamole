@@ -118,7 +118,24 @@
     </div>
 
     <div class="table-wrap media-table" aria-label="Media table">
-      <table data-resizable-table="media-list">
+      <table data-resizable-table="{% if problem_view %}media-problem{% else %}media-standard{% endif %}">
+        <colgroup>
+          <col data-column-key="title">
+          <col data-column-key="flags">
+          <col data-column-key="status">
+          {% if problem_view %}
+          <col data-column-key="decision">
+          <col data-column-key="notice">
+          {% else %}
+          <col data-column-key="valid-for">
+          {% endif %}
+          <col data-column-key="coverage">
+          <col data-column-key="source">
+          <col data-column-key="category">
+          <col data-column-key="size">
+          <col data-column-key="updated">
+          <col data-column-key="actions">
+        </colgroup>
         <thead>
           <tr>
             <th data-column-key="title">Title</th>

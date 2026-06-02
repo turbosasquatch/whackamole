@@ -96,41 +96,69 @@
   document.querySelectorAll("[data-resizable-table]").forEach((table) => {
     const key = `whackamole.table.${table.dataset.resizableTable}.widths`;
     const headers = Array.from(table.querySelectorAll("th[data-column-key]"));
+    const columns = new Map(Array.from(table.querySelectorAll("col[data-column-key]")).map((column) => [column.dataset.columnKey, column]));
     let saved = {};
     try {
       saved = JSON.parse(storage.getItem(key) || "{}");
     } catch {}
+    const syncTableWidth = () => {
+      const total = Array.from(columns.values()).reduce((sum, column) => {
+        const explicit = Number.parseFloat(column.style.width || "");
+        return sum + (Number.isFinite(explicit) && explicit > 0 ? explicit : column.getBoundingClientRect().width || 0);
+      }, 0);
+      if (total > 0) {
+        table.style.width = `${Math.max(960, Math.round(total))}px`;
+        table.style.minWidth = table.style.width;
+      }
+    };
     headers.forEach((header) => {
       const columnKey = header.dataset.columnKey;
-      if (saved[columnKey]) header.style.width = `${saved[columnKey]}px`;
+      const column = columns.get(columnKey);
+      if (!column) return;
+      if (saved[columnKey]) column.style.width = `${saved[columnKey]}px`;
       const handle = document.createElement("span");
       handle.className = "column-resizer";
       handle.setAttribute("aria-hidden", "true");
       header.appendChild(handle);
       let startX = 0;
       let startWidth = 0;
+      let startTableWidth = 0;
       handle.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         startX = event.clientX;
-        startWidth = header.getBoundingClientRect().width;
-        handle.setPointerCapture(event.pointerId);
+        startWidth = column.getBoundingClientRect().width || header.getBoundingClientRect().width;
+        startTableWidth = table.getBoundingClientRect().width;
+        table.style.width = `${Math.round(startTableWidth)}px`;
+        table.style.minWidth = `${Math.round(startTableWidth)}px`;
+        if (typeof handle.setPointerCapture === "function") {
+          handle.setPointerCapture(event.pointerId);
+        }
         document.body.classList.add("is-resizing-column");
       });
       handle.addEventListener("pointermove", (event) => {
         if (!document.body.classList.contains("is-resizing-column")) return;
-        const width = Math.max(72, Math.round(startWidth + event.clientX - startX));
-        header.style.width = `${width}px`;
+        event.preventDefault();
+        const width = Math.max(80, Math.round(startWidth + event.clientX - startX));
+        const delta = width - startWidth;
+        column.style.width = `${width}px`;
+        table.style.width = `${Math.max(960, Math.round(startTableWidth + delta))}px`;
+        table.style.minWidth = table.style.width;
       });
       handle.addEventListener("pointerup", (event) => {
-        handle.releasePointerCapture(event.pointerId);
+        if (typeof handle.releasePointerCapture === "function") {
+          handle.releasePointerCapture(event.pointerId);
+        }
         document.body.classList.remove("is-resizing-column");
         let widths = {};
         try {
           widths = JSON.parse(storage.getItem(key) || "{}");
         } catch {}
-        widths[columnKey] = Math.round(header.getBoundingClientRect().width);
+        widths[columnKey] = Math.round(column.getBoundingClientRect().width || header.getBoundingClientRect().width);
         storage.setItem(key, JSON.stringify(widths));
       });
     });
+    syncTableWidth();
   });
 
   document.querySelectorAll("[data-tabs]").forEach((tabs) => {
