@@ -840,6 +840,18 @@ class Database:
                 (stage, reason, encoded_check_results, now, item_id),
             )
 
+    def update_check_results(self, item_id: int, check_results: Any) -> None:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE items
+                SET check_results = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(check_results), now, item_id),
+            )
+
     def ignore(self, item_id: int, reason: str = "Ignored from dashboard") -> None:
         now = int(time.time())
         with self.connect() as conn:

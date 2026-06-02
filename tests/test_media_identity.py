@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from app.media_identity import analyze_media_payloads, parse_release_traits, traits_from_mediainfo, traits_payload
+from app.source_providers import extract_provider_abbreviation
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "mediainfo"
 
@@ -14,6 +15,12 @@ def test_release_identity_normalizes_common_user_aliases():
     assert traits.codec == "HEVC"
     assert "Dolby Vision" in traits.hdr_formats
     assert traits.release_group == "GRP"
+
+
+def test_source_provider_can_be_extracted_from_nfo_long_and_short_names():
+    assert extract_provider_abbreviation("Site: Netflix") == "NF"
+    assert extract_provider_abbreviation("Network: Amazon Prime Video") == "AMZN"
+    assert extract_provider_abbreviation("Source : DSNP") == "DSNP"
 
 
 def test_release_identity_parses_symbol_release_group():

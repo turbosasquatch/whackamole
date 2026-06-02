@@ -65,6 +65,10 @@
   </section>
 
   <section class="raw-actions">
+    <form method="post" action="/items/{{ item.id }}/grab-nfo">
+      <input type="hidden" name="return_to" value="{{ current_url | default('/items/' ~ item.id ~ '#discovarr') }}">
+      <button class="button secondary small" type="submit">Grab NFO</button>
+    </form>
     {% for key, payload in item.raw_payloads.items() %}
       <button
         class="button secondary small"
@@ -319,7 +323,7 @@
           <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Discovarr result" data-raw-kind="json" data-raw-source="raw-arr">Raw</button>
         </div>
         {% if item.arr_result.reason %}<p>{{ item.arr_result.reason }}</p>{% endif %}
-        {% set traits = item.arr_result.local_traits or {} %}
+        {% set traits = item.discovarr_local_traits or item.arr_result.local_traits or {} %}
         {% if traits %}
           <p class="muted">
             {{ traits.resolution or "unknown resolution" }} ·
@@ -329,6 +333,11 @@
             {% if traits.audio_channels %} {{ "%.1f"|format(traits.audio_channels) }}{% endif %} ·
             {{ traits.codec or "unknown codec" }}
           </p>
+          <div class="tag-list discovarr-attributes">
+            {% for tag in traits.attribute_tags or [] %}
+              <span class="{% if tag.group == 'warning' %}warning{% elif tag.group == 'source' %}source{% endif %}">{{ tag.label }}: {{ tag.value }}</span>
+            {% endfor %}
+          </div>
         {% endif %}
         <div class="decision-list">
           {% for decision in item.arr_result.decisions or [] %}

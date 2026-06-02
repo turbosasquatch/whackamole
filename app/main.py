@@ -7,7 +7,7 @@ from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette import status
 
 from app.clients import ProfilarrClient, QuiClient, RadarrClient, SonarrClient, UploadAssistantClient
-from app.check_results import CheckResults
+from app.check_results import CheckResults, merge_check_results
 from app.config import (
     AppConfig,
     ConfigManager,
@@ -37,11 +37,14 @@ from app.inventory import (
 )
 from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
+from app.source_providers import extract_provider_abbreviation, provider_abbreviation_for_label
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+NFO_EXTENSIONS = {".nfo"}
 MAX_VIDEO_FILES = 200
+MAX_NFO_BYTES = 262144
 DASHBOARD_VIEWS = {
     "active": ["queued", "deferred", "checking", "error"],
     "candidates": ["candidate"],
@@ -142,12 +145,16 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"])
     item["source_label"] = _source_label(item, tracker_groups)
     item["overview_checks"] = _overview_checks(item, check_results, arr_result)
-    item["arr_release_views"] = _arr_release_views(arr_result)
+    item["discovarr_local_traits"] = _discovarr_local_traits(item, check_results, arr_result)
+    item["arr_release_views"] = _arr_release_views(arr_result, item["discovarr_local_traits"])
     return item
 
 
 def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     item = _row_dict(row, coverage)
+    item["nfo_info"] = _nfo_info_for_item(item)
+    item["discovarr_local_traits"] = _discovarr_local_traits(item, item["check_results"], item["arr_result"], item["nfo_info"])
+    item["arr_release_views"] = _arr_release_views(item["arr_result"], item["discovarr_local_traits"])
     item["video_files"] = _video_files_for_item(item)
     item["raw_payloads"] = _raw_payloads(item)
     return item
@@ -379,8 +386,90 @@ def _check_summary(label: str, status_value: str, notes: str) -> Dict[str, str]:
     return {"label": label, "state": state, "group": group, "notes": notes or "-"}
 
 
-def _arr_release_views(arr_result: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-    local = arr_result.get("local_traits") if isinstance(arr_result.get("local_traits"), dict) else {}
+def _discovarr_local_traits(
+    item: Dict[str, Any],
+    check_results: Dict[str, Any],
+    arr_result: Dict[str, Any],
+    nfo_info: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    arr_traits = arr_result.get("local_traits") if isinstance(arr_result.get("local_traits"), dict) else {}
+    media_traits = media.get("local_traits") if isinstance(media.get("local_traits"), dict) else {}
+    file_traits = _first_mediainfo_file_traits(media)
+    traits: Dict[str, Any] = {**media_traits, **arr_traits}
+    for key in (
+        "audio_format",
+        "audio_format_rank",
+        "audio_channels",
+        "audio_objects",
+        "codec",
+        "bit_depth",
+        "chroma",
+        "languages",
+        "subtitle_tags",
+    ):
+        if _empty_trait_value(traits.get(key)) and not _empty_trait_value(file_traits.get(key)):
+            traits[key] = file_traits[key]
+    nfo = nfo_info if isinstance(nfo_info, dict) else {}
+    provider = (
+        str(nfo.get("provider_abbreviation") or "")
+        or provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
+        or extract_provider_abbreviation(str(item.get("name") or ""), str(media.get("reason") or ""), _format_json(media))
+    )
+    if provider:
+        traits["source_provider_abbreviation"] = provider
+    traits["attribute_tags"] = _discovarr_attribute_tags(traits)
+    return traits
+
+
+def _first_mediainfo_file_traits(media: Mapping[str, Any]) -> Dict[str, Any]:
+    files = media.get("mediainfo_files") if isinstance(media.get("mediainfo_files"), list) else []
+    for file_info in files:
+        if not isinstance(file_info, Mapping):
+            continue
+        traits = file_info.get("traits")
+        if isinstance(traits, Mapping):
+            return dict(traits)
+    return {}
+
+
+def _empty_trait_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if value == "":
+        return True
+    if value == 0 or value == 0.0:
+        return True
+    if isinstance(value, (list, tuple, dict, set)) and not value:
+        return True
+    return False
+
+
+def _discovarr_attribute_tags(traits: Dict[str, Any]) -> List[Dict[str, str]]:
+    tags: List[Dict[str, str]] = []
+    for key, label in (
+        ("resolution", "Resolution"),
+        ("source_tag", "Type"),
+        ("hdr_label", "HDR"),
+        ("audio_format", "Audio"),
+        ("codec", "Codec"),
+    ):
+        value = traits.get(key)
+        if value:
+            tags.append({"label": label, "value": str(value), "group": "neutral"})
+    if traits.get("audio_channels"):
+        tags.append({"label": "Channels", "value": f"{float(traits['audio_channels']):.1f}", "group": "neutral"})
+    rip_type = str(traits.get("rip_type") or "").lower()
+    source = str(traits.get("source") or "").lower()
+    is_web = source == "web" or rip_type in {"web-dl", "webrip", "web"}
+    if is_web:
+        provider = str(traits.get("source_provider_abbreviation") or "").strip()
+        tags.append({"label": "Source", "value": provider or "Source Missing", "group": "warning" if not provider else "source"})
+    return tags
+
+
+def _arr_release_views(arr_result: Dict[str, Any], local_traits: Optional[Dict[str, Any]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    local = local_traits or (arr_result.get("local_traits") if isinstance(arr_result.get("local_traits"), dict) else {})
     views: Dict[str, List[Dict[str, Any]]] = {}
     for decision in arr_result.get("decisions", []) if isinstance(arr_result.get("decisions"), list) else []:
         if not isinstance(decision, dict):
@@ -470,6 +559,7 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     raw_torrent = _json_object(item.get("raw_torrent"))
     checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
     media = checks.get("media") if isinstance(checks.get("media"), dict) else {}
+    nfo_info = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
     raw_mediainfo = media.get("raw_mediainfo_payloads") if isinstance(media, dict) else []
     diagnostics = checks.get("diagnostics") if isinstance(checks.get("diagnostics"), dict) else {}
     return {
@@ -490,6 +580,12 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "kind": "json",
             "available": bool(raw_mediainfo),
             "content": raw_mediainfo or {"message": "Raw MediaInfo will be available after this item is rechecked."},
+        },
+        "nfo": {
+            "title": "NFO",
+            "kind": "text",
+            "available": bool(nfo_info.get("content")),
+            "content": str(nfo_info.get("content") or nfo_info.get("message") or "No NFO captured yet."),
         },
         "arr": {
             "title": "Raw ARR result",
@@ -643,6 +739,81 @@ def _video_file_payload(path: Path, base: Path) -> Dict[str, Any]:
         "relative_path": relative,
         "path": str(path),
         "size": size,
+    }
+
+
+def _nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
+    stored = checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
+    if stored.get("content"):
+        return _nfo_payload(str(stored.get("content") or ""), str(stored.get("path") or ""), str(stored.get("source") or "stored"))
+    local = _local_nfo_info_for_item(item)
+    if local.get("content"):
+        return local
+    return stored or local
+
+
+def _local_nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    root = str(item.get("mapped_path") or item.get("content_path") or "")
+    if not root:
+        return {"available": False, "message": "No path recorded."}
+    try:
+        path = Path(root)
+        candidates: List[Path] = []
+        if path.is_file():
+            if path.suffix.lower() in NFO_EXTENSIONS:
+                candidates.append(path)
+            candidates.extend(sorted(path.parent.glob("*.nfo")))
+        elif path.is_dir():
+            candidates.extend(sorted(path.rglob("*.nfo")))
+        else:
+            return {"available": False, "message": "Path is not visible inside the Whackamole container."}
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            try:
+                content = candidate.read_bytes()[:MAX_NFO_BYTES].decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            return _nfo_payload(content, str(candidate), "local")
+        return {"available": False, "message": "No NFO found at this path."}
+    except OSError as exc:
+        return {"available": False, "message": f"Could not inspect NFO path: {exc}"}
+
+
+async def _grab_nfo_for_row(row: Any, request: Request) -> Dict[str, Any]:
+    item = _row_dict(row, _coverage_for_row(request.app.state.db, row))
+    local = _local_nfo_info_for_item(item)
+    if local.get("content"):
+        return local
+
+    cfg = request.app.state.config_manager.load()
+    try:
+        qui = QuiClient(cfg, request.app.state.secrets.get("qui_api_key"))
+        files = await qui.list_torrent_files(str(item.get("hash") or ""))
+        for file_info in files:
+            name = str(file_info.get("name") or "")
+            if Path(name).suffix.lower() not in NFO_EXTENSIONS:
+                continue
+            content = (await qui.download_torrent_file(str(item.get("hash") or ""), int(file_info.get("index") or 0), MAX_NFO_BYTES)).decode(
+                "utf-8",
+                errors="replace",
+            )
+            return _nfo_payload(content, name, "qui")
+    except Exception as exc:
+        return {"available": False, "message": f"Could not grab NFO: {str(exc)[:180]}", "source": "error"}
+    return local if local.get("message") else {"available": False, "message": "No NFO found in QUI files.", "source": "qui"}
+
+
+def _nfo_payload(content: str, path: str, source: str) -> Dict[str, Any]:
+    provider = extract_provider_abbreviation(content)
+    return {
+        "available": bool(content),
+        "source": source,
+        "path": path,
+        "content": content,
+        "provider_abbreviation": provider,
+        "message": f"NFO found at {path}." if content else "No NFO content found.",
     }
 
 
@@ -1170,6 +1341,17 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
 async def recheck_item(item_id: int, return_to: str = Form("")) -> RedirectResponse:
     app.state.db.requeue(item_id)
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/items/{item_id}/grab-nfo")
+async def grab_item_nfo(request: Request, item_id: int, return_to: str = Form("")) -> RedirectResponse:
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    nfo = await _grab_nfo_for_row(row, request)
+    checks = _check_results(row["check_results"])
+    request.app.state.db.update_check_results(item_id, merge_check_results(checks, nfo=nfo))
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#discovarr"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/baseline/recheck-filtered")

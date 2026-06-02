@@ -1,3 +1,4 @@
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -604,6 +605,78 @@ def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatc
         assert page_response.status_code == 200
         assert "no_video_files" in page_response.text
         assert reason in page_response.text
+
+
+def test_grab_nfo_updates_source_without_rechecking_item(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        media_dir = tmp_path / "media" / "Example.Show.S01E01.1080p.WEB-DL-GRP"
+        media_dir.mkdir(parents=True)
+        (media_dir / "Example.Show.S01E01.nfo").write_text("Site: Netflix\nNetwork: Netflix\n", encoding="utf-8")
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "nfo-source",
+                "name": "Example.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "",
+                "content_path": str(media_dir),
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: DP",
+            tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "candidate",
+                "local_traits": {
+                    "resolution": "1080p",
+                    "source": "web",
+                    "source_label": "WEB",
+                    "source_tag": "WEB-DL",
+                    "rip_type": "web-dl",
+                    "audio_format": "",
+                    "audio_channels": 0,
+                    "codec": "AVC",
+                },
+                "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+            },
+            check_results={
+                "media": {
+                    "mediainfo_files": [
+                        {
+                            "traits": {
+                                "audio_format": "DD+",
+                                "audio_format_rank": 7,
+                                "audio_channels": 5.1,
+                                "codec": "AVC",
+                            }
+                        }
+                    ]
+                }
+            },
+        )
+
+        response = client.post(f"/items/{item_id}/grab-nfo", data={"return_to": f"/items/{item_id}"}, follow_redirects=False)
+        row = db.get_item(item_id)
+        checks = json.loads(row["check_results"])
+        page = client.get(f"/items/{item_id}")
+
+        assert response.status_code == 303
+        assert row["status"] == "candidate"
+        assert row["attempt_count"] == 0
+        assert checks["nfo"]["provider_abbreviation"] == "NF"
+        assert checks["nfo"]["content"].startswith("Site: Netflix")
+        assert "Source: NF" in page.text
+        assert "Source Missing" not in page.text
+        assert "DD+" in page.text
+        assert "5.1" in page.text
 
 
 def test_dashboard_active_view_hides_waiting_errors_but_errors_view_keeps_them(tmp_path, monkeypatch):

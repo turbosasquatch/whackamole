@@ -1100,6 +1100,22 @@ tr:last-child td {
   color: var(--violet);
 }
 
+.tag-list span.source {
+  background: #dbeafe;
+  border-color: #bfdbfe;
+  color: var(--primary-dark);
+}
+
+.tag-list span.warning {
+  background: var(--amber-bg);
+  border-color: #fde68a;
+  color: var(--amber);
+}
+
+.discovarr-attributes {
+  margin-top: 8px;
+}
+
 .tag-stack span {
   background: var(--surface-soft);
   border: 1px solid var(--line);
