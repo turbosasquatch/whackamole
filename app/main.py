@@ -417,7 +417,8 @@ def _discovarr_local_traits(
     provider = (
         str(nfo.get("provider_abbreviation") or "")
         or provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
-        or extract_provider_abbreviation(str(item.get("name") or ""), str(media.get("reason") or ""), _format_json(media))
+        or _source_provider_from_arr_results(arr_result)
+        or extract_provider_abbreviation(str(item.get("name") or ""))
     )
     if provider:
         traits["source_provider_abbreviation"] = provider
@@ -804,11 +805,45 @@ def _source_provider_for_item(item: Dict[str, Any]) -> str:
     provider = str(nfo.get("provider_abbreviation") or "").strip()
     if provider:
         return provider
+    arr = item.get("arr_result") if isinstance(item.get("arr_result"), dict) else {}
+    provider = _source_provider_from_arr_results(arr)
+    if provider:
+        return provider
     return ""
+
+
+def _source_provider_from_arr_results(arr_result: Mapping[str, Any]) -> str:
+    providers: List[str] = []
+    decisions = arr_result.get("decisions") if isinstance(arr_result.get("decisions"), list) else []
+    for decision in decisions:
+        if not isinstance(decision, Mapping):
+            continue
+        results = decision.get("results") if isinstance(decision.get("results"), list) else []
+        for result in results:
+            if not isinstance(result, Mapping):
+                continue
+            traits = result.get("traits") if isinstance(result.get("traits"), Mapping) else {}
+            if str(traits.get("source") or "").lower() != "web":
+                continue
+            provider = provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
+            if provider:
+                providers.append(provider)
+                continue
+            provider = extract_provider_abbreviation(str(traits.get("title") or result.get("title") or ""))
+            if provider:
+                providers.append(provider)
+    unique = list(dict.fromkeys(providers))
+    return unique[0] if len(unique) == 1 else ""
 
 
 def _is_web_release(item: Dict[str, Any]) -> bool:
     traits = item.get("discovarr_local_traits") if isinstance(item.get("discovarr_local_traits"), dict) else {}
+    if str(traits.get("source") or "").lower() == "web":
+        return True
+    if str(traits.get("rip_type") or "").lower() in {"web", "web-dl", "webrip"}:
+        return True
+    if str(traits.get("source_tag") or "").lower() in {"web", "web-dl", "webrip"}:
+        return True
     values = " ".join(
         str(value or "")
         for value in (

@@ -77,6 +77,121 @@ def test_item_page_upload_console_does_not_duplicate_service_when_title_has_it(t
         assert 'data-upload-args value="--trackers dp,ulcx"' in response.text
 
 
+def test_item_page_upload_console_prefills_service_from_unique_arr_web_result(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "arr-provider",
+                "name": "Untold.The.Death.and.Life.of.Lamar.Odom.2026.HDR.2160p.WEB.h265-EDITH",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/untold",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: DP, ULCX",
+            mapped_path="/media/torrents/movies/untold",
+            tracker_results={"passed": ["DP", "ULCX"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "candidate",
+                "local_traits": {
+                    "source": "web",
+                    "source_tag": "WEB",
+                    "source_provider": "",
+                    "rip_type": "web",
+                },
+                "decisions": [
+                    {
+                        "tracker": "ULCX",
+                        "status": "candidate",
+                        "reason": "ok",
+                        "results": [
+                            {
+                                "title": "Untold.The.Death.and.Life.of.Lamar.Odom.2026.1080p.NF.WEB-DL.DDP5.1.Atmos.H.264-BiOMA.mkv",
+                                "traits": {
+                                    "source": "web",
+                                    "source_tag": "WEB-DL",
+                                    "source_provider": "Netflix",
+                                    "rip_type": "web-dl",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            check_results={
+                "version": 1,
+                "media": {"local_traits": {"source": "web", "source_tag": "WEB", "source_provider": "", "rip_type": "web"}},
+                "nfo": {},
+                "release_group_policy": {"candidate_trackers": ["DP", "ULCX"], "blocked_trackers": []},
+                "flags": [],
+            },
+        )
+
+        response = client.get(f"/items/{item_id}#upload-assistant")
+
+        assert response.status_code == 200
+        assert '--trackers dp,ulcx --service NF' in response.text
+
+
+def test_item_page_upload_console_prefills_service_for_plain_web_from_nfo(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "plain-web-nfo-provider",
+                "name": "Untold.The.Death.and.Life.of.Lamar.Odom.2026.HDR.2160p.WEB.h265-EDITH",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/untold",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: DP, ULCX",
+            mapped_path="/media/torrents/movies/untold",
+            tracker_results={"passed": ["DP", "ULCX"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "candidate",
+                "local_traits": {
+                    "source": "web",
+                    "source_tag": "WEB",
+                    "source_provider": "",
+                    "rip_type": "web",
+                },
+                "decisions": [{"tracker": "ULCX", "status": "candidate", "reason": "ok"}],
+            },
+            check_results={
+                "version": 1,
+                "media": {"local_traits": {"source": "web", "source_tag": "WEB", "source_provider": "", "rip_type": "web"}},
+                "nfo": {"content": "Site: Netflix\nNetwork: Netflix\n", "path": "release.nfo", "source": "qui", "provider_abbreviation": "NF"},
+                "release_group_policy": {"candidate_trackers": ["DP", "ULCX"], "blocked_trackers": []},
+                "flags": [],
+            },
+        )
+
+        response = client.get(f"/items/{item_id}#upload-assistant")
+
+        assert response.status_code == 200
+        assert '--trackers dp,ulcx --service NF' in response.text
+
+
 def test_upload_console_execute_returns_409_when_check_lock_is_busy(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         cfg = client.app.state.config_manager.load()

@@ -679,6 +679,73 @@ def test_grab_nfo_updates_source_without_rechecking_item(tmp_path, monkeypatch):
         assert "5.1" in page.text
 
 
+def test_mediainfo_hdr_max_luminance_does_not_become_max_source(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "max-luminance",
+                "name": "Greenland.2.Migration.2026.2160p.WebRip.Atmos.EAC3.5.1.HDR.x265-Lootera",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/greenland.mkv",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: DP",
+            mapped_path="/media/torrents/movies/greenland.mkv",
+            tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "candidate",
+                "local_traits": {
+                    "resolution": "2160p",
+                    "source": "web",
+                    "source_label": "WEB",
+                    "source_tag": "WEBRip",
+                    "source_provider": "",
+                    "rip_type": "webrip",
+                    "audio_format": "DD+ Atmos",
+                    "audio_channels": 5.1,
+                    "codec": "HEVC",
+                },
+                "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+            },
+            check_results={
+                "media": {
+                    "status": "passed",
+                    "reason": "MediaInfo confirmed with warning: max luminance is informational.",
+                    "raw_mediainfo_payloads": [
+                        {
+                            "streams": [
+                                {
+                                    "kind": "video",
+                                    "fields": [
+                                        {"name": "MasteringDisplay_Luminance", "value": "min: 0.0001 cd/m2, max: 1000 cd/m2"}
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+                "nfo": {"available": False, "message": "No NFO found at this path."},
+            },
+        )
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert "Source Missing" in page.text
+        assert "Source: MAX" not in page.text
+
+
 def test_dashboard_active_view_hides_waiting_errors_but_errors_view_keeps_them(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         db = client.app.state.db
