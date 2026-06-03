@@ -129,6 +129,38 @@ def apply_release_group_policy(
     allowed: List[str] = []
     blocked: List[str] = []
     normalized_group = _policy_key(release_group)
+    if candidate_trackers and not normalized_group:
+        existing_flags.append(
+            {
+                "key": "missing_release_group",
+                "label": "Missing release group",
+                "severity": "warning",
+                "detail": "No release group could be confidently parsed; review before upload.",
+            }
+        )
+        policy_result = {
+            "version": 1,
+            "release_group": release_group,
+            "candidate_trackers": [],
+            "blocked_trackers": [],
+            "decisions": [
+                {
+                    "tracker": tracker,
+                    "status": "manual_review",
+                    "reason": "No release group could be confidently parsed.",
+                    "banned_match": "",
+                    "rank": None,
+                }
+                for tracker in candidate_trackers
+            ],
+        }
+        return (
+            "manual_review",
+            "manual_review",
+            "No release group could be confidently parsed; review before upload.",
+            policy_result,
+            _dedupe_flags(existing_flags),
+        )
 
     for tracker in candidate_trackers:
         policy = tracker_policies.get(tracker) or {}

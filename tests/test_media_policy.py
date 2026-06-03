@@ -83,6 +83,39 @@ def test_release_group_policy_blocks_only_banned_tracker():
     assert flags[0]["key"] == "banned_release_group"
 
 
+def test_release_group_policy_blocks_banned_group_parsed_from_non_dash_tail():
+    status, verdict, _reason, policy, flags = apply_release_group_policy(
+        tracker_results={"passed": ["ULCX"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"status": "candidate", "decisions": [{"tracker": "ULCX", "status": "candidate"}]},
+        release_group="Will1869",
+        tracker_policies={"ULCX": {"banned_release_groups": ["Will1869"], "ranked_release_groups": []}},
+        flags=[],
+        item_name="Convicting.A.Murderer.2023.S01.1080p.WebRip.X264.Will1869",
+    )
+
+    assert status == "blocked"
+    assert verdict == "banned_release_group"
+    assert policy["blocked_trackers"] == ["ULCX"]
+    assert flags[0]["key"] == "banned_release_group"
+
+
+def test_release_group_policy_sends_missing_group_to_review():
+    status, verdict, reason, policy, flags = apply_release_group_policy(
+        tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"status": "candidate", "decisions": [{"tracker": "DP", "status": "candidate"}]},
+        release_group="",
+        tracker_policies={"DP": {"banned_release_groups": [], "ranked_release_groups": []}},
+        flags=[],
+        item_name="Odd.Release.7",
+    )
+
+    assert status == "manual_review"
+    assert verdict == "manual_review"
+    assert "release group" in reason
+    assert policy["decisions"][0]["status"] == "manual_review"
+    assert flags[0]["key"] == "missing_release_group"
+
+
 def test_release_group_policy_blocks_when_all_candidates_banned():
     status, verdict, _reason, policy, _flags = apply_release_group_policy(
         tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},

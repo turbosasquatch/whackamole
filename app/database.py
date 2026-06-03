@@ -243,6 +243,87 @@ class Database:
                 ),
             )
 
+    def prune_missing_inventory(self, instance_id: int, seen_hashes: Iterable[str]) -> int:
+        values = [str(value) for value in dict.fromkeys(seen_hashes) if str(value)]
+        with self.connect() as conn:
+            if values:
+                placeholders = ",".join("?" for _ in values)
+                cursor = conn.execute(
+                    f"""
+                    DELETE FROM items
+                    WHERE instance_id = ?
+                      AND status = 'inventory'
+                      AND hash NOT IN ({placeholders})
+                    """,
+                    [instance_id] + values,
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM items
+                    WHERE instance_id = ?
+                      AND status = 'inventory'
+                    """,
+                    (instance_id,),
+                )
+            return int(cursor.rowcount or 0)
+
+    def requeue_covered_with_missing_coverage(self) -> Dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM items WHERE status = 'covered'").fetchall()
+        if not rows:
+            return {"items": 0, "trackers": 0}
+
+        row_payloads = [dict(row) for row in rows]
+        group_keys = [
+            str(row.get("inventory_group_key") or item_inventory_meta(row).get("group_key") or "")
+            for row in row_payloads
+        ]
+        coverage = self.coverage_for_group_keys(group_keys)
+        now = int(time.time())
+        updates: List[Tuple[str, str, int, int]] = []
+        lost_tracker_count = 0
+
+        for row in row_payloads:
+            check_results = _json_dict(row.get("check_results"))
+            resolution = check_results.get("coverage_resolution")
+            if not isinstance(resolution, dict):
+                continue
+            resolved_trackers = _dedupe_trackers(
+                [str(tracker) for tracker in resolution.get("resolved_trackers", []) if str(tracker).strip()]
+            )
+            if not resolved_trackers:
+                continue
+            group_key = str(row.get("inventory_group_key") or item_inventory_meta(row).get("group_key") or "")
+            present_trackers = {str(item.get("key") or "").upper() for item in coverage.get(group_key, [])}
+            lost_trackers = [tracker for tracker in resolved_trackers if tracker not in present_trackers]
+            if not lost_trackers:
+                continue
+            reason = f"Tracker coverage disappeared from QUI; recheck required: {', '.join(lost_trackers)}"
+            check_results = _lost_coverage_check_results(check_results, lost_trackers, reason, now)
+            updates.append((reason, json.dumps(check_results), now, int(row["id"])))
+            lost_tracker_count += len(lost_trackers)
+
+        if updates:
+            with self.connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE items
+                    SET status = 'queued',
+                        verdict = '',
+                        reason = ?,
+                        tracker_results = '[]',
+                        arr_results = '{}',
+                        check_results = ?,
+                        check_stage = '',
+                        next_check_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    updates,
+                )
+        return {"items": len(updates), "trackers": lost_tracker_count}
+
     def list_items_filtered(
         self,
         statuses: Iterable[str],
@@ -296,6 +377,7 @@ class Database:
                 FROM items
                 WHERE inventory_group_key IN ({placeholders})
                   AND inventory_tracker_key <> ''
+                  AND status = 'inventory'
                 """,
                 values,
             ).fetchall()
@@ -408,6 +490,7 @@ class Database:
                 "SELECT 1 FROM items AS c "
                 "WHERE c.inventory_group_key = i.inventory_group_key "
                 "AND c.inventory_tracker_key IN (" + placeholders + ")"
+                " AND c.status = 'inventory'"
                 ")"
             )
             params.extend(selected_missing)
@@ -416,7 +499,8 @@ class Database:
                 "NOT EXISTS ("
                 "SELECT 1 FROM items AS c "
                 "WHERE c.inventory_group_key = i.inventory_group_key "
-                "AND c.inventory_tracker_primary = 1"
+                "AND c.inventory_tracker_primary = 1 "
+                "AND c.status = 'inventory'"
                 ")"
             )
         selected_valid = _selected_tracker_values(valid_for)
@@ -1160,6 +1244,42 @@ def _covered_check_results(
             "reason": reason,
             "covered_trackers": covered_trackers,
             "at": resolved_at,
+        }
+    )
+    payload["diagnostics"] = {
+        "stages": stages,
+        "last_error": diagnostics.get("last_error") if isinstance(diagnostics.get("last_error"), dict) else {},
+    }
+    return payload
+
+
+def _lost_coverage_check_results(
+    value: Any,
+    lost_trackers: List[str],
+    reason: str,
+    lost_at: int,
+) -> Dict[str, Any]:
+    payload = _json_dict(value)
+    payload.setdefault("version", 1)
+    resolution = payload.get("coverage_resolution") if isinstance(payload.get("coverage_resolution"), dict) else {}
+    payload["coverage_resolution"] = {
+        **resolution,
+        "status": "lost",
+        "reason": reason,
+        "lost_trackers": lost_trackers,
+        "lost_at": lost_at,
+    }
+
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+    stages = diagnostics.get("stages") if isinstance(diagnostics.get("stages"), list) else []
+    stages = list(stages)
+    stages.append(
+        {
+            "stage": "coverage",
+            "status": "lost",
+            "reason": reason,
+            "lost_trackers": lost_trackers,
+            "at": lost_at,
         }
     )
     payload["diagnostics"] = {

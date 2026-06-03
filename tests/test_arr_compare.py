@@ -1,6 +1,7 @@
 import asyncio
 
 from app.arr_compare import (
+    _season_appears_fully_released,
     canonical_tracker,
     compare_item_with_arr,
     evaluate_tracker_decisions,
@@ -182,14 +183,91 @@ def test_tracker_decisions_choose_better_matching_audio_when_remote_hdr_is_unkno
     assert decisions[0]["best_release"]["title"].endswith("BYNDR.mkv")
 
 
-def test_season_pack_beats_episode_only_results():
+def test_season_pack_and_episode_results_stay_in_separate_scopes():
     local_pack = parse_release_traits("Show.S03.1080p.WEB-DL.DDP2.0.H.264-GRP")
     remote_episode = parse_release_traits("Show.S03E01.1080p.WEB-DL.DDP2.0.H.264-GRP")
     local_episode = parse_release_traits("Show.S03E01.1080p.WEB-DL.DDP2.0.H.264-GRP")
     remote_pack = parse_release_traits("Show.S03.1080p.WEB-DL.DDP2.0.H.264-GRP")
 
     assert not release_is_equal_or_better(local_pack, remote_episode)
-    assert release_is_equal_or_better(local_episode, remote_pack)
+    assert not release_is_equal_or_better(local_episode, remote_pack)
+
+
+def test_tracker_decisions_only_show_matching_episode_results():
+    local = parse_release_traits("Love.Overboard.S01E01.Walk.the.Plank.1080p.DSNP.WEB-DL.DD+5.1.H.264-GRP")
+    releases = [
+        {
+            "protocol": "torrent",
+            "indexer": "upload.cx (API) (Prowlarr)",
+            "title": "Love.Overboard.S01E01.Walk.the.Plank.1080p.DSNP.WEB-DL.DD+5.1.H.264-playWEB.mkv",
+        },
+        {
+            "protocol": "torrent",
+            "indexer": "upload.cx (API) (Prowlarr)",
+            "title": "Love.Overboard.S01E02.1080p.DSNP.WEB-DL.DD+5.1.H.264-playWEB.mkv",
+        },
+        {
+            "protocol": "torrent",
+            "indexer": "upload.cx (API) (Prowlarr)",
+            "title": "Love.Overboard.S01.1080p.DSNP.WEB-DL.DD+5.1.H.264-playWEB",
+        },
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["ULCX"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "upload.cx (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "blocked"
+    assert decisions[0]["same_lane_count"] == 1
+    assert [item["title"] for item in decisions[0]["results"]] == [releases[0]["title"]]
+
+
+def test_tracker_decisions_only_show_matching_season_pack_results():
+    local = parse_release_traits("The.Last.Frontier.S01.2160p.ATV.WEB-DL.Hybrid.H265.DV.HDR10Plus.DDP.Atmos.5.1-HONE")
+    releases = [
+        {
+            "protocol": "torrent",
+            "indexer": "Darkpeers (API) (Prowlarr)",
+            "title": "The.Last.Frontier.S01E01.2160p.ATV.WEB-DL.H265.DV.HDR10Plus.DDP.Atmos.5.1-GRP",
+        },
+        {
+            "protocol": "torrent",
+            "indexer": "Darkpeers (API) (Prowlarr)",
+            "title": "The.Last.Frontier.S01.2160p.ATV.WEB-DL.H265.DV.HDR10Plus.DDP.Atmos.5.1-GRP",
+        },
+    ]
+
+    decisions = evaluate_tracker_decisions(
+        passed_trackers=["DP"],
+        local_traits=local,
+        releases=releases,
+        configured_indexers=[{"name": "Darkpeers (API) (Prowlarr)", "protocol": "torrent"}],
+    )
+
+    assert decisions[0]["status"] == "blocked"
+    assert [item["title"] for item in decisions[0]["results"]] == [releases[1]["title"]]
+
+
+def test_season_appears_fully_released_when_all_monitored_episodes_are_out():
+    episodes = [
+        {"seasonNumber": 1, "episodeNumber": 1, "monitored": True, "airDateUtc": "2026-01-01T00:00:00Z"},
+        {"seasonNumber": 1, "episodeNumber": 2, "monitored": True, "hasFile": True},
+        {"seasonNumber": 1, "episodeNumber": 3, "monitored": False, "airDateUtc": "2099-01-01T00:00:00Z"},
+    ]
+
+    assert _season_appears_fully_released(episodes, 1)
+
+
+def test_season_does_not_appear_fully_released_when_a_monitored_episode_is_future():
+    episodes = [
+        {"seasonNumber": 1, "episodeNumber": 1, "monitored": True, "airDateUtc": "2026-01-01T00:00:00Z"},
+        {"seasonNumber": 1, "episodeNumber": 2, "monitored": True, "airDateUtc": "2099-01-01T00:00:00Z"},
+    ]
+
+    assert not _season_appears_fully_released(episodes, 1)
 
 
 def test_tracker_decisions_filter_usenet_and_block_equal_torrent():

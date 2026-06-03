@@ -549,13 +549,54 @@ def extract_release_group(value: str) -> str:
     name = PurePosixPath(str(value or "")).name
     name = re.sub(r"\.(?:mkv|mp4|m4v|avi|m2ts|ts|mov|wmv|nfo)$", "", name, flags=re.IGNORECASE)
     match = re.search(r"-([A-Za-z0-9][A-Za-z0-9._&+]{1,})$", name)
-    return match.group(1) if match else ""
+    if match and _looks_like_release_group(match.group(1)):
+        return match.group(1)
+    tail = re.split(r"[ ._\[\]()]+", name.strip())[-1]
+    if _looks_like_release_group(tail):
+        return tail
+    return ""
+
+
+def _looks_like_release_group(value: str) -> bool:
+    cleaned = str(value or "").strip()
+    if len(cleaned) < 2 or len(cleaned) > 20:
+        return False
+    if not re.search(r"[A-Za-z]", cleaned):
+        return False
+    lowered = cleaned.lower()
+    parts = {part for part in re.split(r"[^a-z0-9]+", lowered) if part}
+    if lowered in {
+        "web",
+        "webdl",
+        "webrip",
+        "hdtv",
+        "bluray",
+        "remux",
+        "h264",
+        "x264",
+        "h265",
+        "x265",
+        "hevc",
+        "avc",
+        "hdr",
+        "dv",
+        "atmos",
+    }:
+        return False
+    if parts & {"web", "dl", "rip", "webrip", "webdl", "h264", "h265", "x264", "x265", "hevc", "avc"}:
+        return False
+    if parts & {"dd", "ddp", "dts", "hd", "ma", "truehd", "atmos", "aac", "ac3", "eac3"}:
+        return False
+    if re.fullmatch(r"[hx]\d{3}", lowered):
+        return False
+    return True
 
 
 def same_release_lane(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
     return (
         _resolution_height(local.resolution) == _resolution_height(remote.resolution)
         and local.source == remote.source
+        and _same_release_scope(local, remote)
         and _lane_movie_versions(local) == _lane_movie_versions(remote)
     )
 
@@ -593,6 +634,16 @@ def _lane_movie_versions(traits: ReleaseTraits) -> Tuple[str, ...]:
     return tuple(version for version in traits.movie_versions if version != "Hybrid")
 
 
+def _same_release_scope(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
+    if local.season is None:
+        return True
+    if remote.season != local.season:
+        return False
+    if local.season_pack:
+        return remote.season_pack
+    return remote.episode == local.episode and not remote.season_pack
+
+
 def _hdr_satisfies(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
     if remote.hdr_rank >= local.hdr_rank:
         return True
@@ -601,6 +652,12 @@ def _hdr_satisfies(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
     if not remote_formats and remote.hdr_rank == 0:
         return True
     if "HDR10+" in local_formats and "HDR10+" in remote_formats:
+        return True
+    if (
+        "Dolby Vision" in local_formats
+        and "HDR10" in local_formats
+        and ("HDR10" in remote_formats or remote.hdr_rank == 1)
+    ):
         return True
     return False
 

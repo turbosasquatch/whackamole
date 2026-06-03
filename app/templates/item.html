@@ -15,6 +15,7 @@
 {% else %}
   {% set checks = item.check_results %}
   {% set media = checks.media or {} %}
+  {% set srrdb = checks.srrdb or {} %}
   {% set policy = checks.release_group_policy or {} %}
   {% set ua_owner = service.ua_execution or {} %}
   {% set ua_console = item.upload_console or {} %}
@@ -143,6 +144,27 @@
               </article>
             {% endfor %}
           </div>
+        </section>
+      {% endif %}
+
+      {% if srrdb.status in ["verified", "mismatch"] %}
+        <section class="details-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">srrDB</span>
+              <h2>{% if srrdb.status == "verified" %}Verified{% else %}Filename mismatch{% endif %}</h2>
+            </div>
+            <button class="button secondary small" type="button" data-raw-open data-raw-title="srrDB result" data-raw-kind="json" data-raw-source="raw-srrdb">Raw</button>
+          </div>
+          <p>{{ srrdb.reason }}</p>
+          {% if srrdb.status == "mismatch" %}
+            <dl>
+              <dt>Proper filename</dt>
+              <dd>{{ (srrdb.proper_filenames or srrdb.archived_video_files or []) | join(", ") }}</dd>
+              <dt>Local filename</dt>
+              <dd>{{ (srrdb.local_video_files or []) | join(", ") }}</dd>
+            </dl>
+          {% endif %}
         </section>
       {% endif %}
 

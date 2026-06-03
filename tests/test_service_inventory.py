@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 from app.config import ConfigManager, SecretStore
 from app.database import Database
@@ -147,6 +148,32 @@ class KnownCandidateQuiClient:
         }
 
 
+class DeletedCoverageQuiClient:
+    calls = []
+
+    def __init__(self, _cfg, _api_key):
+        pass
+
+    async def list_torrents_page(self, page=0, limit=None):
+        self.calls.append(page)
+        if page:
+            return {"total": 1, "hasMore": False, "torrents": []}
+        return {
+            "total": 1,
+            "hasMore": False,
+            "torrents": [
+                {
+                    "hash": "source",
+                    "name": "Existing.Show.S01E01.1080p.WEB-DL-GRP",
+                    "category": "tv",
+                    "tags": "",
+                    "content_path": "/media/torrents/tv/Existing.Show.S01E01.1080p.WEB-DL-GRP",
+                    "progress": 1,
+                }
+            ],
+        }
+
+
 class InterruptedUploadAssistantClient:
     def __init__(self, _cfg, _bearer_token):
         pass
@@ -192,6 +219,18 @@ class PassingUploadAssistantClient:
     async def execute_site_check(self, _path, _args, _session_id):
         type(self).calls += 1
         return "Trackers passed all checks: DP"
+
+
+class FakeSrrdbClient:
+    payload = {}
+    calls = []
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def details(self, release_name):
+        type(self).calls.append(release_name)
+        return self.payload
 
 
 def _insert_check_item(db, name="Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"):
@@ -263,6 +302,7 @@ def test_incremental_poll_stops_after_all_known_page(tmp_path, monkeypatch):
     db.set_kv("baseline_done", "true")
     db.set_kv("inventory_done", "true")
     db.set_kv("inventory_full_crawl_v2_done", "true")
+    db.set_kv("inventory_reconcile_completed_at", str(int(time.time())))
 
     async def run_poll():
         service = WhackamoleService(manager, secrets, db)
@@ -324,6 +364,7 @@ def test_poll_resolves_existing_candidate_from_current_inventory(tmp_path, monke
     db.set_kv("baseline_done", "true")
     db.set_kv("inventory_done", "true")
     db.set_kv("inventory_full_crawl_v2_done", "true")
+    db.set_kv("inventory_reconcile_completed_at", str(int(time.time())))
 
     async def run_poll():
         service = WhackamoleService(manager, secrets, db)
@@ -335,6 +376,71 @@ def test_poll_resolves_existing_candidate_from_current_inventory(tmp_path, monke
     assert KnownCandidateQuiClient.calls == [0]
     assert row["status"] == "covered"
     assert row["reason"] == "Covered in QUI: IHD"
+
+
+def test_full_reconcile_removes_deleted_inventory_and_requeues_lost_coverage(tmp_path, monkeypatch):
+    DeletedCoverageQuiClient.calls = []
+    monkeypatch.setattr("app.service.QuiClient", DeletedCoverageQuiClient)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.qui.url = "http://qui.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("qui_api_key", "token")
+    db = Database(str(tmp_path / "whackamole.db"))
+    db.insert_discovered(
+        1,
+        {
+            "hash": "source",
+            "name": "Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "category": "tv",
+            "tags": "",
+            "content_path": "/media/torrents/tv/Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "progress": 1,
+        },
+        status="covered",
+        baseline=False,
+    )
+    item_id = int(db.list_items(["covered"], limit=1)[0]["id"])
+    db.update_status(
+        item_id,
+        "covered",
+        "covered",
+        "Covered in QUI: DP",
+        check_results={"coverage_resolution": {"status": "covered", "resolved_trackers": ["DP"]}},
+    )
+    db.insert_discovered(
+        1,
+        {
+            "hash": "dp-cross",
+            "name": "Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "category": "tv.cross",
+            "tags": "cross-seed",
+            "save_path": "/media/torrents/cross-seeds/DarkPeers",
+            "content_path": "/media/torrents/cross-seeds/DarkPeers/Existing.Show.S01E01.1080p.WEB-DL-GRP",
+            "progress": 1,
+        },
+        status="inventory",
+        baseline=True,
+    )
+    db.set_kv("baseline_done", "true")
+    db.set_kv("inventory_done", "true")
+    db.set_kv("inventory_full_crawl_v2_done", "true")
+    db.set_kv("inventory_reconcile_completed_at", "0")
+
+    async def run_poll():
+        service = WhackamoleService(manager, secrets, db)
+        await service.poll_once()
+
+    asyncio.run(run_poll())
+
+    rows = {row["hash"]: row for row in db.list_items([], limit=20)}
+    row = db.get_item(item_id)
+
+    assert DeletedCoverageQuiClient.calls == [0]
+    assert "dp-cross" not in rows
+    assert row["status"] == "queued"
+    assert "DP" in row["reason"]
 
 
 def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):
@@ -545,3 +651,60 @@ def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, mo
     stages = [stage["stage"] for stage in checks["diagnostics"]["stages"]]
     assert stages == ["media", "path", "ua", "arr", "policy"]
     assert checks["media"]["raw_mediainfo_payloads"][0]["fileIndex"] == 1
+
+
+def test_srrdb_filename_mismatch_sends_candidate_to_review(tmp_path, monkeypatch):
+    release_root = "The Panic in Needle Park 1971 1080p BluRay X264-AMIABLE"
+    local_file = f"{release_root}.mkv"
+    proper_file = "The.Panic.in.Needle.Park.1971.1080p.BluRay.X264-AMIABLE.mkv"
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_root}/{local_file}", "size": 11732671572},
+    ]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 0,
+        "streams": [
+            {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "AC-3", "Channels": "6"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {"archived-files": [{"name": proper_file, "size": 11732671572, "crc": "F45E29B8"}]}
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_root)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert row["status"] == "manual_review"
+    assert row["verdict"] == "srrdb_filename_mismatch"
+    assert proper_file in row["reason"]
+    assert checks["srrdb"]["status"] == "mismatch"
+    assert checks["srrdb"]["proper_filenames"] == [proper_file]
+    assert checks["srrdb"]["local_video_files"] == [local_file]
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media", "path", "ua", "arr", "policy", "srrdb"]
+    assert FakeSrrdbClient.calls == ["The.Panic.in.Needle.Park.1971.1080p.BluRay.X264-AMIABLE"]

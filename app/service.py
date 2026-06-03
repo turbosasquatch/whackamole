@@ -4,14 +4,14 @@ import asyncio
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
 from app.arr_compare import compare_item_with_arr
 from app.check_results import add_stage_diagnostic
-from app.clients import QuiClient, UploadAssistantClient
+from app.clients import QuiClient, SrrdbClient, UploadAssistantClient
 from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
@@ -27,7 +27,11 @@ from app.media_policy import (
 )
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
+from app.srrdb import apply_srrdb_result, verify_srrdb_release
 from app.ua_execution import UaExecutionCoordinator
+
+
+INVENTORY_RECONCILE_INTERVAL_SECONDS = 15 * 60
 
 
 def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> ReleaseTraits:
@@ -52,6 +56,13 @@ def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> Rele
     return local
 
 
+def _int_kv(value: Optional[str]) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class WhackamoleService:
     def __init__(
         self,
@@ -69,6 +80,8 @@ class WhackamoleService:
         self._running_jobs = 0
         self._last_ua_job_started_at = 0.0
         self._arr_lock = asyncio.Lock()
+        self._srrdb_lock = asyncio.Lock()
+        self._last_srrdb_request_at = 0.0
         self._maintenance_probe_at = 0.0
         self._maintenance_probe_ok: Optional[bool] = None
 
@@ -107,7 +120,9 @@ class WhackamoleService:
         baseline_done = self.db.get_kv("baseline_done") == "true"
         inventory_done = self.db.get_kv("inventory_done") == "true"
         full_inventory_done = self.db.get_kv("inventory_full_crawl_v2_done") == "true"
-        full_crawl = not full_inventory_done
+        last_reconcile_at = _int_kv(self.db.get_kv("inventory_reconcile_completed_at"))
+        reconcile_due = full_inventory_done and int(time.time()) - last_reconcile_at >= INVENTORY_RECONCILE_INTERVAL_SECONDS
+        full_crawl = not full_inventory_done or reconcile_due
         baseline_mode = (not baseline_done and not cfg.watch.process_existing_on_first_run) or (
             baseline_done and not inventory_done
         ) or (
@@ -119,6 +134,7 @@ class WhackamoleService:
         limit = max(1, cfg.qui.page_limit)
         fetched = 0
         seen_hashes = set()
+        seen_completed_hashes = set()
         while True:
             data = await client.list_torrents_page(page=page, limit=limit)
             torrents = data.get("torrents", [])
@@ -139,6 +155,7 @@ class WhackamoleService:
                     continue
                 if not is_completed_torrent(torrent):
                     continue
+                seen_completed_hashes.add(torrent_hash)
                 content_path = torrent.get("content_path") or torrent.get("contentPath")
                 if not content_path:
                     continue
@@ -196,6 +213,9 @@ class WhackamoleService:
             self.db.set_kv("inventory_done", "true")
         if full_crawl:
             self.db.set_kv("inventory_full_crawl_v2_done", "true")
+            self.db.prune_missing_inventory(cfg.qui.instance_id, seen_completed_hashes)
+            self.db.requeue_covered_with_missing_coverage()
+            self.db.set_kv("inventory_reconcile_completed_at", str(int(time.time())))
         self.db.resolve_covered_candidates()
 
     async def run_due_jobs(self) -> None:
@@ -763,6 +783,7 @@ class WhackamoleService:
             )
             verdict = policy_verdict or verdict
             reason = policy_reason or reason
+            srrdb_result: Dict[str, Any] = {}
             check_results = merge_check_results(
                 check_results,
                 arr=arr_results,
@@ -779,6 +800,40 @@ class WhackamoleService:
                     "candidate_trackers": list(policy_result.get("candidate_trackers") or []),
                     "blocked_trackers": list(policy_result.get("blocked_trackers") or []),
                 },
+            )
+            if status == "candidate":
+                self.db.update_check_stage(item_id, "srrdb", "Checking srrDB archived filename.", check_results)
+                srrdb_started_at = time.perf_counter()
+                srrdb_result = await verify_srrdb_release(
+                    item_name=str(item["name"] or ""),
+                    media_result=media_result,
+                    client=_ThrottledSrrdbClient(self),
+                    cache=self.db,
+                )
+                status, verdict, reason, flags = apply_srrdb_result(
+                    status=status,
+                    verdict=verdict,
+                    reason=reason,
+                    flags=flags,
+                    srrdb_result=srrdb_result,
+                )
+                check_results = add_stage_diagnostic(
+                    check_results,
+                    stage="srrdb",
+                    status=str(srrdb_result.get("status") or "skipped"),
+                    reason=str(srrdb_result.get("reason") or ""),
+                    started_at=srrdb_started_at,
+                    extra={
+                        "queried_name": str(srrdb_result.get("queried_name") or ""),
+                        "matched": srrdb_result.get("matched"),
+                    },
+                )
+            check_results = merge_check_results(
+                check_results,
+                arr=arr_results,
+                srrdb=srrdb_result,
+                release_group_policy=policy_result,
+                flags=flags,
             )
         elif reduction.status == "error":
             next_check_at = self._next_error_check(item["attempt_count"], None)
@@ -818,3 +873,17 @@ class WhackamoleService:
             return now + (24 * 3600)
         backoff = cfg.safety.error_backoff_minutes[min(attempt_count, len(cfg.safety.error_backoff_minutes) - 1)]
         return now + (backoff * 60)
+
+
+class _ThrottledSrrdbClient:
+    def __init__(self, service: WhackamoleService) -> None:
+        self.service = service
+        self.client = SrrdbClient()
+
+    async def details(self, release_name: str) -> Mapping[str, Any] | Sequence[Any]:
+        async with self.service._srrdb_lock:
+            elapsed = time.monotonic() - self.service._last_srrdb_request_at
+            if elapsed < 3:
+                await asyncio.sleep(3 - elapsed)
+            self.service._last_srrdb_request_at = time.monotonic()
+            return await self.client.details(release_name)

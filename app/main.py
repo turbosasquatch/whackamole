@@ -83,6 +83,7 @@ REASON_FILTERS = [
     {"key": "media_error", "label": "MediaInfo error", "applies_to": ["manual", "errors"]},
     {"key": "arr_equal_or_better", "label": "Arr equal/better", "applies_to": ["blocked"]},
     {"key": "banned_release_group", "label": "Banned release group", "applies_to": ["blocked"]},
+    {"key": "srrdb_filename_mismatch", "label": "srrDB filename mismatch", "applies_to": ["manual"]},
     {"key": "no_video", "label": "No video files", "applies_to": ["manual", "errors"]},
     {"key": "path_error", "label": "Path or mount error", "applies_to": ["manual", "errors"]},
     {"key": "ua_error", "label": "UA error", "applies_to": ["manual", "errors"]},
@@ -225,6 +226,7 @@ def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
         "ua": "Running UA",
         "arr": "Checking ARR",
         "policy": "Applying policy",
+        "srrdb": "Checking srrDB",
         "done": "Checked",
         "interrupted": "Interrupted",
     }
@@ -342,6 +344,8 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
         categories.append("arr_equal_or_better")
     if "banned_release_group" in verdict or "banned_release_group" in flag_keys:
         categories.append("banned_release_group")
+    if "srrdb_filename_mismatch" in verdict or "srrdb_filename_mismatch" in flag_keys:
+        categories.append("srrdb_filename_mismatch")
     if "no_video" in verdict or "video files" in reason:
         categories.append("no_video")
     if "path" in verdict or "path" in reason or "mount" in reason:
@@ -388,17 +392,21 @@ def _source_label(item: Dict[str, Any], tracker_groups: Dict[str, List[str]]) ->
 def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
     media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
     ua = check_results.get("ua") if isinstance(check_results.get("ua"), dict) else {}
+    srrdb = check_results.get("srrdb") if isinstance(check_results.get("srrdb"), dict) else {}
     arr_status = str(arr_result.get("status") or "")
-    return [
+    rows = [
         _check_summary("MediaInfo", str(media.get("status") or media.get("verdict") or ""), str(media.get("reason") or "")),
         _check_summary("UA", str(ua.get("status") or item.get("status") or ""), str(ua.get("reason") or item.get("tracker_summary") or "")),
         _check_summary("Discovarr", arr_status, str(arr_result.get("reason") or item.get("arr_summary") or "")),
     ]
+    if srrdb and str(srrdb.get("status") or "") in {"verified", "mismatch"}:
+        rows.append(_check_summary("srrDB", str(srrdb.get("status") or ""), str(srrdb.get("reason") or "")))
+    return rows
 
 
 def _check_summary(label: str, status_value: str, notes: str) -> Dict[str, str]:
     value = status_value.lower()
-    if any(token in value for token in ("error", "fail", "manual")):
+    if any(token in value for token in ("error", "fail", "manual", "mismatch")):
         state = "Fail"
         group = "error"
     elif "warning" in value:
@@ -567,6 +575,12 @@ def _hdr_rank_tag(local: Dict[str, Any], remote: Dict[str, Any]) -> Dict[str, st
     remote_formats = {str(value) for value in remote.get("hdr_formats", []) or []}
     if remote_rank == local_rank or ("HDR10+" in local_formats and "HDR10+" in remote_formats):
         group = "same"
+    elif (
+        "Dolby Vision" in local_formats
+        and "HDR10" in local_formats
+        and ("HDR10" in remote_formats or remote_rank == 1)
+    ):
+        group = "same"
     elif remote_rank == 0 and not remote_formats:
         group = "same"
     elif remote_rank < local_rank:
@@ -606,6 +620,7 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     raw_torrent = _json_object(item.get("raw_torrent"))
     checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
     media = checks.get("media") if isinstance(checks.get("media"), dict) else {}
+    srrdb = checks.get("srrdb") if isinstance(checks.get("srrdb"), dict) else {}
     nfo_info = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
     raw_mediainfo = media.get("raw_mediainfo_payloads") if isinstance(media, dict) else []
     diagnostics = checks.get("diagnostics") if isinstance(checks.get("diagnostics"), dict) else {}
@@ -639,6 +654,12 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "kind": "json",
             "available": bool(item.get("arr_result")),
             "content": item.get("arr_result") or {"message": "No ARR result recorded."},
+        },
+        "srrdb": {
+            "title": "srrDB result",
+            "kind": "json",
+            "available": bool(srrdb),
+            "content": srrdb or {"message": "No srrDB verification recorded."},
         },
         "diagnostics": {
             "title": "Check diagnostics",
@@ -711,6 +732,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         "nfo": stored_checks.get("nfo") or {},
         "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
         "arr": stored_checks.get("arr") or arr,
+        "srrdb": stored_checks.get("srrdb") or {},
         "release_group_policy": stored_checks.get("release_group_policy") or {},
         "coverage_resolution": stored_checks.get("coverage_resolution") or {},
         "flags": item["check_flags"],

@@ -72,6 +72,54 @@ def test_coverage_lookup_is_limited_to_requested_group_keys(tmp_path):
     assert [tracker["key"] for tracker in coverage[source["inventory_group_key"]]] == ["DP"]
 
 
+def test_prune_missing_inventory_removes_deleted_coverage_rows(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "source", "Example.Show.S01E01.1080p.WEB-DL-GRP")
+    _insert(
+        db,
+        "dp-cross",
+        "Example.Show.S01E01.1080p.WEB-DL-GRP",
+        status="inventory",
+        category="tv.cross",
+        tags="cross-seed",
+        path_prefix="/media/torrents/cross-seeds/DarkPeers",
+    )
+    _insert(db, "candidate", "Candidate.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    source = db.list_items(["baseline"], limit=1)[0]
+
+    removed = db.prune_missing_inventory(1, ["source", "candidate"])
+    coverage = db.coverage_for_group_keys([source["inventory_group_key"]])
+    rows = {row["hash"]: row for row in db.list_items([], limit=20)}
+
+    assert removed == 1
+    assert coverage[source["inventory_group_key"]] == []
+    assert "dp-cross" not in rows
+    assert rows["candidate"]["status"] == "candidate"
+
+
+def test_requeue_covered_with_missing_coverage(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "covered", "Example.Show.S01E01.1080p.WEB-DL-GRP", status="covered")
+    item_id = int(db.list_items(["covered"], limit=1)[0]["id"])
+    db.update_status(
+        item_id,
+        "covered",
+        "covered",
+        "Covered in QUI: DP",
+        check_results={"coverage_resolution": {"status": "covered", "resolved_trackers": ["DP"]}},
+    )
+
+    result = db.requeue_covered_with_missing_coverage()
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert result == {"items": 1, "trackers": 1}
+    assert row["status"] == "queued"
+    assert row["verdict"] == ""
+    assert "DP" in row["reason"]
+    assert checks["coverage_resolution"]["status"] == "lost"
+
+
 def test_bulk_requeue_baseline_filtered_only_updates_found_set(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     _insert(db, "source", "Example.Show.S01E01.1080p.WEB-DL-GRP")

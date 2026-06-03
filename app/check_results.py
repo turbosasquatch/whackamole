@@ -15,6 +15,7 @@ class CheckResults:
     nfo: Dict[str, Any] = field(default_factory=dict)
     ua: Dict[str, Any] = field(default_factory=dict)
     arr: Dict[str, Any] = field(default_factory=dict)
+    srrdb: Dict[str, Any] = field(default_factory=dict)
     release_group_policy: Dict[str, Any] = field(default_factory=dict)
     coverage_resolution: Dict[str, Any] = field(default_factory=dict)
     flags: List[Dict[str, Any]] = field(default_factory=list)
@@ -32,6 +33,7 @@ class CheckResults:
             nfo=_dict_value(payload.get("nfo")),
             ua=_dict_value(payload.get("ua")),
             arr=_dict_value(payload.get("arr")),
+            srrdb=_dict_value(payload.get("srrdb")),
             release_group_policy=_dict_value(payload.get("release_group_policy")),
             coverage_resolution=_dict_value(payload.get("coverage_resolution")),
             flags=_flag_list(payload.get("flags")),
@@ -48,6 +50,7 @@ class CheckResults:
             "nfo": self.nfo,
             "ua": self.ua,
             "arr": self.arr,
+            "srrdb": self.srrdb,
             "release_group_policy": self.release_group_policy,
             "coverage_resolution": self.coverage_resolution,
             "flags": self.flags,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -203,6 +204,19 @@ class UploadAssistantClient:
 
     def _headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.bearer_token or ''}"}
+
+
+class SrrdbClient:
+    def __init__(self, timeout_seconds: int = 10) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.url = "https://api.srrdb.com/v1"
+
+    async def details(self, release_name: str) -> Dict[str, Any] | List[Any]:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.get(f"{self.url}/details/{quote(release_name, safe='')}")
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, (dict, list)) else {}
 
 
 class BaseArrClient:

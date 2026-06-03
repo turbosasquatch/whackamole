@@ -1,7 +1,14 @@
 import json
 from pathlib import Path
 
-from app.media_identity import analyze_media_payloads, parse_release_traits, traits_from_mediainfo, traits_payload
+from app.media_identity import (
+    analyze_media_payloads,
+    extract_release_group,
+    parse_release_traits,
+    release_is_equal_or_better,
+    traits_from_mediainfo,
+    traits_payload,
+)
 from app.source_providers import extract_provider_abbreviation
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "mediainfo"
@@ -27,6 +34,13 @@ def test_release_identity_parses_symbol_release_group():
     traits = parse_release_traits("1923.S02E01.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H")
 
     assert traits.release_group == "R&H"
+
+
+def test_release_identity_parses_non_dash_tail_group_but_rejects_format_tail():
+    assert extract_release_group("Convicting.A.Murderer.2023.S01.1080p.WebRip.X264.Will1869") == "Will1869"
+    assert extract_release_group("Odd.Release.7") == ""
+    assert extract_release_group("Movie.2024.2160p.WEB-DL.H.265") == ""
+    assert extract_release_group("Mile.22.2018.HYBRiD.2160p.WEB-DL.DoVi.HDR10Plus.HEVC.DTS-HD.MA.7") == ""
 
 
 def test_release_identity_parses_truehd_dovi_and_h265_aliases():
@@ -200,6 +214,16 @@ def test_real_shape_item_2785_detects_dv_profile_8_and_hdr10_compatibility():
     assert {"Dolby Vision", "HDR10"}.issubset(set(traits["hdr_formats"]))
     assert traits["dv_profile"] == "DV P8"
     assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
+
+
+def test_release_comparison_treats_hdr_title_as_same_for_dv_hdr_fallback_local():
+    local = parse_release_traits("CODA.2021.2160p.ATVP.WEB-DL.DDP5.1.Atmos.DV.HDR.HEVC-XEBEC")
+    remote = parse_release_traits("Coda.2021.2160p.ATVP.WEB-DL.DDP5.1.Atmos.HDR.H.265-FLUX.mkv")
+    dv_only = parse_release_traits("Under.the.Bridge.S01.2160p.DSNP.WEB-DL.DD+5.1.DV.H.265-FLUX")
+    hdr_only = parse_release_traits("Under.the.Bridge.S01.2160p.DSNP.WEB-DL.DD+5.1.HDR.H.265-OTHER")
+
+    assert release_is_equal_or_better(local, remote)
+    assert not release_is_equal_or_better(dv_only, hdr_only)
 
 
 def test_live_qui_stream_wrappers_prefer_raw_json_tracks():

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import httpx
 
@@ -194,10 +195,15 @@ def evaluate_tracker_decisions(
             (release, parse_release_traits(str(release.get("title", "")), _quality_name(release)))
             for release in matches
         ]
-        result_payloads = [_release_payload(release, traits) for release, traits in parsed_matches]
-        same_lane = [
+        scoped_matches = [
             (release, traits)
             for release, traits in parsed_matches
+            if _same_release_scope(local_traits, traits)
+        ]
+        result_payloads = [_release_payload(release, traits) for release, traits in scoped_matches]
+        same_lane = [
+            (release, traits)
+            for release, traits in scoped_matches
             if _same_release_lane(local_traits, traits)
         ]
         blockers = [
@@ -291,6 +297,8 @@ async def _sonarr_releases(
         return releases, indexers
 
     episodes = await client.list_episodes(series_id, identity.season)
+    if _season_appears_fully_released(episodes, identity.season):
+        raise RuntimeError("Sonarr season appears fully released; review for a season pack instead of an episode upload")
     episode = _match_episode(episodes, identity.episode)
     if not episode:
         raise RuntimeError("No matching Sonarr episode found")
@@ -353,6 +361,39 @@ def _match_episode(episodes: Iterable[Dict[str, Any]], episode_number: Optional[
         if int(episode.get("episodeNumber") or 0) == episode_number:
             return episode
     return None
+
+
+def _season_appears_fully_released(episodes: Sequence[Dict[str, Any]], season_number: Optional[int]) -> bool:
+    if season_number is None:
+        return False
+    season_episodes = [
+        episode
+        for episode in episodes
+        if int(episode.get("seasonNumber") or season_number) == season_number
+        and int(episode.get("episodeNumber") or 0) > 0
+    ]
+    if len(season_episodes) < 2:
+        return False
+    monitored = [episode for episode in season_episodes if episode.get("monitored", True)]
+    candidates = monitored or season_episodes
+    return bool(candidates) and all(_episode_has_released(episode) for episode in candidates)
+
+
+def _episode_has_released(episode: Mapping[str, Any]) -> bool:
+    if episode.get("hasFile"):
+        return True
+    air_date = str(episode.get("airDateUtc") or episode.get("airDate") or "").strip()
+    if not air_date:
+        return False
+    if air_date.endswith("Z"):
+        air_date = air_date[:-1] + "+00:00"
+    try:
+        released_at = datetime.fromisoformat(air_date)
+    except ValueError:
+        return False
+    if released_at.tzinfo is None:
+        released_at = released_at.replace(tzinfo=timezone.utc)
+    return released_at <= datetime.now(timezone.utc)
 
 
 def _extract_title_year(text: str, fallback: str) -> Tuple[str, Optional[int]]:
@@ -419,6 +460,16 @@ def _traits_payload(traits: ReleaseTraits) -> Dict[str, Any]:
 
 def _same_release_lane(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
     return _shared_same_release_lane(local, remote)
+
+
+def _same_release_scope(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
+    if local.season is None:
+        return True
+    if remote.season != local.season:
+        return False
+    if local.season_pack:
+        return remote.season_pack
+    return remote.episode == local.episode and not remote.season_pack
 
 
 def _media_payload(identity: MediaIdentity) -> Dict[str, Any]:
