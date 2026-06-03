@@ -862,6 +862,13 @@ def _upload_console_args(item: Dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _with_unattended_arg(args: str) -> str:
+    value = str(args or "").strip()
+    if re.search(r"(^|\s)--unattended(\s|$)", value):
+        return value
+    return f"{value} --unattended".strip()
+
+
 def _source_provider_for_item(item: Dict[str, Any]) -> str:
     title_provider = extract_provider_from_release_title(str(item.get("name") or ""))
     if title_provider:
@@ -1242,6 +1249,7 @@ def _home_context(request: Request) -> Dict[str, Any]:
 def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = "", q: str = "") -> List[Dict[str, Any]]:
     rows = []
     queue = service.get("queue") if isinstance(service.get("queue"), dict) else {}
+    imports = service.get("imports") if isinstance(service.get("imports"), dict) else {}
     for key, label, statuses in DASHBOARD_TABS:
         if key == "active":
             total = int(queue.get("active") or 0)
@@ -1258,6 +1266,15 @@ def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = 
                 "selected": key == view,
             }
         )
+    rows.append(
+        {
+            "key": "imports",
+            "label": "Queued Imports",
+            "total": int(imports.get("active") or 0),
+            "href": "/imports",
+            "selected": view == "imports",
+        }
+    )
     return rows
 
 
@@ -1598,6 +1615,22 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
     )
 
 
+@app.get("/imports", response_class=HTMLResponse)
+async def queued_imports(request: Request) -> HTMLResponse:
+    rows = request.app.state.db.list_imports(limit=200)
+    return templates.TemplateResponse(
+        request,
+        "imports.html",
+        {
+            **_shell_context(request, section="imports", view="imports"),
+            "request": request,
+            "imports": [dict(row) for row in rows],
+            "import_counts": request.app.state.db.queued_import_counts(),
+            "current_url": "/imports",
+        },
+    )
+
+
 @app.post("/items/{item_id}/recheck")
 async def recheck_item(item_id: int, return_to: str = Form("")) -> RedirectResponse:
     app.state.db.requeue(item_id)
@@ -1655,6 +1688,38 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-UA-Session-ID": session.session_id},
     )
+
+
+@app.post("/api/items/{item_id}/upload-assistant/queue")
+async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONResponse:
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        return JSONResponse({"error": "Item not found", "success": False}, status_code=404)
+    cfg = request.app.state.config_manager.load()
+    if not cfg.upload_assistant.url or not request.app.state.secrets.has("ua_bearer_token"):
+        return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
+
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    console = item["upload_console"]
+    path = str(console.get("path") or "").strip()
+    if not path:
+        return JSONResponse({"error": "No Upload Assistant path is available for this item.", "success": False}, status_code=400)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    args = str(payload.get("args") if isinstance(payload, dict) else console.get("args") or "").strip()
+    if not args:
+        args = str(console.get("args") or "").strip()
+    queued_args = _with_unattended_arg(args)
+    import_id = request.app.state.db.enqueue_import(
+        item_id=item_id,
+        item_name=str(item.get("name") or f"Item {item_id}"),
+        path=path,
+        args=queued_args,
+    )
+    await request.app.state.service.run_queued_import()
+    return JSONResponse({"success": True, "id": import_id, "args": queued_args})
 
 
 @app.get("/api/items/{item_id}/upload-assistant/stream")

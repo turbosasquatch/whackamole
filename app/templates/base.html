@@ -44,7 +44,7 @@
               </button>
             </form>
             <div class="sidebar-status">
-              {% set footer_state = "Paused" if service.maintenance.active else ("Running" if service.ua_execution.busy or service.running_jobs or service.queue.active else "Ready") %}
+              {% set footer_state = "Paused" if service.maintenance.active else ("Running" if service.ua_execution.busy or service.running_jobs or service.queue.active or service.imports.active else "Ready") %}
               <span class="state-dot {% if footer_state == 'Ready' %}ok{% elif footer_state == 'Paused' %}warn{% else %}run{% endif %}" data-service-footer-dot></span>
               <span data-service-footer>{{ footer_state }}</span>
             </div>

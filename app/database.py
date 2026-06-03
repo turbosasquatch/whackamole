@@ -68,6 +68,25 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS queued_imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL,
+                    item_name TEXT NOT NULL DEFAULT '',
+                    path TEXT NOT NULL,
+                    args TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    session_id TEXT NOT NULL DEFAULT '',
+                    message TEXT NOT NULL DEFAULT '',
+                    output TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    started_at INTEGER NOT NULL DEFAULT 0,
+                    finished_at INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
             self._ensure_column(conn, "items", "arr_results", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_meta", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_group_key", "TEXT NOT NULL DEFAULT ''")
@@ -90,6 +109,8 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_items_status_media_group "
                 "ON items(status, inventory_media_type, inventory_group_key, updated_at DESC)"
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_status_created ON queued_imports(status, created_at ASC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_item ON queued_imports(item_id)")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -837,6 +858,109 @@ class Database:
     def get_item(self, item_id: int) -> Optional[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+
+    def enqueue_import(self, item_id: int, item_name: str, path: str, args: str) -> int:
+        now = int(time.time())
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO queued_imports(item_id, item_name, path, args, status, created_at, updated_at)
+                VALUES(?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (item_id, item_name, path, args, now, now),
+            )
+            return int(cursor.lastrowid)
+
+    def list_imports(self, limit: int = 100, offset: int = 0) -> List[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT qi.*, i.status AS item_status, i.verdict AS item_verdict
+                FROM queued_imports AS qi
+                LEFT JOIN items AS i ON i.id = qi.item_id
+                ORDER BY
+                  CASE qi.status
+                    WHEN 'running' THEN 0
+                    WHEN 'pending' THEN 1
+                    WHEN 'error' THEN 2
+                    WHEN 'complete' THEN 3
+                    ELSE 4
+                  END,
+                  qi.created_at ASC
+                LIMIT ? OFFSET ?
+                """,
+                (max(1, int(limit or 100)), max(0, int(offset or 0))),
+            ).fetchall()
+
+    def queued_import_counts(self) -> Dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT status, COUNT(*) AS count FROM queued_imports GROUP BY status").fetchall()
+        counts = {"pending": 0, "running": 0, "complete": 0, "error": 0}
+        for row in rows:
+            key = str(row["status"] or "")
+            counts[key] = int(row["count"] or 0)
+        counts["active"] = counts["pending"] + counts["running"]
+        counts["total"] = counts["pending"] + counts["running"] + counts["complete"] + counts["error"]
+        return counts
+
+    def recover_running_imports(self) -> int:
+        now = int(time.time())
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queued_imports
+                SET status = 'pending',
+                    message = 'Whackamole restarted while this import was running; it will retry.',
+                    session_id = '',
+                    updated_at = ?
+                WHERE status = 'running'
+                """,
+                (now,),
+            )
+            return int(cursor.rowcount or 0)
+
+    def claim_next_import(self, session_id: str) -> Optional[sqlite3.Row]:
+        now = int(time.time())
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM queued_imports WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE queued_imports
+                SET status = 'running', session_id = ?, started_at = ?, updated_at = ?, message = 'Running unattended import.'
+                WHERE id = ? AND status = 'pending'
+                """,
+                (session_id, now, now, int(row["id"])),
+            )
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM queued_imports WHERE id = ?", (int(row["id"]),)).fetchone()
+
+    def mark_import_complete(self, import_id: int, message: str, output: str = "") -> None:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE queued_imports
+                SET status = 'complete', message = ?, output = ?, finished_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (message, output[-250_000:], now, now, import_id),
+            )
+
+    def mark_import_error(self, import_id: int, message: str, output: str = "") -> None:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE queued_imports
+                SET status = 'error', message = ?, output = ?, finished_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (message, output[-250_000:], now, now, import_id),
+            )
 
     def update_status(
         self,

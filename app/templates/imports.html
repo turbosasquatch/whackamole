@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Queued Imports · Whackamole{% endblock %}
+{% block page_label %}Queued Imports{% endblock %}
+
+{% block content %}
+<section class="details-panel imports-panel">
+  <div class="panel-heading">
+    <div>
+      <span class="eyebrow">Upload Assistant</span>
+      <h2>Queued unattended imports</h2>
+    </div>
+    <div class="button-row">
+      <span class="pill neutral">{{ import_counts.pending }} pending</span>
+      <span class="pill neutral">{{ import_counts.running }} running</span>
+      <span class="pill neutral">{{ import_counts.complete }} complete</span>
+      <span class="pill neutral">{{ import_counts.error }} error</span>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="mini-table">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Status</th>
+          <th>Path</th>
+          <th>Arguments</th>
+          <th>Queued</th>
+          <th>Updated</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for import in imports %}
+          <tr>
+            <td><a class="item-title" href="/items/{{ import.item_id }}#upload-assistant">{{ import.item_name }}</a></td>
+            <td><span class="import-state {{ import.status }}">{{ import.status }}</span></td>
+            <td class="path-cell">{{ import.path }}</td>
+            <td class="path-cell">{{ import.args }}</td>
+            <td>{{ import.created_at | datetime }}</td>
+            <td>{{ import.updated_at | datetime }}</td>
+            <td>{{ import.message or "-" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="empty">No queued imports yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

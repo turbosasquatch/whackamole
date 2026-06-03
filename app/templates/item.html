@@ -349,11 +349,13 @@
         data-upload-console
         data-item-id="{{ item.id }}"
         data-execute-url="/api/items/{{ item.id }}/upload-assistant/execute"
+        data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
         data-stream-url="/api/items/{{ item.id }}/upload-assistant/stream"
         data-input-url="/api/items/{{ item.id }}/upload-assistant/input"
         data-kill-url="/api/items/{{ item.id }}/upload-assistant/kill"
         data-active-session="{% if ua_busy_this_item %}{{ ua_owner.session_id or ua_session.session_id }}{% endif %}"
         data-can-execute="{% if upload_console_configured and ua_console.path and not (ua_busy and not ua_busy_this_item) %}true{% else %}false{% endif %}"
+        data-can-queue="{% if upload_console_configured and ua_console.path %}true{% else %}false{% endif %}"
       >
         <div class="panel-heading">
           <div>
@@ -395,6 +397,9 @@
           </button>
           <button class="button secondary" type="button" data-upload-autorun {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
             Autorun
+          </button>
+          <button class="button secondary" type="button" data-upload-queue {% if not upload_console_configured or not ua_console.path %}disabled{% endif %}>
+            Queue
           </button>
           <button class="button secondary" type="button" data-upload-clear {% if ua_busy_this_item %}hidden{% endif %}>Clear</button>
           <button class="button danger" type="button" data-upload-kill {% if not ua_busy_this_item %}hidden{% endif %}>Kill &amp; Clear</button>

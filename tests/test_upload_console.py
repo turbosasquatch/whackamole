@@ -4,7 +4,9 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.config import AppConfig, SecretStore
+from app.database import Database
 from app.main import app
+from app.service import WhackamoleService
 from app.ua_execution import UaExecutionCoordinator, UaExecutionOwner, UploadConsoleManager, sse_payload
 
 
@@ -66,7 +68,38 @@ def test_item_page_upload_console_prefills_trackers_and_missing_service(tmp_path
         assert response.status_code == 200
         assert "Upload Assistant" in response.text
         assert "data-upload-autorun" in response.text
+        assert "data-upload-queue" in response.text
         assert '--trackers dp,ulcx --service AMZN' in response.text
+
+
+def test_upload_console_queue_endpoint_enqueues_unattended_import_when_lock_busy(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+        client.app.state.ua_execution._owner = UaExecutionOwner(
+            id="check-lock",
+            kind="check",
+            label="Checking item 99",
+            item_id=99,
+            session_id="check-session",
+            started_at=123,
+        )
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers dp"})
+        imports_page = client.get("/imports")
+
+        assert response.status_code == 200
+        assert response.json()["args"] == "--trackers dp --unattended"
+        rows = client.app.state.db.list_imports()
+        assert len(rows) == 1
+        assert rows[0]["status"] == "pending"
+        assert rows[0]["args"] == "--trackers dp --unattended"
+        assert imports_page.status_code == 200
+        assert "Queued Imports" in imports_page.text
+        assert "--trackers dp --unattended" in imports_page.text
 
 
 def test_upload_console_full_snapshots_are_not_terminal_replacements():
@@ -356,3 +389,50 @@ def test_upload_console_session_releases_lock_on_kill(tmp_path, monkeypatch):
         assert coordinator.snapshot()["busy"] is False
 
     asyncio.run(run())
+
+
+def test_queued_import_runner_executes_and_notifies(tmp_path, monkeypatch):
+    class FakeUploadAssistantClient:
+        def __init__(self, _config, _token):
+            pass
+
+        async def execute_upload_stream(self, path, args, session_id):
+            yield sse_payload("system", f"ran {path} {args} {session_id}")
+
+    monkeypatch.setattr("app.service.UploadAssistantClient", FakeUploadAssistantClient)
+
+    async def run():
+        cfg = AppConfig()
+        cfg.upload_assistant.url = "http://ua"
+        secrets = SecretStore(str(tmp_path))
+        secrets.set("ua_bearer_token", "token")
+        db = Database(str(tmp_path / "whackamole.db"))
+        import_id = db.enqueue_import(
+            item_id=42,
+            item_name="Queued.Movie.2026.1080p.NF.WEB-DL-GRP",
+            path="/ua/movie.mkv",
+            args="--trackers dp --unattended",
+        )
+        coordinator = UaExecutionCoordinator()
+        service = WhackamoleService(AppConfigManagerStub(cfg), secrets, db, coordinator)
+
+        await service.run_queued_import()
+        assert service._import_task is not None
+        await asyncio.wait_for(service._import_task, timeout=1)
+
+        row = db.list_imports()[0]
+        assert row["id"] == import_id
+        assert row["status"] == "complete"
+        assert "ran /ua/movie.mkv" in row["output"]
+        assert coordinator.snapshot()["busy"] is False
+        assert "Queued import complete" in db.service_error_history()[-1]["message"]
+
+    asyncio.run(run())
+
+
+class AppConfigManagerStub:
+    def __init__(self, cfg):
+        self._cfg = cfg
+
+    def load(self):
+        return self._cfg

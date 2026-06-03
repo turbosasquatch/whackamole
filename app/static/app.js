@@ -271,6 +271,7 @@
     const argsInput = consoleRoot.querySelector("[data-upload-args]");
     const executeButton = consoleRoot.querySelector("[data-upload-execute]");
     const autorunButton = consoleRoot.querySelector("[data-upload-autorun]");
+    const queueButton = consoleRoot.querySelector("[data-upload-queue]");
     const clearButton = consoleRoot.querySelector("[data-upload-clear]");
     const killButton = consoleRoot.querySelector("[data-upload-kill]");
     const inputForm = consoleRoot.querySelector("[data-upload-input-form]");
@@ -279,6 +280,7 @@
     const stateBadge = consoleRoot.querySelector("[data-upload-state]");
     const latestButton = consoleRoot.querySelector("[data-upload-latest]");
     const canExecute = consoleRoot.dataset.canExecute === "true";
+    const canQueue = consoleRoot.dataset.canQueue === "true";
     let sessionId = consoleRoot.dataset.activeSession || "";
     let streamController = null;
     let followingLatest = true;
@@ -353,6 +355,7 @@
       running = value;
       executeButton.disabled = value || !canExecute;
       if (autorunButton) autorunButton.disabled = value || !canExecute;
+      if (queueButton) queueButton.disabled = !canQueue;
       clearButton.hidden = value;
       killButton.hidden = !value;
       inputField.disabled = !value;
@@ -471,6 +474,31 @@
       });
     }
 
+    if (queueButton) {
+      queueButton.addEventListener("click", async () => {
+        if (!canQueue) return;
+        argsInput.value = withUnattendedArg(argsInput.value);
+        queueButton.disabled = true;
+        try {
+          const response = await fetch(consoleRoot.dataset.queueUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ args: argsInput.value || "" }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            appendLine(payload.error || `Queue failed with ${response.status}`, "error");
+            return;
+          }
+          appendLine(`Queued unattended import #${payload.id}.`, "system");
+        } catch (error) {
+          appendLine(error.message || String(error), "error");
+        } finally {
+          queueButton.disabled = !canQueue;
+        }
+      });
+    }
+
     clearButton.addEventListener("click", () => {
       if (running) return;
       output.innerHTML = "";
@@ -547,15 +575,18 @@
         const counts = payload.counts || {};
         const service = payload.service || {};
         const queue = service.queue || {};
+        const imports = service.imports || {};
         const viewCounts = {
           active: queue.active || 0,
           candidates: counts.candidate || 0,
+          covered: counts.covered || 0,
           blocked: counts.blocked || 0,
           manual: counts.manual_review || 0,
           errors: counts.error || 0,
           baseline: counts.baseline || 0,
           inventory: counts.inventory || 0,
           ignored: counts.ignored || 0,
+          imports: imports.active || 0,
           all: Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0),
         };
         Object.entries(viewCounts).forEach(([view, count]) => {
@@ -566,7 +597,7 @@
         setText('[data-queue-field="active"]', String(queue.active || 0));
         const maintenance = service.maintenance || {};
         const uaExecution = service.ua_execution || {};
-        const footer = maintenance.active ? "Paused" : ((uaExecution.busy || service.running_jobs || queue.active) ? "Running" : "Ready");
+        const footer = maintenance.active ? "Paused" : ((uaExecution.busy || service.running_jobs || queue.active || imports.active) ? "Running" : "Ready");
         setText("[data-service-footer]", footer);
         document.querySelectorAll("[data-service-footer-dot]").forEach((node) => {
           node.classList.toggle("ok", footer === "Ready");

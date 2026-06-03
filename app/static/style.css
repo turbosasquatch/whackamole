@@ -1608,6 +1608,45 @@ tr:last-child td {
   flex: 1 1 auto;
 }
 
+.imports-panel .table-wrap {
+  max-height: calc(100vh - 180px);
+}
+
+.path-cell {
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+
+.import-state {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  padding: 6px 9px;
+  text-transform: capitalize;
+}
+
+.import-state.pending {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.import-state.running {
+  background: #dbeafe;
+  color: var(--primary-dark);
+}
+
+.import-state.complete {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.import-state.error {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
 dl {
   display: grid;
   gap: 8px 14px;

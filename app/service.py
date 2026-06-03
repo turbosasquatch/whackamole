@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from dataclasses import replace
@@ -174,6 +175,7 @@ class WhackamoleService:
         self.db = db
         self.ua_execution = ua_execution or UaExecutionCoordinator()
         self._task: Optional[asyncio.Task] = None
+        self._import_task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._running_jobs = 0
         self._last_ua_job_started_at = 0.0
@@ -189,10 +191,17 @@ class WhackamoleService:
             recovered = self.db.recover_stale_checking(self._next_error_check(0, None))
             if recovered:
                 self.db.set_kv("last_startup_recovered_checks", str(recovered))
+            recovered_imports = self.db.recover_running_imports()
+            if recovered_imports:
+                self.db.append_service_error(f"Recovered {recovered_imports} queued import(s) after restart.")
             self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
         self._stop.set()
+        if self._import_task and not self._import_task.done():
+            self._import_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._import_task
         if self._task:
             await self._task
 
@@ -203,7 +212,10 @@ class WhackamoleService:
                 maintenance_active = await self._maintenance_pause_active(cfg)
                 if not maintenance_active and cfg.qui.url and self.secrets.has("qui_api_key"):
                     await self.poll_once()
+                    await self.run_queued_import()
                     await self.run_due_jobs()
+                elif not maintenance_active:
+                    await self.run_queued_import()
             except Exception as exc:
                 self.db.append_service_error(str(exc))
 
@@ -333,6 +345,53 @@ class WhackamoleService:
             self._running_jobs += 1
             asyncio.create_task(self._run_item(item["id"]))
 
+    async def run_queued_import(self) -> None:
+        if self._import_task and not self._import_task.done():
+            return
+        cfg = self.config_manager.load()
+        if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
+            return
+        if not self.db.queued_import_counts().get("pending"):
+            return
+        lease = await self.ua_execution.acquire(
+            kind="queued_import",
+            label="Queued unattended import",
+            item_id=None,
+            session_id="",
+            wait=False,
+        )
+        if lease is None:
+            return
+        session_id = f"whackamole-queued-import-{int(time.time() * 1000)}"
+        row = self.db.claim_next_import(session_id)
+        if row is None:
+            await lease.release()
+            return
+        self._import_task = asyncio.create_task(self._run_queued_import_row(row, cfg, lease))
+
+    async def _run_queued_import_row(self, row: Mapping[str, Any], cfg: Any, lease: Any) -> None:
+        import_id = int(row["id"])
+        item_id = int(row["item_id"])
+        item_name = str(row["item_name"] or f"Item {item_id}")
+        path = str(row["path"] or "")
+        args = str(row["args"] or "")
+        session_id = str(row["session_id"] or f"whackamole-queued-import-{import_id}")
+        output_chunks: list[str] = []
+        client = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
+        self._last_ua_job_started_at = time.time()
+        try:
+            async for chunk in client.execute_upload_stream(path, args, session_id):
+                output_chunks.append(str(chunk))
+            message = f"Queued import complete: {item_name}"
+            self.db.mark_import_complete(import_id, message, "".join(output_chunks))
+            self.db.append_service_error(message)
+        except Exception as exc:
+            message = f"Queued import failed: {item_name}: {str(exc)[:180]}"
+            self.db.mark_import_error(import_id, message, "".join(output_chunks))
+            self.db.append_service_error(message)
+        finally:
+            await lease.release()
+
     def snapshot(self) -> dict:
         cfg = self.config_manager.load()
         task_alive = self._task is not None and not self._task.done()
@@ -346,6 +405,7 @@ class WhackamoleService:
             "inventory_done": self.db.get_kv("inventory_done") == "true",
             "inventory_count": self.db.count_items([]),
             "queue": self.db.queue_counts(),
+            "imports": self.db.queued_import_counts(),
             "whacked": self.db.whacked_stats(),
             "maintenance": self.maintenance_snapshot(cfg),
             "ua_execution": self.ua_execution.snapshot(),
