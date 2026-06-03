@@ -65,6 +65,7 @@ def test_item_page_upload_console_prefills_trackers_and_missing_service(tmp_path
 
         assert response.status_code == 200
         assert "Upload Assistant" in response.text
+        assert "data-upload-autorun" in response.text
         assert '--trackers dp,ulcx --service AMZN' in response.text
 
 
@@ -83,6 +84,18 @@ def test_item_page_upload_console_does_not_duplicate_service_when_title_has_it(t
         response = client.get(f"/items/{item_id}#upload-assistant")
 
         assert response.status_code == 200
+        assert 'data-upload-args value="--trackers dp,ulcx"' in response.text
+
+
+def test_item_page_discovarr_source_uses_release_title_provider(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_candidate(client, name="Amy_Bradley_Is_Missing_S01E03_2025_2160p_NF_WEB-DL_DDP5_1-GRP")
+
+        response = client.get(f"/items/{item_id}")
+
+        assert response.status_code == 200
+        assert "Source: NF" in response.text
+        assert "Source Missing" not in response.text
         assert 'data-upload-args value="--trackers dp,ulcx"' in response.text
 
 

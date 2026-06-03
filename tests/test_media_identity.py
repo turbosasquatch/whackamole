@@ -9,7 +9,7 @@ from app.media_identity import (
     traits_from_mediainfo,
     traits_payload,
 )
-from app.source_providers import extract_provider_abbreviation
+from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "mediainfo"
 
@@ -28,6 +28,15 @@ def test_source_provider_can_be_extracted_from_nfo_long_and_short_names():
     assert extract_provider_abbreviation("Site: Netflix") == "NF"
     assert extract_provider_abbreviation("Network: Amazon Prime Video") == "AMZN"
     assert extract_provider_abbreviation("Source : DSNP") == "DSNP"
+
+
+def test_source_provider_can_be_extracted_from_release_title_web_position():
+    assert extract_provider_from_release_title("Amy_Bradley_Is_Missing_S01E03_2025_2160p_NF_WEB-DL_DDP5_1") == "NF"
+    assert extract_provider_from_release_title("Squatters.S01E07.1080p.HULU.WEB-DL.AAC2.0") == "HULU"
+
+
+def test_source_provider_title_extraction_avoids_short_title_words():
+    assert extract_provider_from_release_title("It.2026.1080p.WEB-DL.DDP5.1.H.264-GRP") == ""
 
 
 def test_release_identity_parses_symbol_release_group():

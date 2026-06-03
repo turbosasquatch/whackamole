@@ -270,6 +270,7 @@
     const output = consoleRoot.querySelector("[data-upload-output]");
     const argsInput = consoleRoot.querySelector("[data-upload-args]");
     const executeButton = consoleRoot.querySelector("[data-upload-execute]");
+    const autorunButton = consoleRoot.querySelector("[data-upload-autorun]");
     const clearButton = consoleRoot.querySelector("[data-upload-clear]");
     const killButton = consoleRoot.querySelector("[data-upload-kill]");
     const inputForm = consoleRoot.querySelector("[data-upload-input-form]");
@@ -351,6 +352,7 @@
     const setRunning = (value, label) => {
       running = value;
       executeButton.disabled = value || !canExecute;
+      if (autorunButton) autorunButton.disabled = value || !canExecute;
       clearButton.hidden = value;
       killButton.hidden = !value;
       inputField.disabled = !value;
@@ -432,6 +434,23 @@
         setRunning(false, "Idle");
       }
     };
+    const withUnattendedArg = (value) => {
+      const trimmed = String(value || "").trim();
+      if (/(^|\s)--unattended(\s|$)/.test(trimmed)) return trimmed;
+      return `${trimmed} --unattended`.trim();
+    };
+    const startUpload = (args) => {
+      if (!canExecute || running) return;
+      output.innerHTML = "";
+      lastFullSnapshotText = "";
+      appendLine("Starting Upload Assistant...");
+      setRunning(true, "Running");
+      openStream(consoleRoot.dataset.executeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ args }),
+      });
+    };
 
     output.addEventListener("scroll", () => {
       followingLatest = isNearBottom();
@@ -442,17 +461,15 @@
     }
 
     executeButton.addEventListener("click", () => {
-      if (!canExecute || running) return;
-      output.innerHTML = "";
-      lastFullSnapshotText = "";
-      appendLine("Starting Upload Assistant...");
-      setRunning(true, "Running");
-      openStream(consoleRoot.dataset.executeUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args: argsInput.value || "" }),
-      });
+      startUpload(argsInput.value || "");
     });
+
+    if (autorunButton) {
+      autorunButton.addEventListener("click", () => {
+        argsInput.value = withUnattendedArg(argsInput.value);
+        startUpload(argsInput.value || "");
+      });
+    }
 
     clearButton.addEventListener("click", () => {
       if (running) return;

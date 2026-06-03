@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -28,10 +30,17 @@ from app.media_policy import (
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
 from app.srrdb import apply_srrdb_result, verify_srrdb_release
+from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
 
 
 INVENTORY_RECONCILE_INTERVAL_SECONDS = 15 * 60
+MAX_NFO_BYTES = 262144
+NFO_EXTENSIONS = {".nfo"}
+SOURCE_PROVIDER_FIELD_RE = re.compile(
+    r"\b(?:service|network|studio|publisher|provider|source|site)\b",
+    re.IGNORECASE,
+)
 
 
 def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> ReleaseTraits:
@@ -54,6 +63,95 @@ def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> Rele
             local = replace(local, **updates)
         break
     return local
+
+
+def _is_web_media_result(item_name: str, media_result: Mapping[str, Any]) -> bool:
+    traits = media_result.get("local_traits") if isinstance(media_result.get("local_traits"), Mapping) else {}
+    values = " ".join(
+        str(value or "")
+        for value in (
+            item_name,
+            traits.get("rip_type"),
+            traits.get("source_tag"),
+            traits.get("source"),
+            traits.get("source_label"),
+        )
+    )
+    return bool(re.search(r"\b(?:WEB[-_. ]?DL|WEBDL|WEBRIP|WEB[-_. ]?RIP|WEB)\b", values, re.IGNORECASE))
+
+
+def _source_provider_from_media_result(media_result: Mapping[str, Any]) -> str:
+    traits = media_result.get("local_traits") if isinstance(media_result.get("local_traits"), Mapping) else {}
+    provider = provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
+    if provider:
+        return provider
+    fields: list[str] = []
+    files = media_result.get("mediainfo_files") if isinstance(media_result.get("mediainfo_files"), list) else []
+    for file_info in files:
+        if not isinstance(file_info, Mapping):
+            continue
+        file_traits = file_info.get("traits") if isinstance(file_info.get("traits"), Mapping) else {}
+        provider = provider_abbreviation_for_label(str(file_traits.get("source_provider") or ""))
+        if provider:
+            return provider
+        _collect_source_provider_fields(file_info, fields)
+    payloads = media_result.get("raw_mediainfo_payloads") if isinstance(media_result.get("raw_mediainfo_payloads"), list) else []
+    for payload in payloads:
+        _collect_source_provider_fields(payload, fields)
+    return extract_provider_abbreviation(*fields)
+
+
+def _collect_source_provider_fields(value: Any, fields: list[str]) -> None:
+    if isinstance(value, Mapping):
+        field_name = str(value.get("name") or value.get("@name") or "")
+        if field_name and SOURCE_PROVIDER_FIELD_RE.search(field_name) and "value" in value:
+            fields.append(f"{field_name}: {value.get('value')}")
+        for key, nested in value.items():
+            key_text = str(key or "")
+            if SOURCE_PROVIDER_FIELD_RE.search(key_text) and isinstance(nested, (str, int, float)):
+                fields.append(f"{key_text}: {nested}")
+            elif isinstance(nested, (Mapping, list, tuple)):
+                _collect_source_provider_fields(nested, fields)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            _collect_source_provider_fields(nested, fields)
+
+
+def _nfo_payload(content: str, path: str, source: str) -> Dict[str, Any]:
+    return {
+        "available": bool(content),
+        "source": source,
+        "path": path,
+        "content": content,
+        "provider_abbreviation": extract_provider_abbreviation(content),
+        "message": f"NFO found at {path}." if content else "No NFO content found.",
+    }
+
+
+async def _grab_nfo_from_qui(qui: QuiClient, item: Mapping[str, Any], torrent_files: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    try:
+        for file_info in torrent_files:
+            name = str(file_info.get("name") or "")
+            if Path(name).suffix.lower() not in NFO_EXTENSIONS:
+                continue
+            content = (
+                await qui.download_torrent_file(str(item["hash"] or ""), int(file_info.get("index") or 0), MAX_NFO_BYTES)
+            ).decode("utf-8", errors="replace")
+            return _nfo_payload(content, name, "qui")
+    except Exception as exc:
+        return {"available": False, "message": f"Could not grab NFO: {str(exc)[:180]}", "source": "error"}
+    return {"available": False, "message": "No NFO found in QUI files.", "source": "qui"}
+
+
+def _source_provider_for_web_gate(item_name: str, media_result: Mapping[str, Any], nfo_result: Optional[Mapping[str, Any]] = None) -> str:
+    provider = extract_provider_from_release_title(item_name)
+    if provider:
+        return provider
+    if nfo_result:
+        provider = str(nfo_result.get("provider_abbreviation") or "").strip()
+        if provider:
+            return provider
+    return _source_provider_from_media_result(media_result)
 
 
 def _int_kv(value: Optional[str]) -> int:
@@ -572,6 +670,45 @@ class WhackamoleService:
                 "mediainfo_files": len(media_result.get("mediainfo_files") or []),
             },
         )
+        item_name = str(item["name"] or "")
+        if _is_web_media_result(item_name, media_result) and not _source_provider_for_web_gate(item_name, media_result):
+            self.db.update_check_stage(item_id, "nfo", "Looking for WEB source provider in NFO.", check_results)
+            nfo_started_at = time.perf_counter()
+            nfo_result = await _grab_nfo_from_qui(qui, item, torrent_files)
+            check_results = merge_check_results(check_results, nfo=nfo_result, flags=check_results.get("flags", []))
+            provider = _source_provider_for_web_gate(item_name, media_result, nfo_result)
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="nfo",
+                status="passed" if provider else "failed",
+                reason=str(nfo_result.get("message") or "NFO source lookup complete."),
+                started_at=nfo_started_at,
+                extra={"provider": provider or ""},
+            )
+            if not provider:
+                flags = list(check_results.get("flags") or [])
+                flags.append(
+                    {
+                        "key": "source_missing",
+                        "label": "Source Missing",
+                        "severity": "warning",
+                        "detail": "WEB-DL/WEBRip source provider was not found in the title, MediaInfo, or NFO.",
+                    }
+                )
+                reason = "WEB-DL/WEBRip source provider is missing; review before upload."
+                check_results = merge_check_results(check_results, flags=flags)
+                self.db.update_status(
+                    item_id,
+                    "manual_review",
+                    "source_missing",
+                    reason,
+                    tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+                    arr_results={},
+                    check_stage="done",
+                    check_results=check_results,
+                    increment_attempt=True,
+                )
+                return media_result, check_results, True
         return media_result, check_results, False
 
     def _run_path_stage(

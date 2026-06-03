@@ -393,6 +393,9 @@
           <button class="button" type="button" data-upload-execute {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
             {% if ua_check_busy %}Check running{% elif ua_busy and not ua_busy_this_item %}Busy{% else %}Execute Upload{% endif %}
           </button>
+          <button class="button secondary" type="button" data-upload-autorun {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
+            Autorun
+          </button>
           <button class="button secondary" type="button" data-upload-clear {% if ua_busy_this_item %}hidden{% endif %}>Clear</button>
           <button class="button danger" type="button" data-upload-kill {% if not ua_busy_this_item %}hidden{% endif %}>Kill &amp; Clear</button>
         </div>

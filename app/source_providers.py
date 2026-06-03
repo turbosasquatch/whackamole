@@ -186,6 +186,8 @@ PROVIDERS: Sequence[Provider] = (
 
 
 SOURCE_MARKERS = re.compile(r"\b(?:site|network|source|service|provider|streaming)\b", re.IGNORECASE)
+WEB_TITLE_TOKENS = {"WEB", "WEBDL", "WEBRIP", "WEBHD"}
+PROVIDER_BY_UPPER_ABBREVIATION = {abbreviation.upper(): abbreviation for abbreviation, _name, _aliases in PROVIDERS}
 
 
 def extract_provider_abbreviation(*texts: str) -> str:
@@ -197,6 +199,27 @@ def extract_provider_abbreviation(*texts: str) -> str:
         match = _match_provider(text, allow_short_abbreviations=text in marker_lines)
         if match:
             return match
+    return ""
+
+
+def extract_provider_from_release_title(title: str) -> str:
+    """Extract a provider token from common release-title source positions."""
+    tokens = re.findall(r"[A-Za-z0-9+]+", str(title or ""))
+    if not tokens:
+        return ""
+    normalized_tokens = [token.upper().replace("+", "") for token in tokens]
+    candidate_indexes = set()
+    for index, token in enumerate(normalized_tokens):
+        if token not in WEB_TITLE_TOKENS:
+            continue
+        for offset in (-2, -1, 1, 2):
+            candidate_indexes.add(index + offset)
+    for index in sorted(candidate_indexes):
+        if index < 0 or index >= len(normalized_tokens):
+            continue
+        provider = PROVIDER_BY_UPPER_ABBREVIATION.get(normalized_tokens[index])
+        if provider:
+            return provider
     return ""
 
 

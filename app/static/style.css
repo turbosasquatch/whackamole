@@ -296,10 +296,16 @@ textarea {
 
 .topbar-title strong {
   font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-title span {
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .top-search {
@@ -1266,6 +1272,22 @@ tr:last-child td {
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  min-width: 0;
+}
+
+.media-card header h3,
+.media-card header .item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.media-card header h3 a,
+.media-card header .item-title {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .card-facts {
@@ -1448,17 +1470,22 @@ tr:last-child td {
 .upload-console {
   display: grid;
   gap: 14px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .upload-console-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .upload-console-grid label {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .upload-console-grid label > span {
@@ -1474,6 +1501,7 @@ tr:last-child td {
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   min-height: 38px;
+  min-width: 0;
   padding: 8px 10px;
   width: 100%;
 }
@@ -1519,6 +1547,7 @@ tr:last-child td {
   align-items: center;
   display: flex;
   gap: 10px;
+  min-width: 0;
 }
 
 .upload-console-actions .button {
@@ -1526,6 +1555,7 @@ tr:last-child td {
 }
 
 .upload-console-terminal-wrap {
+  min-width: 0;
   position: relative;
 }
 
@@ -1538,9 +1568,14 @@ tr:last-child td {
   font-size: 13px;
   height: clamp(320px, 50vh, 560px);
   line-height: 1.45;
+  max-width: 100%;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
   padding: 14px;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .upload-console-terminal a {
@@ -1853,6 +1888,13 @@ dd {
     width: 100vw;
   }
 
+  .app-shell.sidebar-collapsed.sidebar-open .app-sidebar {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+    width: 100vw;
+  }
+
   .sidebar-backdrop {
     background: rgba(15, 23, 42, 0.46);
     border: 0;
@@ -1871,18 +1913,27 @@ dd {
   }
 
   .topbar {
-    align-items: stretch;
-    flex-wrap: wrap;
+    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px;
   }
 
   .topbar-left {
-    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .topbar-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    min-width: 0;
   }
 
   .top-search {
-    flex: 1 1 100%;
-    order: 3;
+    grid-column: 1 / -1;
+    min-width: 0;
+    order: initial;
   }
 
   .top-search input {
@@ -2002,7 +2053,8 @@ dd {
   }
 
   .topbar-actions {
-    flex: 1 1 100%;
+    flex: 0 0 auto;
+    justify-content: flex-end;
   }
 
   .notification-popout {

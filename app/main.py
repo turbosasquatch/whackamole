@@ -38,7 +38,7 @@ from app.inventory import (
 )
 from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
-from app.source_providers import extract_provider_abbreviation, provider_abbreviation_for_label
+from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator, UploadConsoleManager
 
 APP_DIR = Path(__file__).resolve().parent
@@ -447,7 +447,8 @@ def _discovarr_local_traits(
             traits[key] = file_traits[key]
     nfo = nfo_info if isinstance(nfo_info, dict) else {}
     provider = (
-        str(nfo.get("provider_abbreviation") or "")
+        extract_provider_from_release_title(str(item.get("name") or ""))
+        or str(nfo.get("provider_abbreviation") or "")
         or _source_provider_from_mediainfo(media)
     )
     if provider:
@@ -862,6 +863,9 @@ def _upload_console_args(item: Dict[str, Any]) -> str:
 
 
 def _source_provider_for_item(item: Dict[str, Any]) -> str:
+    title_provider = extract_provider_from_release_title(str(item.get("name") or ""))
+    if title_provider:
+        return title_provider
     nfo = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else {}
     provider = str(nfo.get("provider_abbreviation") or "").strip()
     if provider:
