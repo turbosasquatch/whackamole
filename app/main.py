@@ -711,7 +711,7 @@ def _srrdb_summary_state(srrdb: Dict[str, Any]) -> tuple[str, str]:
 
 def _source_summary_state(item: Dict[str, Any]) -> tuple[str, str]:
     if not _is_web_release(item):
-        return "Source Not Required", "neutral"
+        return "Not Required", "neutral"
     if _source_provider_for_item(item):
         return "Pass", "pass"
     return "Warning", "warning"
@@ -2047,7 +2047,7 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
             path=path,
             args=_with_unattended_arg(str(console.get("args") or "")),
         )
-    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#upload-assistant"), status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/api/items/{item_id}/upload-assistant/execute")

@@ -1200,7 +1200,6 @@ tr:last-child td {
   font-size: 0.8rem;
 }
 
-.mobile-bottom-nav,
 .mobile-search-toggle {
   display: none;
 }
@@ -1291,7 +1290,7 @@ tr:last-child td {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 12px;
-  grid-template-columns: 132px 104px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(160px, 0.85fr) minmax(116px, 148px) minmax(260px, 2.4fr) auto;
   min-height: 38px;
   padding: 10px 0;
 }
@@ -1303,12 +1302,15 @@ tr:last-child td {
 .check-summary-row strong {
   font-size: 14px;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .check-summary-row .muted {
   font-size: 13px;
   line-height: 1.35;
   min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .check-state,
@@ -1326,6 +1328,8 @@ tr:last-child td {
 
 .check-state {
   justify-content: center;
+  min-width: 116px;
+  max-width: 100%;
 }
 
 .check-state.pass,
@@ -1596,11 +1600,18 @@ tr:last-child td {
 }
 
 .info-grid {
+  display: grid;
+  gap: 14px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .overview-summary-grid {
   grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+}
+
+.overview-summary-grid > section {
+  width: 100%;
 }
 
 .info-grid > section,
@@ -2439,55 +2450,6 @@ dd {
     display: inline-flex;
   }
 
-  .content-shell {
-    padding-bottom: calc(104px + env(safe-area-inset-bottom));
-  }
-
-  .mobile-bottom-nav {
-    align-items: center;
-    background: rgba(255, 255, 255, 0.96);
-    border-top: 1px solid var(--line);
-    bottom: max(10px, env(safe-area-inset-bottom));
-    box-shadow: 0 -10px 30px rgba(15, 23, 42, 0.08);
-    display: grid;
-    gap: 6px;
-    grid-template-columns: repeat(3, 1fr);
-    left: max(10px, env(safe-area-inset-left));
-    padding: 7px;
-    position: fixed;
-    right: max(10px, env(safe-area-inset-right));
-    z-index: 45;
-  }
-
-  .mobile-bottom-nav a {
-    align-items: center;
-    border-radius: 8px;
-    color: var(--muted);
-    display: grid;
-    font-size: 0.78rem;
-    gap: 2px;
-    font-weight: 700;
-    min-height: 52px;
-    padding: 6px 6px;
-    text-align: center;
-    text-decoration: none;
-  }
-
-  .mobile-bottom-nav a span {
-    font-size: 18px;
-    line-height: 1;
-  }
-
-  .mobile-bottom-nav a strong {
-    font-size: 11px;
-    line-height: 1.1;
-  }
-
-  .mobile-bottom-nav a.active {
-    background: var(--surface-strong);
-    color: var(--text);
-  }
-
   .filter-panel {
     border-radius: 0;
   }
@@ -2511,11 +2473,14 @@ dd {
 
   .media-card .item-title {
     overflow-wrap: anywhere;
+    white-space: normal;
+    word-break: break-word;
   }
 
   .media-card header .item-title {
     display: block;
     overflow: visible;
+    text-overflow: clip;
     -webkit-line-clamp: unset;
   }
 
@@ -2609,6 +2574,31 @@ dd {
 
   .imports-table-wrap {
     max-height: none;
+    overflow: visible;
+  }
+
+  .imports-panel > .panel-heading {
+    display: grid;
+    gap: 12px;
+  }
+
+  .imports-panel > .panel-heading .button-row {
+    align-items: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .imports-panel > .panel-heading .button-row form,
+  .imports-panel > .panel-heading .button-row .button {
+    width: 100%;
+  }
+
+  .imports-table,
+  .imports-table thead,
+  .imports-table tbody {
+    display: block;
+    width: 100%;
   }
 
   .imports-table tr {
@@ -2619,14 +2609,17 @@ dd {
     gap: 8px;
     margin: 0 0 10px;
     padding: 10px;
+    width: 100%;
   }
 
   .imports-table td {
     border: 0;
     display: grid;
     gap: 4px;
-    grid-template-columns: 86px minmax(0, 1fr);
+    grid-template-columns: minmax(78px, 0.28fr) minmax(0, 1fr);
+    min-width: 0;
     padding: 0;
+    width: auto !important;
   }
 
   .imports-table td::before {
@@ -2638,12 +2631,27 @@ dd {
   }
 
   .imports-table td:first-child {
-    display: block;
+    display: grid;
   }
 
   .imports-table td:first-child::before {
-    display: block;
-    margin-bottom: 4px;
+    margin-bottom: 0;
+  }
+
+  .imports-table .item-title,
+  .imports-table .path-cell,
+  .imports-table td {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .imports-table .import-state {
+    justify-self: start;
+    min-width: 0;
+    white-space: normal;
+    word-break: normal;
   }
 
   .mini-table tr,

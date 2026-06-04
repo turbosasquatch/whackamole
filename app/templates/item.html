@@ -41,8 +41,8 @@
       <form method="post" action="/items/{{ item.id }}/recheck" data-submit-tick="Recheck triggered">
         <button class="button" type="submit" data-submit-tick-button>Recheck</button>
       </form>
-      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued">
-        <input type="hidden" name="return_to" value="/items/{{ item.id }}#upload-assistant">
+      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-queue-upload-form data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue">
+        <input type="hidden" name="return_to" value="/items/{{ item.id }}">
         <button class="button success" type="submit" data-submit-tick-button>Queue Upload</button>
       </form>
       <form method="post" action="/items/{{ item.id }}/ignore">

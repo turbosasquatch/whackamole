@@ -348,7 +348,7 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "/items/recheck-filtered" in page.text
         assert f'/items/{item_id}/recheck' not in page.text
         assert "Run recheck" not in page.text
-        assert "mobile-bottom-nav" in page.text
+        assert "mobile-bottom-nav" not in page.text
         assert "data-search-open" in page.text
         assert "data-search-modal" in page.text
         assert f'/items/{item_id}/upload-assistant/queue' in page.text
@@ -686,8 +686,46 @@ def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monk
         assert "Queue Upload" in page.text
         assert 'data-submit-tick="Recheck triggered"' in page.text
         assert 'data-submit-tick="Upload queued"' in page.text
+        assert "data-queue-upload-form" in page.text
+        assert f'data-queue-url="/api/items/{item_id}/upload-assistant/queue"' in page.text
+        assert f'value="/items/{item_id}"' in page.text
+        assert f'value="/items/{item_id}#upload-assistant"' not in page.text
         assert "Next Item" in page.text
         assert ">Size<" not in page.text
+
+
+def test_item_overview_shortens_source_not_required_status(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "bluray-source-not-required",
+                "name": "Example.Movie.2026.1080p.BluRay.x264-GRP",
+                "category": "movies",
+                "tags": "",
+                "content_path": "/media/torrents/movies/Example.Movie.2026.1080p.BluRay.x264-GRP.mkv",
+                "size": 123456789,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: IHD",
+            tracker_results={"passed": ["IHD"], "dupe": [], "skipped": [], "error": []},
+            increment_attempt=True,
+        )
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert "Source Detection" in page.text
+        assert "Not Required" in page.text
+        assert "Source Not Required" not in page.text
 
 
 def test_high_quality_trackers_default_empty_and_cross_check_setting(tmp_path, monkeypatch):

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul9">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul9" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul11">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul11" defer></script>
   </head>
   <body>
     <div class="app-shell" data-app-shell>
@@ -143,20 +143,6 @@
         <main class="content-shell">
           {% block content %}{% endblock %}
         </main>
-        <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
-          <a href="/" class="{% if section == 'home' %}active{% endif %}">
-            <span aria-hidden="true">⌂</span>
-            <strong>Dashboard</strong>
-          </a>
-          <a href="/dashboard?view=candidates" class="{% if section == 'dashboard' %}active{% endif %}">
-            <span aria-hidden="true">☰</span>
-            <strong>List View</strong>
-          </a>
-          <a href="/config" class="{% if section == 'settings' %}active{% endif %}">
-            <span aria-hidden="true">⚙</span>
-            <strong>Settings</strong>
-          </a>
-        </nav>
       </div>
     </div>
 

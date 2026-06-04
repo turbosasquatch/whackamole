@@ -124,6 +124,25 @@ def test_upload_console_queue_endpoint_waits_for_manual_import_run(tmp_path, mon
         assert rows[0]["status"] == "pending"
 
 
+def test_item_queue_upload_form_stays_on_item_page(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+
+        response = client.post(
+            f"/items/{item_id}/upload-assistant/queue",
+            data={"return_to": f"/items/{item_id}"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/items/{item_id}"
+        assert client.app.state.db.list_imports()[0]["item_id"] == item_id
+
+
 def test_imports_run_pending_button_triggers_runner(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.db.enqueue_import(

@@ -127,8 +127,34 @@
 
   document.querySelectorAll("form[data-submit-tick]").forEach((form) => {
     form.addEventListener("submit", () => {
+      if (form.matches("[data-queue-upload-form]")) return;
       const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
       setButtonTick(button, form.dataset.submitTick || "Done");
+    });
+  });
+
+  document.querySelectorAll("form[data-queue-upload-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      const queueUrl = form.dataset.queueUrl;
+      const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
+      if (!queueUrl || !button || !window.fetch) return;
+      event.preventDefault();
+      button.disabled = true;
+      try {
+        const response = await fetch(queueUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.error || `Queue failed with ${response.status}`);
+        }
+        setButtonTick(button, form.dataset.submitTick || "Upload queued");
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = error.message || "Queue failed";
+      }
     });
   });
 
