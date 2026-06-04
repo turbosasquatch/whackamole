@@ -260,6 +260,25 @@
     </div>
   </section>
 
+  <section>
+    <h2>High Quality Trackers</h2>
+    <div class="checkbox-grid">
+      {% for tracker in tracker_options %}
+        <label class="checkbox">
+          <input
+            name="high_quality_trackers"
+            value="{{ tracker.key }}"
+            type="checkbox"
+            {% if tracker.key in high_quality_trackers %}checked{% endif %}
+          >
+          {{ tracker.label }}{% if tracker.label != tracker.key %} ({{ tracker.key }}){% endif %}
+        </label>
+      {% else %}
+        <p class="muted">No trackers found yet.</p>
+      {% endfor %}
+    </div>
+  </section>
+
   <footer class="save-bar">
     <button class="button" type="submit">Save settings</button>
   </footer>

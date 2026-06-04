@@ -14,9 +14,8 @@
   <aside class="filter-panel" data-filter-panel aria-label="Dashboard filters">
     <div class="panel-heading">
       <div>
-        <span class="eyebrow">Media</span>
-        <h2>{{ dashboard_filters.label | title }}</h2>
-        <p>{{ dashboard_filters.filtered_total }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }} · showing {{ pagination.start }}-{{ pagination.end }}</p>
+        <span class="eyebrow">{{ dashboard_filters.label | title }}</span>
+        <p class="compact-count">{{ dashboard_filters.filtered_total }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }} · showing {{ pagination.start }}-{{ pagination.end }}</p>
       </div>
       <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters">x</button>
     </div>
@@ -112,10 +111,7 @@
   </aside>
 
   <section class="media-pane">
-    <div class="list-toolbar">
-      <span>{% if search_query %}Search: "{{ search_query }}"{% else %}{{ dashboard_filters.label | title }}{% endif %}</span>
-      <button class="button secondary small mobile-only" type="button" data-filter-toggle>Filters</button>
-    </div>
+    <p class="mobile-list-count">Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total }}</p>
 
     <div class="table-wrap media-table" aria-label="Media table">
       <table data-resizable-table="{% if problem_view %}media-problem{% else %}media-standard{% endif %}">
@@ -134,7 +130,6 @@
           <col data-column-key="category">
           <col data-column-key="size">
           <col data-column-key="updated">
-          <col data-column-key="actions">
         </colgroup>
         <thead>
           <tr>
@@ -152,7 +147,6 @@
             <th data-column-key="category">Category</th>
             <th data-column-key="size">Size</th>
             <th data-column-key="updated">Updated</th>
-            <th data-column-key="actions"></th>
           </tr>
         </thead>
         <tbody>
@@ -163,7 +157,7 @@
               </td>
               <td>
                 <div class="flag-stack">
-                  {% for flag in item.check_flags[:3] %}
+                  {% for flag in item.alert_tags[:3] %}
                     <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
                   {% else %}
                     <span class="muted">-</span>
@@ -189,18 +183,10 @@
               {% endif %}
               <td>
                 <div class="coverage-badges">
-                  {% for tracker in item.coverage_status.found_default %}
-                    <span class="coverage-badge found-default">{{ tracker.label }}</span>
-                  {% endfor %}
-                  {% for tracker in item.coverage_status.found_other %}
-                    <span class="coverage-badge found-other">{{ tracker.label }}</span>
-                  {% endfor %}
-                  {% for tracker in item.coverage_status.missing_default %}
-                    <span class="coverage-badge missing-default">{{ tracker.label }}</span>
+                  {% for tracker in item.tracker_coverage %}
+                    <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
                   {% else %}
-                    {% if not item.coverage_status.found_default and not item.coverage_status.found_other %}
-                      <span class="muted">No coverage</span>
-                    {% endif %}
+                    <span class="muted">No coverage</span>
                   {% endfor %}
                 </div>
               </td>
@@ -210,18 +196,10 @@
               </td>
               <td>{{ item.size | bytes }}</td>
               <td>{{ item.updated_at | datetime }}</td>
-              <td class="actions action-row">
-                {% if item.status in ["baseline", "candidate", "covered", "blocked", "manual_review", "error"] %}
-                  <form method="post" action="/items/{{ item.id }}/recheck">
-                    <input type="hidden" name="return_to" value="{{ current_url }}">
-                    <button class="button small secondary" type="submit">Run recheck</button>
-                  </form>
-                {% endif %}
-              </td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="10" class="empty">
+              <td colspan="99" class="empty">
                 <strong>No items in this view.</strong>
                 <span>Try another status, clear search, or loosen the coverage filters.</span>
               </td>
@@ -239,7 +217,7 @@
             <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
           </header>
           <div class="flag-stack">
-            {% for flag in item.check_flags[:3] %}
+            {% for flag in item.alert_tags %}
               <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
             {% endfor %}
           </div>
@@ -260,23 +238,15 @@
             <span>{{ item.category or "No category" }}</span>
           </div>
           <div class="coverage-badges">
-            {% for tracker in item.coverage_status.found_default %}
-              <span class="coverage-badge found-default">{{ tracker.label }}</span>
-            {% endfor %}
-            {% for tracker in item.coverage_status.found_other %}
-              <span class="coverage-badge found-other">{{ tracker.label }}</span>
-            {% endfor %}
-            {% for tracker in item.coverage_status.missing_default %}
-              <span class="coverage-badge missing-default">{{ tracker.label }}</span>
+            {% for tracker in item.tracker_coverage %}
+              <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
             {% endfor %}
           </div>
           <footer>
-            {% if item.status in ["baseline", "candidate", "covered", "blocked", "manual_review", "error"] %}
-              <form method="post" action="/items/{{ item.id }}/recheck">
+            <form method="post" action="/items/{{ item.id }}/upload-assistant/queue">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small secondary" type="submit">Run recheck</button>
-              </form>
-            {% endif %}
+                <button class="button small success" type="submit">Upload</button>
+            </form>
           </footer>
         </article>
       {% else %}

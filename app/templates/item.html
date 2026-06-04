@@ -27,13 +27,12 @@
 
   <section class="item-hero">
     <div>
-      <span class="eyebrow">Torrent</span>
       <h1>{{ item.name }}</h1>
       <p class="hash-line">{{ item.hash }}</p>
       <div class="hero-badges">
         <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
         {% if item.verdict %}<span class="pill neutral">{{ item.verdict }}</span>{% endif %}
-        {% for flag in item.check_flags %}
+        {% for flag in item.alert_tags %}
           <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
         {% endfor %}
       </div>
@@ -42,21 +41,23 @@
       <form method="post" action="/items/{{ item.id }}/recheck">
         <button class="button" type="submit">Recheck</button>
       </form>
+      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue">
+        <input type="hidden" name="return_to" value="/items/{{ item.id }}#upload-assistant">
+        <button class="button success" type="submit">Queue Upload</button>
+      </form>
       <form method="post" action="/items/{{ item.id }}/ignore">
         <button class="button secondary" type="submit">Ignore</button>
       </form>
-      <a class="button secondary" href="/">Back</a>
+      <a class="button secondary" href="{{ next_item_url }}">Next Item</a>
     </div>
   </section>
 
   <section class="decision-panel">
-    <div>
+    <div class="decision-widget">
       <span class="eyebrow">Decision</span>
       <strong>{{ item.verdict or item.next_action }}</strong>
       <p>{{ item.decision_notice or item.reason or item.display_status.detail or "No decision reason recorded yet." }}</p>
-    </div>
-    <div>
-      <span class="eyebrow">Valid For</span>
+      <p class="muted">Last checked {{ item.last_checked_at | datetime }}</p>
       <div class="big-trackers">
         {% for tracker in item.valid_for_trackers %}
           <span class="big-tracker">{{ tracker }}</span>
@@ -64,41 +65,27 @@
           <span class="muted">No tracker eligibility recorded.</span>
         {% endfor %}
       </div>
-    </div>
-    <div>
-      <span class="eyebrow">Size</span>
-      <strong>{{ item.size | bytes }}</strong>
-      <p>Updated {{ item.updated_at | datetime }}</p>
+      <div class="coverage-badges">
+        {% for tracker in item.tracker_coverage %}
+          <span class="coverage-badge {{ tracker.state }} {% if tracker.state == 'not-valid' %}missing-default{% endif %}">{{ tracker.label }}</span>
+        {% else %}
+          <span class="muted">No tracker coverage recorded.</span>
+        {% endfor %}
+      </div>
     </div>
   </section>
 
-  <section class="raw-actions">
-    <form method="post" action="/items/{{ item.id }}/grab-nfo">
-      <input type="hidden" name="return_to" value="{{ current_url | default('/items/' ~ item.id ~ '#discovarr') }}">
-      <button class="button secondary small" type="submit">Grab NFO</button>
-    </form>
-    {% for key, payload in item.raw_payloads.items() %}
-      <button
-        class="button secondary small"
-        type="button"
-        data-raw-open
-        data-raw-title="{{ payload.title }}"
-        data-raw-kind="{{ payload.kind }}"
-        data-raw-source="raw-{{ key }}"
-        {% if not payload.available %}data-raw-muted="true"{% endif %}
-      >{{ payload.title }}</button>
-      <script type="application/json" id="raw-{{ key }}">{{ payload.content | tojson }}</script>
-    {% endfor %}
-  </section>
+  {% for key, payload in item.raw_payloads.items() %}
+    <script type="application/json" id="raw-{{ key }}">{{ payload.content | tojson }}</script>
+  {% endfor %}
 
   <section class="tabs-shell" data-tabs>
     <div class="tab-list" role="tablist" aria-label="Item sections">
       <button class="active" type="button" data-tab-target="overview">Overview</button>
-      <button type="button" data-tab-target="checks">Checks</button>
       <button type="button" data-tab-target="mediainfo">Media Info</button>
-      <button type="button" data-tab-target="trackers">Trackers</button>
       <button type="button" data-tab-target="upload-assistant">Upload Assistant</button>
       <button type="button" data-tab-target="discovarr">Discovarr</button>
+      <button type="button" data-tab-target="reporting">Reporting</button>
     </div>
 
     <div class="tab-panel active" data-tab-panel="overview">
@@ -111,6 +98,7 @@
                 <strong>{{ check.label }}</strong>
                 <span class="check-state {{ check.group }}">{{ check.state }}</span>
                 <span class="muted">{{ check.notes }}</span>
+                <button class="button secondary small" type="button" data-raw-open data-raw-title="{{ check.raw_title }}" data-raw-kind="{{ check.raw_kind }}" data-raw-source="raw-{{ check.raw_key }}">View</button>
               </div>
             {% endfor %}
           </div>
@@ -118,8 +106,8 @@
         <section>
           <h2>Coverage</h2>
           <div class="coverage-badges">
-            {% for tracker in item.coverage %}
-              <span class="coverage-badge {% if tracker.primary %}primary{% else %}other{% endif %}">{{ tracker.label }}</span>
+            {% for tracker in item.tracker_coverage %}
+              <span class="coverage-badge {{ tracker.state }} {% if tracker.state == 'not-valid' %}missing-default{% endif %}">{{ tracker.label }}</span>
             {% else %}
               <span class="muted">No tracker coverage recorded.</span>
             {% endfor %}
@@ -129,84 +117,10 @@
           {% endif %}
         </section>
       </div>
-    </div>
-
-    <div class="tab-panel" data-tab-panel="checks">
-      {% if policy.decisions %}
-        <section class="details-panel">
-          <h2>Release Group Policy</h2>
-          <div class="decision-list">
-            {% for decision in policy.decisions %}
-              <article class="decision-card {{ decision.status }}">
-                <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
-                <span>{{ decision.reason }}</span>
-                {% if decision.rank %}<span>Rank {{ decision.rank }}</span>{% endif %}
-              </article>
-            {% endfor %}
-          </div>
-        </section>
-      {% endif %}
-
-      {% if srrdb.status in ["verified", "mismatch"] %}
-        <section class="details-panel">
-          <div class="panel-heading">
-            <div>
-              <span class="eyebrow">srrDB</span>
-              <h2>{% if srrdb.status == "verified" %}Verified{% else %}Filename mismatch{% endif %}</h2>
-            </div>
-            <button class="button secondary small" type="button" data-raw-open data-raw-title="srrDB result" data-raw-kind="json" data-raw-source="raw-srrdb">Raw</button>
-          </div>
-          <p>{{ srrdb.reason }}</p>
-          {% if srrdb.status == "mismatch" %}
-            <dl>
-              <dt>Proper filename</dt>
-              <dd>{{ (srrdb.proper_filenames or srrdb.archived_video_files or []) | join(", ") }}</dd>
-              <dt>Local filename</dt>
-              <dd>{{ (srrdb.local_video_files or []) | join(", ") }}</dd>
-            </dl>
-          {% endif %}
-        </section>
-      {% endif %}
-
-      <section class="details-panel">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">Diagnostics</span>
-            <h2>Stage History</h2>
-          </div>
-          <button class="button secondary small" type="button" data-raw-open data-raw-title="Check diagnostics" data-raw-kind="json" data-raw-source="raw-diagnostics">Raw</button>
-        </div>
-        <table class="mini-table">
-          <thead><tr><th>Stage</th><th>Status</th><th>When</th><th>Reason</th></tr></thead>
-          <tbody>
-            {% for stage in checks.diagnostics.stages or [] %}
-              <tr>
-                <td>{{ stage.stage }}</td>
-                <td>{{ stage.status }}</td>
-                <td>{{ stage.at | datetime }}</td>
-                <td>{{ stage.reason or stage.error or "-" }}</td>
-              </tr>
-            {% else %}
-              <tr><td colspan="4" class="muted">No diagnostics recorded.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
 
       <div class="info-grid">
         <section class="details-panel">
-          <h2>Paths</h2>
-          <dl>
-            <dt>QUI path</dt>
-            <dd>{{ item.content_path }}</dd>
-            <dt>UA path</dt>
-            <dd>{{ item.mapped_path or "-" }}</dd>
-            <dt>UA args</dt>
-            <dd>{{ item.ua_args or "-" }}</dd>
-          </dl>
-        </section>
-        <section class="details-panel">
-          <h2>Video Files</h2>
+          <h2>Media Files</h2>
           {% if item.video_files.files %}
             <ul class="file-list">
               {% for file in item.video_files.files %}
@@ -223,6 +137,17 @@
             <p class="muted">{{ item.video_files.message or "-" }}</p>
           {% endif %}
         </section>
+        <section class="details-panel">
+          <h2>Tools</h2>
+          <div class="button-row">
+            <form method="post" action="/items/{{ item.id }}/grab-nfo">
+              <input type="hidden" name="return_to" value="{{ current_url | default('/items/' ~ item.id ~ '#overview') }}">
+              <button class="button secondary small" type="submit">Grab NFO</button>
+            </form>
+            <button class="button secondary small" type="button" data-raw-open data-raw-title="Check diagnostics" data-raw-kind="json" data-raw-source="raw-diagnostics">Check Diagnostics</button>
+            <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw QUI Torrent" data-raw-kind="json" data-raw-source="raw-qui">View Raw QUI Torrent</button>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -237,14 +162,21 @@
         </div>
         {% if media.reason %}<p>{{ media.reason }}</p>{% endif %}
         <div class="tag-list">
+          {% set seen_media_tags = namespace(values=[]) %}
           {% for tag in media.confirmed_tags or [] %}
-            <span>{{ tag }}</span>
+            {% if tag not in seen_media_tags.values %}
+              {% set seen_media_tags.values = seen_media_tags.values + [tag] %}
+              <span>{{ tag }}</span>
+            {% endif %}
           {% endfor %}
           {% for tag in media.custom_formats or [] %}
-            <span>{{ tag }}</span>
+            {% if tag not in seen_media_tags.values %}
+              {% set seen_media_tags.values = seen_media_tags.values + [tag] %}
+              <span>{{ tag }}</span>
+            {% endif %}
           {% endfor %}
         </div>
-        <table class="mini-table">
+        <table class="mini-table responsive-table">
           <thead>
             <tr>
               <th>Severity</th>
@@ -268,79 +200,6 @@
         </table>
       </section>
 
-      <section class="details-panel">
-        <h2>QUI MediaInfo Files</h2>
-        <table class="mini-table">
-          <thead><tr><th>File</th><th>Tags</th><th>Default audio</th></tr></thead>
-          <tbody>
-            {% for media_file in media.mediainfo_files or [] %}
-              <tr>
-                <td>{{ media_file.name or ("File " ~ media_file.index) }}</td>
-                <td>
-                  {% if media_file.tags %}
-                    <div class="tag-list compact-tags">
-                      {% for tag in media_file.tags %}
-                        <span>{{ tag }}</span>
-                      {% endfor %}
-                    </div>
-                  {% else %}
-                    <span class="muted">-</span>
-                  {% endif %}
-                </td>
-                <td>
-                  {% set audio = media_file.default_audio or {} %}
-                  {{ audio.format or "-" }}
-                  {% if audio.channels %} · {{ audio.channels }}ch{% endif %}
-                  {% if audio.language %} · {{ audio.language }}{% endif %}
-                </td>
-              </tr>
-            {% else %}
-              <tr><td colspan="3" class="muted">No QUI MediaInfo file details recorded.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
-    </div>
-
-    <div class="tab-panel" data-tab-panel="trackers">
-      <section class="details-panel">
-        <h2>UA Tracker Checks</h2>
-        {% set buckets = [
-          ("passed", "Eligible after UA", "UA says this content passed checks and can continue to ARR."),
-          ("covered", "Covered in QUI", "This tracker is now represented by a QUI cross-seed or upload."),
-          ("dupe", "Duplicates", "UA found similar or matching content."),
-          ("skipped", "Skipped", "UA skipped these trackers because of tracker-specific conditions."),
-          ("error", "Errors", "UA could not complete checking.")
-        ] %}
-        <table class="mini-table">
-          <thead>
-            <tr>
-              <th>Result</th>
-              <th>Trackers</th>
-              <th>Meaning</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for key, label, help_text in buckets %}
-              {% set trackers = item.tracker_buckets.get(key, []) %}
-              {% if trackers %}
-                <tr class="tracker-row {{ key }}">
-                  <td><strong>{{ label }}</strong></td>
-                  <td>
-                    {% for tracker in trackers %}
-                      <span class="tracker-name">{{ tracker.name }}</span>{% if not loop.last %}, {% endif %}
-                    {% endfor %}
-                  </td>
-                  <td>{{ help_text }}</td>
-                </tr>
-              {% endif %}
-            {% endfor %}
-            {% if not item.tracker_summary %}
-              <tr><td colspan="3" class="muted">No UA tracker result recorded.</td></tr>
-            {% endif %}
-          </tbody>
-        </table>
-      </section>
     </div>
 
     <div class="tab-panel" data-tab-panel="upload-assistant">
@@ -428,7 +287,7 @@
           </div>
           <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Discovarr result" data-raw-kind="json" data-raw-source="raw-arr">Raw</button>
         </div>
-        {% if item.arr_result.reason %}<p>{{ item.arr_result.reason }}</p>{% endif %}
+        {% if item.arr_result.reason and "Valid Upload Candidate" not in item.arr_result.reason %}<p>{{ item.arr_result.reason }}</p>{% endif %}
         {% set traits = item.discovarr_local_traits or item.arr_result.local_traits or {} %}
         {% if traits %}
           <p class="muted">
@@ -440,8 +299,13 @@
             {{ traits.codec or "unknown codec" }}
           </p>
           <div class="tag-list discovarr-attributes">
+            {% set seen_arr_tags = namespace(values=[]) %}
             {% for tag in traits.attribute_tags or [] %}
-              <span class="{% if tag.group == 'warning' %}warning{% elif tag.group == 'source' %}source{% endif %}">{{ tag.label }}: {{ tag.value }}</span>
+              {% set label = tag.label ~ ": " ~ tag.value %}
+              {% if label not in seen_arr_tags.values %}
+                {% set seen_arr_tags.values = seen_arr_tags.values + [label] %}
+                <span class="{% if tag.group == 'warning' %}warning{% elif tag.group == 'source' %}source{% endif %}">{{ label }}</span>
+              {% endif %}
             {% endfor %}
           </div>
         {% endif %}
@@ -450,7 +314,7 @@
             {% set releases = item.arr_release_views.get(decision.tracker, []) %}
             <article class="decision-card {{ decision.status }}">
               <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
-              <span>{{ decision.reason }}</span>
+              {% if decision.reason and "Valid Upload Candidate" not in decision.reason %}<span>{{ decision.reason }}</span>{% endif %}
               <span>{{ decision.matched_count or 0 }} torrent result{{ "" if decision.matched_count == 1 else "s" }} · {{ decision.same_lane_count or 0 }} in lane</span>
               {% if decision.best_release %}
                 <span><b>Best match:</b> {{ decision.best_release.title }}{% if decision.best_release.quality %} · {{ decision.best_release.quality }}{% endif %}{% if decision.best_release.seeders is not none %} · {{ decision.best_release.seeders }} seeders{% endif %}</span>
@@ -489,6 +353,60 @@
             </article>
           {% else %}
             <p class="muted">No Discovarr comparison recorded.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab-panel="reporting">
+      <section class="details-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Reporting</span>
+            <h2>Flag Error</h2>
+          </div>
+        </div>
+        <form class="report-form" method="post" action="/items/{{ item.id }}/reports">
+          <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+          <label>
+            Processing Stage
+            <select name="stage">
+              {% for stage in reporting_stages %}
+                <option value="{{ stage }}">{{ stage }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Notes
+            <textarea name="notes" rows="5" placeholder="What looks wrong?"></textarea>
+          </label>
+          <button class="button" type="submit">Flag Error</button>
+        </form>
+      </section>
+
+      <section class="details-panel">
+        <h2>Reported Issues</h2>
+        <div class="report-list">
+          {% for report in item.active_reports %}
+            <article class="report-card">
+              <div>
+                <strong>{{ report.stage }}</strong>
+                <time>{{ report.created_at | datetime }}</time>
+                <p>{{ report.notes or "-" }}</p>
+              </div>
+              <div class="button-row">
+                <form method="post" action="/reports/{{ report.id }}/resolve">
+                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+                  <button class="button small" type="submit">Resolve</button>
+                </form>
+                <form method="post" action="/reports/{{ report.id }}/delete">
+                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+                  <button class="button small danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </article>
+          {% else %}
+            <p class="muted">No active reports.</p>
           {% endfor %}
         </div>
       </section>

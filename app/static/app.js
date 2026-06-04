@@ -66,6 +66,31 @@
     button.addEventListener("click", () => setFilters(false));
   });
 
+  const searchModal = document.querySelector("[data-search-modal]");
+  const searchInput = document.querySelector("#mobile-search-input");
+  function setSearchModal(open) {
+    if (!searchModal) return;
+    searchModal.hidden = !open;
+    document.body.classList.toggle("modal-open", open);
+    if (open && searchInput) {
+      setTimeout(() => searchInput.focus(), 0);
+    }
+  }
+
+  document.querySelectorAll("[data-search-open]").forEach((button) => {
+    button.addEventListener("click", () => setSearchModal(true));
+  });
+
+  document.querySelectorAll("[data-search-close]").forEach((button) => {
+    button.addEventListener("click", () => setSearchModal(false));
+  });
+
+  if (searchModal) {
+    searchModal.addEventListener("click", (event) => {
+      if (event.target === searchModal) setSearchModal(false);
+    });
+  }
+
   document.addEventListener("click", (event) => {
     if (!document.body.classList.contains("filters-open")) return;
     const panel = document.querySelector("[data-filter-panel]");
@@ -233,6 +258,7 @@
     if (event.key === "Escape") {
       closeRawModal();
       setFilters(false);
+      setSearchModal(false);
       setMobileSidebar(false);
       if (notificationPopout) notificationPopout.hidden = true;
     }

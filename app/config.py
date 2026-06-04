@@ -51,6 +51,7 @@ class SafetyConfig:
     recheck_cooldown_hours: int = 24
     max_error_retries: int = 3
     error_backoff_minutes: List[int] = field(default_factory=lambda: [15, 60, 360])
+    high_quality_trackers: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -130,6 +131,13 @@ class ConfigManager:
             cfg.safety.arr_search_timeout_seconds = DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS
         if not isinstance(cfg.tracker_policies, dict):
             cfg.tracker_policies = default_tracker_policies()
+        if not isinstance(cfg.safety.high_quality_trackers, list):
+            cfg.safety.high_quality_trackers = []
+        cfg.safety.high_quality_trackers = [
+            str(tracker).upper()
+            for tracker in cfg.safety.high_quality_trackers
+            if str(tracker).strip()
+        ]
         defaults = default_tracker_policies()
         for tracker, policy in defaults.items():
             existing = cfg.tracker_policies.get(tracker)

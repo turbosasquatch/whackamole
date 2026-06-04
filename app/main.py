@@ -89,6 +89,36 @@ REASON_FILTERS = [
     {"key": "ua_error", "label": "UA error", "applies_to": ["manual", "errors"]},
     {"key": "manual_review", "label": "Manual review", "applies_to": ["manual"]},
 ]
+REPORTING_STAGES = [
+    "MediaInfo",
+    "Release Group",
+    "srrDB",
+    "Source Detection",
+    "Discovarr",
+    "Upload Assistant",
+    "Tracker Validation",
+    "Cross Check",
+    "Inventory/QUI Sync",
+    "Queue Import",
+    "UI",
+    "Other",
+]
+WARNING_TAG_LABELS = {
+    "media_warning": "Media Info",
+    "release_group_warning": "Release Group",
+    "srrdb_filename_mismatch": "srrDB Name",
+    "web_source_missing": "Web Source",
+    "cross_check_warning": "Cross Check",
+    "source_missing": "Source Missing",
+}
+CRITICAL_TAG_LABELS = {
+    "media_error": "Media Info",
+    "arr_check": "Arr Check",
+    "banned_release_group": "Banned",
+    "dupe": "Dupe",
+    "ua_error": "UA Check",
+    "tracker_validation": "Tracker Validation",
+}
 
 
 def _format_datetime(value: Optional[int]) -> str:
@@ -146,7 +176,10 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
     item["decision_notice"] = _decision_notice(item, check_results)
     item["reason_categories"] = _reason_categories(item, check_results, arr_result)
-    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"])
+    item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
+    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
+    item["tracker_coverage"] = _tracker_coverage(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
+    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
     item["source_label"] = _source_label(item, tracker_groups)
     item["overview_checks"] = _overview_checks(item, check_results, arr_result)
     item["discovarr_local_traits"] = _discovarr_local_traits(item, check_results, arr_result)
@@ -172,7 +205,10 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     item["next_action"] = _next_action(item)
     item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
     item["decision_notice"] = _decision_notice(item, check_results)
-    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"])
+    item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
+    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
+    item["tracker_coverage"] = _tracker_coverage(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
+    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
     item["source_label"] = _source_label(item, tracker_groups)
     return item
 
@@ -357,19 +393,147 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
     return list(dict.fromkeys(categories))
 
 
-def _coverage_status(coverage: List[Dict[str, Any]], missing: List[str]) -> Dict[str, List[Dict[str, str]]]:
+def _high_quality_trackers() -> List[str]:
+    try:
+        cfg = app.state.config_manager.load()
+        values = cfg.safety.high_quality_trackers
+    except Exception:
+        values = []
+    return _dedupe_trackers([str(tracker).upper() for tracker in values if str(tracker).strip()])
+
+
+def _coverage_status(
+    coverage: List[Dict[str, Any]],
+    missing: List[str],
+    valid_for: Optional[List[str]] = None,
+) -> Dict[str, List[Dict[str, str]]]:
+    valid = set(_dedupe_trackers(valid_for or []))
     found_default = [
         {"key": str(item.get("key") or ""), "label": str(item.get("label") or item.get("key") or "")}
         for item in coverage
-        if item.get("primary")
+        if item.get("primary") and str(item.get("key") or "").upper() not in valid
     ]
     found_other = [
         {"key": str(item.get("key") or ""), "label": str(item.get("label") or item.get("key") or "")}
         for item in coverage
-        if not item.get("primary")
+        if not item.get("primary") and str(item.get("key") or "").upper() not in valid
     ]
-    missing_default = [{"key": tracker, "label": tracker} for tracker in missing]
-    return {"found_default": found_default, "found_other": found_other, "missing_default": missing_default}
+    missing_default = [{"key": tracker, "label": tracker} for tracker in missing if str(tracker).upper() not in valid]
+    valid_items = [{"key": tracker, "label": tracker} for tracker in _dedupe_trackers(valid_for or [])]
+    return {
+        "valid_for": valid_items,
+        "found_default": found_default,
+        "found_other": found_other,
+        "missing_default": missing_default,
+    }
+
+
+def _tracker_coverage(
+    coverage: List[Dict[str, Any]],
+    missing: List[str],
+    valid_for: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(key: str, label: str, state: str) -> None:
+        norm = str(key or label or "").upper()
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        rows.append({"key": norm, "label": label or norm, "state": state})
+
+    for tracker in _dedupe_trackers(valid_for or []):
+        add(tracker, tracker, "valid")
+    for item in coverage:
+        key = str(item.get("key") or "").upper()
+        label = str(item.get("label") or key)
+        add(key, label, "covered-default" if item.get("primary") else "covered-other")
+    for tracker in missing:
+        add(str(tracker).upper(), str(tracker).upper(), "not-valid")
+    return rows
+
+
+def _cross_check_status(coverage: List[Dict[str, Any]], valid_for: List[str]) -> Dict[str, Any]:
+    selected = set(_high_quality_trackers())
+    if not selected:
+        return {"state": "not_applicable", "label": "Not Validated", "trackers": [], "selected": []}
+    coverage_keys = {str(item.get("key") or "").upper() for item in coverage}
+    valid_keys = set(_dedupe_trackers(valid_for or []))
+    matched = sorted((coverage_keys | valid_keys).intersection(selected))
+    if matched:
+        return {"state": "pass", "label": "Validated On High Quality Tracker", "trackers": matched, "selected": sorted(selected)}
+    return {"state": "warning", "label": "Not Validated", "trackers": [], "selected": sorted(selected)}
+
+
+def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    tags: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(key: str, label: str, severity: str) -> None:
+        norm = str(label or key or "").strip().lower()
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        tags.append({"key": key, "label": label, "severity": severity})
+
+    for flag in _check_flags(check_results):
+        key = str(flag.get("key") or "").lower()
+        label = _canonical_alert_label(key, str(flag.get("label") or "").strip())
+        severity = str(flag.get("severity") or "").lower()
+        if key in CRITICAL_TAG_LABELS or severity in {"blocker", "error", "critical"}:
+            add(key, CRITICAL_TAG_LABELS.get(key, label or "UA Check"), "critical")
+        elif key in WARNING_TAG_LABELS or severity == "warning":
+            add(key, WARNING_TAG_LABELS.get(key, label or "Media Info"), "warning")
+
+    for category in _reason_categories(item, check_results, arr_result):
+        if category in CRITICAL_TAG_LABELS:
+            add(category, CRITICAL_TAG_LABELS[category], "critical")
+        elif category in WARNING_TAG_LABELS:
+            add(category, WARNING_TAG_LABELS[category], "warning")
+
+    tracker_groups = item.get("tracker_results") if isinstance(item.get("tracker_results"), dict) else {}
+    if tracker_groups.get("dupe"):
+        add("dupe", "Dupe", "critical")
+    if tracker_groups.get("error"):
+        add("ua_error", "UA Check", "critical")
+
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    media_status = str(media.get("media_status") or media.get("verdict") or media.get("status") or "").lower()
+    if "warning" in media_status:
+        add("media_warning", "Media Info", "warning")
+    if "error" in media_status or "fail" in media_status:
+        add("media_error", "Media Info", "critical")
+
+    if _is_web_release(item) and not _source_provider_for_item(item):
+        add("web_source_missing", "Web Source", "warning")
+
+    cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
+    if cross.get("state") == "warning":
+        add("cross_check_warning", "Cross Check", "warning")
+
+    return tags
+
+
+def _canonical_alert_label(key: str, label: str) -> str:
+    value = f"{key} {label}".lower()
+    if "media" in value and ("info" in value or "mediainfo" in value):
+        return "Media Info"
+    if "release" in value and "group" in value:
+        return "Release Group"
+    if "srrdb" in value:
+        return "srrDB Name"
+    if "source" in value:
+        return "Web Source"
+    if "banned" in value:
+        return "Banned"
+    if "dupe" in value or "duplicate" in value:
+        return "Dupe"
+    if "ua" in value or "upload assistant" in value:
+        return "UA Check"
+    if "arr" in value or "discovarr" in value:
+        return "Arr Check"
+    return label
 
 
 def _source_label(item: Dict[str, Any], tracker_groups: Dict[str, List[str]]) -> str:
@@ -393,15 +557,30 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
     media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
     ua = check_results.get("ua") if isinstance(check_results.get("ua"), dict) else {}
     srrdb = check_results.get("srrdb") if isinstance(check_results.get("srrdb"), dict) else {}
-    arr_status = str(arr_result.get("status") or "")
+    policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
     rows = [
-        _check_summary("MediaInfo", str(media.get("status") or media.get("verdict") or ""), str(media.get("reason") or "")),
-        _check_summary("UA", str(ua.get("status") or item.get("status") or ""), str(ua.get("reason") or item.get("tracker_summary") or "")),
-        _check_summary("Discovarr", arr_status, str(arr_result.get("reason") or item.get("arr_summary") or "")),
+        _summary_row("Media Info", *_media_summary_state(media), str(media.get("reason") or ""), "mediainfo", "Raw MediaInfo", "json"),
+        _summary_row("Release Group", *_policy_summary_state(policy), str(policy.get("reason") or ""), "diagnostics", "Release Group View", "json"),
+        _summary_row("Upload Assistant", *_bucket_summary_state(item.get("tracker_results") or {}), str(ua.get("reason") or item.get("tracker_summary") or ""), "ua_log", "UA Log View", "text"),
+        _summary_row("Discovarr", *_arr_summary_state(arr_result), str(arr_result.get("reason") or item.get("arr_summary") or ""), "arr", "Raw Arr Result View", "json"),
+        _summary_row("srrDB", *_srrdb_summary_state(srrdb), str(srrdb.get("reason") or ""), "srrdb", "Raw srrDB View", "json"),
+        _summary_row("Source", *_source_summary_state(item), str((item.get("nfo_info") or {}).get("message") or ""), "nfo", "NFO View", "text"),
+        _summary_row("Cross Check", cross.get("label", "Not Validated"), str(cross.get("state") or "warning"), ", ".join(cross.get("trackers") or cross.get("selected") or []), "diagnostics", "Cross Check Validation", "json"),
     ]
-    if srrdb and str(srrdb.get("status") or "") in {"verified", "mismatch"}:
-        rows.append(_check_summary("srrDB", str(srrdb.get("status") or ""), str(srrdb.get("reason") or "")))
     return rows
+
+
+def _summary_row(label: str, state: str, group: str, notes: str, raw_key: str, raw_title: str, raw_kind: str) -> Dict[str, str]:
+    return {
+        "label": label,
+        "state": state,
+        "group": group,
+        "notes": notes or "-",
+        "raw_key": raw_key,
+        "raw_title": raw_title,
+        "raw_kind": raw_kind,
+    }
 
 
 def _check_summary(label: str, status_value: str, notes: str) -> Dict[str, str]:
@@ -419,6 +598,72 @@ def _check_summary(label: str, status_value: str, notes: str) -> Dict[str, str]:
         state = "Not run"
         group = "neutral"
     return {"label": label, "state": state, "group": group, "notes": notes or "-"}
+
+
+def _media_summary_state(media: Dict[str, Any]) -> tuple[str, str]:
+    value = str(media.get("media_status") or media.get("verdict") or media.get("status") or "").lower()
+    issues = media.get("issues") if isinstance(media.get("issues"), list) else []
+    severities = {str(issue.get("severity") or "").lower() for issue in issues if isinstance(issue, dict)}
+    if "error" in value or "fail" in value or "error" in severities or "failure" in severities:
+        return "Failure", "error"
+    if "warning" in value or "warning" in severities:
+        return "Warning", "warning"
+    return ("Pass", "pass") if value or issues == [] else ("Not Applicable", "neutral")
+
+
+def _policy_summary_state(policy: Dict[str, Any]) -> tuple[str, str]:
+    decisions = policy.get("decisions") if isinstance(policy.get("decisions"), list) else []
+    if not decisions:
+        return "Not Applicable", "neutral"
+    blocked = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() != "candidate"]
+    if not blocked:
+        return "All Pass", "pass"
+    if len(blocked) == len(decisions):
+        return "All Failed", "error"
+    return "Some Failed", "warning"
+
+
+def _bucket_summary_state(groups: Dict[str, Any]) -> tuple[str, str]:
+    passed = groups.get("passed") or groups.get("covered") or []
+    failed = groups.get("dupe") or groups.get("error") or []
+    if passed and not failed:
+        return "All Pass", "pass"
+    if passed and failed:
+        return "Some Failed", "warning"
+    if failed:
+        return "All Failed", "error"
+    return "Not Applicable", "neutral"
+
+
+def _arr_summary_state(arr_result: Dict[str, Any]) -> tuple[str, str]:
+    decisions = arr_result.get("decisions") if isinstance(arr_result.get("decisions"), list) else []
+    same_lane = sum(int(decision.get("same_lane_count") or 0) for decision in decisions if isinstance(decision, dict))
+    candidates = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() == "candidate"]
+    blocked = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() == "blocked"]
+    if not decisions:
+        return "None In Lanes", "neutral"
+    if candidates:
+        return "Upgrade", "pass"
+    if blocked:
+        return "Not Upgrade", "error"
+    return ("Some In Lanes", "warning") if same_lane else ("None In Lanes", "neutral")
+
+
+def _srrdb_summary_state(srrdb: Dict[str, Any]) -> tuple[str, str]:
+    status_value = str(srrdb.get("status") or "").lower()
+    if status_value in {"verified", "found", "match"}:
+        return "Found Match", "pass"
+    if status_value == "mismatch":
+        return "Failed Match", "error"
+    return "Not Found", "neutral"
+
+
+def _source_summary_state(item: Dict[str, Any]) -> tuple[str, str]:
+    if not _is_web_release(item):
+        return "Source Not Required", "neutral"
+    if _source_provider_for_item(item):
+        return "Source Found", "pass"
+    return "Source Not Found", "warning"
 
 
 def _discovarr_local_traits(
@@ -697,6 +942,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "display_status": item["display_status"],
         "next_action": item["next_action"],
         "flags": item["check_flags"],
+        "alert_tags": item.get("alert_tags") or [],
         "stage_flow": item["stage_flow"],
         "baseline": bool(item["baseline"]),
         "ignored_reason": item["ignored_reason"],
@@ -710,6 +956,8 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "decision_notice": item["decision_notice"],
         "reason_categories": item["reason_categories"],
         "coverage_status": item["coverage_status"],
+        "tracker_coverage": item.get("tracker_coverage") or [],
+        "cross_check": item.get("cross_check") or {},
         "source_label": item["source_label"],
     }
 
@@ -749,6 +997,26 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         }
     )
     return summary
+
+
+def _report_payload(row: Any) -> Dict[str, Any]:
+    item = dict(row)
+    return {
+        "id": int(item["id"]),
+        "item_id": int(item["item_id"]),
+        "item_name": item["item_name"],
+        "stage": item["stage"],
+        "notes": item["notes"],
+        "state": item["state"],
+        "created_at": item["created_at"],
+        "updated_at": item["updated_at"],
+        "resolved_at": item["resolved_at"],
+    }
+
+
+def _sanitize_report_stage(value: str) -> str:
+    text = str(value or "").strip()
+    return text if text in REPORTING_STAGES else "Other"
 
 
 def _video_files_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -1197,6 +1465,7 @@ def _secret_state(secrets: SecretStore) -> Dict[str, bool]:
 def _config_context(request: Request, message: str = "", probe_results: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     cfg = request.app.state.config_manager.load()
     secrets = request.app.state.secrets
+    tracker_options = _tracker_setting_options(request.app.state.db, cfg)
     return {
         **_shell_context(request, section="settings"),
         "request": request,
@@ -1207,6 +1476,8 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
         "exclude_tag_terms": join_csv(cfg.watch.exclude_tag_terms),
         "error_backoff_minutes": join_csv([str(item) for item in cfg.safety.error_backoff_minutes]),
         "tracker_policies": _tracker_policy_context(cfg),
+        "tracker_options": tracker_options,
+        "high_quality_trackers": set(_dedupe_trackers(cfg.safety.high_quality_trackers)),
         "message": message,
         "probe_results": probe_results or [],
     }
@@ -1291,6 +1562,22 @@ def _tracker_policy_context(cfg: AppConfig) -> List[Dict[str, str]]:
             }
         )
     return rows
+
+
+def _tracker_setting_options(db: Database, cfg: AppConfig) -> List[Dict[str, Any]]:
+    options: Dict[str, Dict[str, Any]] = {}
+    for tracker in default_tracker_policies().keys():
+        options[str(tracker).upper()] = {"key": str(tracker).upper(), "label": str(tracker).upper(), "primary": True}
+    for item in db.list_inventory_trackers():
+        key = str(item.get("key") or "").upper()
+        if not key:
+            continue
+        options[key] = {**item, "key": key, "label": str(item.get("label") or key)}
+    for tracker in cfg.safety.high_quality_trackers:
+        key = str(tracker or "").upper()
+        if key:
+            options.setdefault(key, {"key": key, "label": key, "primary": False})
+    return sorted(options.values(), key=lambda row: (not bool(row.get("primary")), str(row.get("key") or "")))
 
 
 def _coverage_for_rows(db: Database, rows: Sequence[Any]) -> Dict[str, List[Dict[str, Any]]]:
@@ -1453,6 +1740,20 @@ def _dashboard_url(
     return f"/dashboard?{urlencode(params, doseq=True)}"
 
 
+def _next_item_url(db: Database, item: Dict[str, Any]) -> str:
+    status_value = str(item.get("status") or "")
+    view = next((key for key, _label, statuses in DASHBOARD_TABS if status_value in statuses), "all")
+    rows = db.list_items(DASHBOARD_VIEWS.get(view, [status_value]), limit=500)
+    ids = [int(row["id"]) for row in rows]
+    try:
+        index = ids.index(int(item["id"]))
+    except (ValueError, KeyError, TypeError):
+        return _dashboard_url(view)
+    if index + 1 < len(ids):
+        return f"/items/{ids[index + 1]}"
+    return _dashboard_url(view)
+
+
 def _safe_local_redirect(value: str, fallback: str) -> str:
     if value.startswith("/") and not value.startswith("//"):
         return value
@@ -1602,13 +1903,20 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             status_code=404,
         )
     cfg = request.app.state.config_manager.load()
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    item["active_reports"] = [_report_payload(report) for report in request.app.state.db.list_reports(item_id=item_id)]
+    item["resolved_reports"] = [
+        _report_payload(report) for report in request.app.state.db.list_reports(state="resolved", item_id=item_id, limit=50)
+    ]
     return templates.TemplateResponse(
         request,
         "item.html",
         {
             **_shell_context(request, section="items"),
             "request": request,
-            "item": _row_detail_dict(row, _coverage_for_row(request.app.state.db, row)),
+            "item": item,
+            "reporting_stages": REPORTING_STAGES,
+            "next_item_url": _next_item_url(request.app.state.db, item),
             "upload_console_configured": bool(cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token")),
             "upload_console_session": request.app.state.upload_console.snapshot(),
         },
@@ -1646,6 +1954,65 @@ async def grab_item_nfo(request: Request, item_id: int, return_to: str = Form(""
     checks = _check_results(row["check_results"])
     request.app.state.db.update_check_results(item_id, merge_check_results(checks, nfo=nfo))
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#discovarr"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/items/{item_id}/reports")
+async def create_item_report_form(
+    request: Request,
+    item_id: int,
+    stage: str = Form("Other"),
+    notes: str = Form(""),
+    return_to: str = Form(""),
+) -> RedirectResponse:
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    request.app.state.db.create_report(item_id, str(row["name"] or ""), _sanitize_report_stage(stage), notes)
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#reporting"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/reports/{report_id}/resolve")
+async def resolve_report_form(request: Request, report_id: int, return_to: str = Form("")) -> RedirectResponse:
+    report = request.app.state.db.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    request.app.state.db.resolve_report(report_id)
+    return RedirectResponse(
+        url=_safe_local_redirect(return_to, f"/items/{int(report['item_id'])}#reporting"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/reports/{report_id}/delete")
+async def delete_report_form(request: Request, report_id: int, return_to: str = Form("")) -> RedirectResponse:
+    report = request.app.state.db.get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    request.app.state.db.delete_report(report_id)
+    return RedirectResponse(
+        url=_safe_local_redirect(return_to, f"/items/{int(report['item_id'])}#reporting"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/items/{item_id}/upload-assistant/queue")
+async def queue_item_upload_assistant_form(request: Request, item_id: int, return_to: str = Form("")) -> RedirectResponse:
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    cfg = request.app.state.config_manager.load()
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    console = item["upload_console"]
+    path = str(console.get("path") or "").strip()
+    if cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token") and path:
+        request.app.state.db.enqueue_import(
+            item_id=item_id,
+            item_name=str(item.get("name") or f"Item {item_id}"),
+            path=path,
+            args=_with_unattended_arg(str(console.get("args") or "")),
+        )
+        await request.app.state.service.run_queued_import()
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#upload-assistant"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/api/items/{item_id}/upload-assistant/execute")
@@ -1888,6 +2255,7 @@ async def save_config(
     recheck_cooldown_hours: str = Form("24"),
     max_error_retries: str = Form("3"),
     error_backoff_minutes: str = Form("15, 60, 360"),
+    high_quality_trackers: Optional[List[str]] = Form(None),
     maintenance_enabled: Optional[str] = Form(None),
     maintenance_timezone: str = Form("Europe/London"),
     maintenance_start_time: str = Form("05:00"),
@@ -1948,6 +2316,7 @@ async def save_config(
         _as_int(item, 15, minimum=1)
         for item in parse_csv(error_backoff_minutes)
     ] or [15, 60, 360]
+    cfg.safety.high_quality_trackers = _dedupe_trackers(high_quality_trackers or [])
     cfg.maintenance.enabled = maintenance_enabled == "on"
     cfg.maintenance.timezone = maintenance_timezone.strip() or "Europe/London"
     cfg.maintenance.start_time = _as_time_value(maintenance_start_time, cfg.maintenance.start_time)
@@ -2145,6 +2514,65 @@ async def api_item_detail(request: Request, item_id: int) -> JSONResponse:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     return JSONResponse(_api_item_detail(_row_detail_dict(row, _coverage_for_row(request.app.state.db, row))))
+
+
+@app.post("/api/items/{item_id}/reports")
+async def api_create_item_report(request: Request, item_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    report_id = request.app.state.db.create_report(
+        item_id=item_id,
+        item_name=str(row["name"] or ""),
+        stage=_sanitize_report_stage(str(payload.get("stage") or "Other") if isinstance(payload, dict) else "Other"),
+        notes=str(payload.get("notes") or "") if isinstance(payload, dict) else "",
+    )
+    report = request.app.state.db.get_report(report_id)
+    return JSONResponse({"success": True, "report": _report_payload(report)}, status_code=201)
+
+
+@app.get("/api/reports")
+async def api_reports(
+    request: Request,
+    state_filter: str = Query("active", alias="state"),
+    item_id: Optional[int] = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+) -> JSONResponse:
+    _require_api_auth(request)
+    state_value = state_filter if state_filter in {"active", "resolved", "deleted"} else "active"
+    reports = request.app.state.db.list_reports(state=state_value, item_id=item_id, limit=limit)
+    return JSONResponse({"reports": [_report_payload(report) for report in reports], "state": state_value, "count": len(reports)})
+
+
+@app.get("/api/reports/{report_id}")
+async def api_report_detail(request: Request, report_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    report = request.app.state.db.get_report(report_id)
+    if report is None or str(report["state"]) == "deleted":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    return JSONResponse({"report": _report_payload(report)})
+
+
+@app.post("/api/reports/{report_id}/resolve")
+async def api_resolve_report(request: Request, report_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    if not request.app.state.db.resolve_report(report_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    report = request.app.state.db.get_report(report_id)
+    return JSONResponse({"success": True, "report": _report_payload(report)})
+
+
+@app.delete("/api/reports/{report_id}")
+async def api_delete_report(request: Request, report_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    if not request.app.state.db.delete_report(report_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    return JSONResponse({"success": True})
 
 
 @app.get("/api/items/{item_id}/log")

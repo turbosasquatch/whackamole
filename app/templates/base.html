@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul8">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul8" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul9">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul9" defer></script>
   </head>
   <body>
     <div class="app-shell" data-app-shell>
@@ -17,6 +17,7 @@
             <a class="brand-name" href="/">Whackamole</a>
             <span>QUI arrival triage</span>
           </div>
+          <button class="icon-close mobile-only" type="button" data-sidebar-close aria-label="Close menu">x</button>
         </div>
 
         <nav class="sidebar-nav" aria-label="Dashboard views">
@@ -73,6 +74,7 @@
           </div>
 
           {% if show_dashboard_search | default(false) %}
+            <button class="button secondary small mobile-search-toggle" type="button" data-search-open>Search</button>
             <form class="top-search" method="get" action="/dashboard">
               <input type="hidden" name="view" value="{{ view }}">
               {% for media in dashboard_filters.media %}
@@ -139,8 +141,50 @@
         <main class="content-shell">
           {% block content %}{% endblock %}
         </main>
+        <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+          <a href="/" class="{% if section == 'home' %}active{% endif %}">Dashboard</a>
+          <a href="/dashboard?view=candidates" class="{% if section == 'dashboard' %}active{% endif %}">List View</a>
+          <a href="/config" class="{% if section == 'settings' %}active{% endif %}">Settings</a>
+        </nav>
       </div>
     </div>
+
+    {% if show_dashboard_search | default(false) %}
+      <div class="modal-backdrop search-modal-backdrop" data-search-modal hidden>
+        <section class="search-modal" role="dialog" aria-modal="true" aria-labelledby="search-modal-title">
+          <header>
+            <h2 id="search-modal-title">Search</h2>
+            <button class="icon-close" type="button" data-search-close aria-label="Close search">x</button>
+          </header>
+          <form method="get" action="/dashboard">
+            <input type="hidden" name="view" value="{{ view }}">
+            {% for media in dashboard_filters.media %}
+              <input type="hidden" name="media" value="{{ media }}">
+            {% endfor %}
+            {% for tracker in dashboard_filters.missing %}
+              <input type="hidden" name="missing" value="{{ tracker }}">
+            {% endfor %}
+            {% for tracker in dashboard_filters.valid_for %}
+              <input type="hidden" name="valid_for" value="{{ tracker }}">
+            {% endfor %}
+            {% for reason in dashboard_filters.reasons %}
+              <input type="hidden" name="reason" value="{{ reason }}">
+            {% endfor %}
+            {% if dashboard_filters.hide_any_primary %}
+              <input type="hidden" name="hide_any_primary" value="true">
+            {% endif %}
+            <label for="mobile-search-input">Search media</label>
+            <input id="mobile-search-input" name="q" value="{{ search_query }}" placeholder="Search name, hash, tracker, reason">
+            <div class="button-row">
+              <button class="button" type="submit">Search</button>
+              {% if search_query %}
+                <a class="button secondary" href="/dashboard?view={{ view }}">Clear</a>
+              {% endif %}
+            </div>
+          </form>
+        </section>
+      </div>
+    {% endif %}
 
     <div class="modal-backdrop" data-raw-modal hidden>
       <section class="raw-modal" role="dialog" aria-modal="true" aria-labelledby="raw-modal-title">

@@ -332,7 +332,7 @@ def test_dashboard_search_and_filtered_recheck_preserve_query(tmp_path, monkeypa
         assert db.get_item(other_id)["status"] == "candidate"
 
 
-def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monkeypatch):
+def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
@@ -346,8 +346,13 @@ def test_candidate_dashboard_includes_filters_and_recheck_actions(tmp_path, monk
         assert "Blocked reason" in page.text
         assert "Review reason" in page.text
         assert "/items/recheck-filtered" in page.text
-        assert f'/items/{item_id}/recheck' in page.text
-        assert "Run recheck" in page.text
+        assert f'/items/{item_id}/recheck' not in page.text
+        assert "Run recheck" not in page.text
+        assert "mobile-bottom-nav" in page.text
+        assert "data-search-open" in page.text
+        assert "data-search-modal" in page.text
+        assert f'/items/{item_id}/upload-assistant/queue' in page.text
+        assert "Upload" in page.text
         assert "filter-view-list" not in page.text
 
 
@@ -573,6 +578,71 @@ def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypa
         assert log.text == "Trackers passed all checks: IHD"
         assert log.headers["content-type"].startswith("text/plain")
         assert missing.status_code == 404
+
+
+def test_reporting_api_tracks_active_resolved_and_deleted_reports(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+
+        created = client.post(
+            f"/api/items/{item_id}/reports",
+            json={"stage": "MediaInfo", "notes": "Audio tags look wrong"},
+            headers=_auth_headers(),
+        )
+        active = client.get("/api/reports", headers=_auth_headers())
+        report_id = created.json()["report"]["id"]
+        detail = client.get(f"/api/reports/{report_id}", headers=_auth_headers())
+        resolved = client.post(f"/api/reports/{report_id}/resolve", headers=_auth_headers())
+        active_after_resolve = client.get("/api/reports", headers=_auth_headers())
+        resolved_list = client.get("/api/reports?state=resolved", headers=_auth_headers())
+        deleted = client.delete(f"/api/reports/{report_id}", headers=_auth_headers())
+        missing = client.get(f"/api/reports/{report_id}", headers=_auth_headers())
+
+        assert created.status_code == 201
+        assert created.json()["report"]["stage"] == "MediaInfo"
+        assert active.json()["count"] == 1
+        assert detail.json()["report"]["notes"] == "Audio tags look wrong"
+        assert resolved.status_code == 200
+        assert active_after_resolve.json()["count"] == 0
+        assert resolved_list.json()["count"] == 1
+        assert deleted.status_code == 200
+        assert missing.status_code == 404
+
+
+def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert 'data-tab-target="reporting"' in page.text
+        assert "Flag Error" in page.text
+        assert "Processing Stage" in page.text
+        assert 'data-tab-target="checks"' not in page.text
+        assert 'data-tab-target="trackers"' not in page.text
+        assert ">Checks<" not in page.text
+        assert ">Trackers<" not in page.text
+        assert "Queue Upload" in page.text
+        assert "Next Item" in page.text
+        assert ">Size<" not in page.text
+
+
+def test_high_quality_trackers_default_empty_and_cross_check_setting(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+
+        default_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+        save = client.post("/config", data={"high_quality_trackers": "IHD"})
+        configured_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+
+        assert default_response.json()["cross_check"]["selected"] == []
+        assert default_response.json()["cross_check"]["label"] == "Not Validated"
+        assert save.status_code == 200
+        assert "High Quality Trackers" in save.text
+        assert configured_response.json()["cross_check"]["selected"] == ["IHD"]
+        assert configured_response.json()["cross_check"]["label"] == "Validated On High Quality Tracker"
 
 
 def test_item_detail_includes_video_files_in_paths_section(tmp_path, monkeypatch):

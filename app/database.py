@@ -87,6 +87,21 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS item_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL,
+                    item_name TEXT NOT NULL DEFAULT '',
+                    stage TEXT NOT NULL DEFAULT 'Other',
+                    notes TEXT NOT NULL DEFAULT '',
+                    state TEXT NOT NULL DEFAULT 'active',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    resolved_at INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
             self._ensure_column(conn, "items", "arr_results", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_meta", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_group_key", "TEXT NOT NULL DEFAULT ''")
@@ -111,6 +126,8 @@ class Database:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_status_created ON queued_imports(status, created_at ASC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_item ON queued_imports(item_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_state_updated ON item_reports(state, updated_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_item ON item_reports(item_id, state)")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -419,6 +436,29 @@ class Database:
                 }
             )
         return {key: sort_coverage_values(value) for key, value in grouped.items()}
+
+    def list_inventory_trackers(self) -> List[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT inventory_tracker_key AS key,
+                       COALESCE(NULLIF(inventory_tracker_label, ''), inventory_tracker_key) AS label,
+                       MAX(inventory_tracker_primary) AS is_primary
+                FROM items
+                WHERE inventory_tracker_key <> ''
+                GROUP BY inventory_tracker_key
+                ORDER BY inventory_tracker_primary DESC, inventory_tracker_key ASC
+                """
+            ).fetchall()
+        return [
+            {
+                "key": str(row["key"] or "").upper(),
+                "label": str(row["label"] or row["key"] or "").strip(),
+                "primary": bool(row["is_primary"]),
+            }
+            for row in rows
+            if str(row["key"] or "").strip()
+        ]
 
     def bulk_requeue_baseline_filtered(
         self,
@@ -1095,6 +1135,67 @@ class Database:
     def clear_service_errors(self) -> None:
         self.set_kv("service_error_history", "[]")
         self.set_kv("last_service_error", "")
+
+    def create_report(self, item_id: int, item_name: str, stage: str, notes: str) -> int:
+        now = int(time.time())
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO item_reports(item_id, item_name, stage, notes, state, created_at, updated_at)
+                VALUES(?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (int(item_id), str(item_name or ""), str(stage or "Other"), str(notes or ""), now, now),
+            )
+            return int(cur.lastrowid)
+
+    def list_reports(self, state: str = "active", item_id: Optional[int] = None, limit: int = 200) -> List[sqlite3.Row]:
+        clauses = ["state = ?"]
+        params: List[Any] = [state]
+        if item_id is not None:
+            clauses.append("item_id = ?")
+            params.append(int(item_id))
+        params.append(int(limit))
+        with self.connect() as conn:
+            return conn.execute(
+                f"""
+                SELECT *
+                FROM item_reports
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+
+    def get_report(self, report_id: int) -> Optional[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM item_reports WHERE id = ?", (int(report_id),)).fetchone()
+
+    def resolve_report(self, report_id: int) -> bool:
+        now = int(time.time())
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE item_reports
+                SET state = 'resolved', updated_at = ?, resolved_at = ?
+                WHERE id = ? AND state <> 'deleted'
+                """,
+                (now, now, int(report_id)),
+            )
+            return cur.rowcount > 0
+
+    def delete_report(self, report_id: int) -> bool:
+        now = int(time.time())
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE item_reports
+                SET state = 'deleted', updated_at = ?
+                WHERE id = ? AND state <> 'deleted'
+                """,
+                (now, int(report_id)),
+            )
+            return cur.rowcount > 0
 
 
 def _inventory_values(meta: Any) -> Tuple[str, str, str, str, str, int, int, int, int]:
