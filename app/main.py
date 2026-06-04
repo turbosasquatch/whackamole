@@ -110,13 +110,27 @@ WARNING_TAG_LABELS = {
     "web_source_missing": "Web Source",
     "cross_check_warning": "Cross Check",
     "source_missing": "Source Missing",
+    "no_video": "No Video",
+    "no_video_files": "No Video",
+    "path_error": "Path Error",
+    "manual_review": "Manual Review",
+    "missing_release_group": "Release Group",
+    "srrdb_unavailable": "srrDB",
 }
 CRITICAL_TAG_LABELS = {
     "media_error": "Media Info",
     "arr_check": "Arr Check",
     "banned_release_group": "Banned",
     "dupe": "Dupe",
+    "exact_match": "Exact Match",
+    "skipped": "Skipped",
+    "no_tracker_passed": "No Tracker Passed",
     "ua_error": "UA Check",
+    "error": "UA Check",
+    "http_error": "UA Check",
+    "ua_interrupted": "UA Interrupted",
+    "path_mapping": "Path Mapping",
+    "not_upgrade": "Not Upgrade",
     "tracker_validation": "Tracker Validation",
 }
 
@@ -386,7 +400,7 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
         categories.append("no_video")
     if "path" in verdict or "path" in reason or "mount" in reason:
         categories.append("path_error")
-    if "ua_error" in verdict:
+    if "ua_error" in verdict or "http_error" in verdict or "ua_interrupted" in verdict:
         categories.append("ua_error")
     if status_value == "manual_review" or "manual_review" in verdict:
         categories.append("manual_review")
@@ -492,10 +506,18 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
         elif category in WARNING_TAG_LABELS:
             add(category, WARNING_TAG_LABELS[category], "warning")
 
+    verdict_tag = _final_verdict_alert_tag(item)
+    if verdict_tag:
+        add(verdict_tag["key"], verdict_tag["label"], verdict_tag["severity"])
+
     tracker_groups = item.get("tracker_results") if isinstance(item.get("tracker_results"), dict) else {}
-    if tracker_groups.get("dupe"):
+    valid_trackers = _dedupe_trackers(item.get("valid_for_trackers") or [])
+    final_verdict = str(item.get("verdict") or "").lower()
+    final_status = str(item.get("status") or "").lower()
+    tracker_issue_applies = not valid_trackers or final_status in {"blocked", "manual_review", "error"}
+    if tracker_groups.get("dupe") and tracker_issue_applies and (final_verdict == "dupe" or not valid_trackers):
         add("dupe", "Dupe", "critical")
-    if tracker_groups.get("error"):
+    if tracker_groups.get("error") and tracker_issue_applies:
         add("ua_error", "UA Check", "critical")
 
     media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
@@ -513,6 +535,20 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
         add("cross_check_warning", "Cross Check", "warning")
 
     return tags
+
+
+def _final_verdict_alert_tag(item: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    status_value = str(item.get("status") or "").lower()
+    verdict = str(item.get("verdict") or "").strip().lower()
+    if status_value not in {"blocked", "manual_review", "error"} or not verdict or verdict == "candidate":
+        return None
+    if verdict in CRITICAL_TAG_LABELS:
+        return {"key": verdict, "label": CRITICAL_TAG_LABELS[verdict], "severity": "critical"}
+    if verdict in WARNING_TAG_LABELS:
+        return {"key": verdict, "label": WARNING_TAG_LABELS[verdict], "severity": "warning"}
+    label = verdict.replace("_", " ").replace("-", " ").title()
+    severity = "critical" if status_value in {"blocked", "error"} else "warning"
+    return {"key": verdict, "label": label, "severity": severity}
 
 
 def _canonical_alert_label(key: str, label: str) -> str:
@@ -561,12 +597,13 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
     cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
     rows = [
         _summary_row("Media Info", *_media_summary_state(media), str(media.get("reason") or ""), "mediainfo", "Raw MediaInfo", "json"),
-        _summary_row("Release Group", *_policy_summary_state(policy), str(policy.get("reason") or ""), "diagnostics", "Release Group View", "json"),
+        _summary_row("Source Detection", *_source_summary_state(item), str((item.get("nfo_info") or {}).get("message") or ""), "nfo", "NFO View", "text"),
+        _summary_row("Path Mapping", *_path_summary_state(item, check_results), str(item.get("mapped_path") or item.get("content_path") or ""), "diagnostics", "Path Mapping View", "json"),
         _summary_row("Upload Assistant", *_bucket_summary_state(item.get("tracker_results") or {}), str(ua.get("reason") or item.get("tracker_summary") or ""), "ua_log", "UA Log View", "text"),
         _summary_row("Discovarr", *_arr_summary_state(arr_result), str(arr_result.get("reason") or item.get("arr_summary") or ""), "arr", "Raw Arr Result View", "json"),
+        _summary_row("Release Group", *_policy_summary_state(policy), str(policy.get("reason") or ""), "diagnostics", "Release Group View", "json"),
         _summary_row("srrDB", *_srrdb_summary_state(srrdb), str(srrdb.get("reason") or ""), "srrdb", "Raw srrDB View", "json"),
-        _summary_row("Source", *_source_summary_state(item), str((item.get("nfo_info") or {}).get("message") or ""), "nfo", "NFO View", "text"),
-        _summary_row("Cross Check", cross.get("label", "Not Validated"), str(cross.get("state") or "warning"), ", ".join(cross.get("trackers") or cross.get("selected") or []), "diagnostics", "Cross Check Validation", "json"),
+        _summary_row("Cross Check", *_cross_summary_state(cross), ", ".join(cross.get("trackers") or cross.get("selected") or []), "diagnostics", "Cross Check Validation", "json"),
     ]
     return rows
 
@@ -605,10 +642,24 @@ def _media_summary_state(media: Dict[str, Any]) -> tuple[str, str]:
     issues = media.get("issues") if isinstance(media.get("issues"), list) else []
     severities = {str(issue.get("severity") or "").lower() for issue in issues if isinstance(issue, dict)}
     if "error" in value or "fail" in value or "error" in severities or "failure" in severities:
-        return "Failure", "error"
+        return "Fail", "error"
     if "warning" in value or "warning" in severities:
         return "Warning", "warning"
     return ("Pass", "pass") if value or issues == [] else ("Not Applicable", "neutral")
+
+
+def _path_summary_state(item: Dict[str, Any], check_results: Dict[str, Any]) -> tuple[str, str]:
+    status_value = str(item.get("status") or "").lower()
+    verdict = str(item.get("verdict") or "").lower()
+    reason = str(item.get("reason") or "").lower()
+    diagnostics = check_results.get("diagnostics") if isinstance(check_results.get("diagnostics"), dict) else {}
+    stages = diagnostics.get("stages") if isinstance(diagnostics.get("stages"), list) else []
+    stage_names = {str(stage.get("stage") or "").lower() for stage in stages if isinstance(stage, dict)}
+    if "path" in verdict or "path" in reason or "mount" in reason:
+        return ("Warning", "warning") if status_value == "manual_review" else ("Fail", "error")
+    if "path" in stage_names or str(item.get("mapped_path") or "").strip():
+        return "Pass", "pass"
+    return "Not Applicable", "neutral"
 
 
 def _policy_summary_state(policy: Dict[str, Any]) -> tuple[str, str]:
@@ -617,21 +668,21 @@ def _policy_summary_state(policy: Dict[str, Any]) -> tuple[str, str]:
         return "Not Applicable", "neutral"
     blocked = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() != "candidate"]
     if not blocked:
-        return "All Pass", "pass"
+        return "Pass", "pass"
     if len(blocked) == len(decisions):
-        return "All Failed", "error"
-    return "Some Failed", "warning"
+        return "Fail", "error"
+    return "Warning", "warning"
 
 
 def _bucket_summary_state(groups: Dict[str, Any]) -> tuple[str, str]:
     passed = groups.get("passed") or groups.get("covered") or []
     failed = groups.get("dupe") or groups.get("error") or []
     if passed and not failed:
-        return "All Pass", "pass"
+        return "Pass", "pass"
     if passed and failed:
-        return "Some Failed", "warning"
+        return "Warning", "warning"
     if failed:
-        return "All Failed", "error"
+        return "Fail", "error"
     return "Not Applicable", "neutral"
 
 
@@ -641,29 +692,38 @@ def _arr_summary_state(arr_result: Dict[str, Any]) -> tuple[str, str]:
     candidates = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() == "candidate"]
     blocked = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() == "blocked"]
     if not decisions:
-        return "None In Lanes", "neutral"
+        return "Not Applicable", "neutral"
     if candidates:
-        return "Upgrade", "pass"
+        return "Pass", "pass"
     if blocked:
-        return "Not Upgrade", "error"
-    return ("Some In Lanes", "warning") if same_lane else ("None In Lanes", "neutral")
+        return "Fail", "error"
+    return ("Warning", "warning") if same_lane else ("Not Applicable", "neutral")
 
 
 def _srrdb_summary_state(srrdb: Dict[str, Any]) -> tuple[str, str]:
     status_value = str(srrdb.get("status") or "").lower()
     if status_value in {"verified", "found", "match"}:
-        return "Found Match", "pass"
+        return "Pass", "pass"
     if status_value == "mismatch":
-        return "Failed Match", "error"
-    return "Not Found", "neutral"
+        return "Warning", "warning"
+    return "Not Applicable", "neutral"
 
 
 def _source_summary_state(item: Dict[str, Any]) -> tuple[str, str]:
     if not _is_web_release(item):
         return "Source Not Required", "neutral"
     if _source_provider_for_item(item):
-        return "Source Found", "pass"
-    return "Source Not Found", "warning"
+        return "Pass", "pass"
+    return "Warning", "warning"
+
+
+def _cross_summary_state(cross: Dict[str, Any]) -> tuple[str, str]:
+    state = str(cross.get("state") or "").lower()
+    if state == "pass":
+        return "Pass", "pass"
+    if state == "warning":
+        return "Warning", "warning"
+    return "Not Applicable", "neutral"
 
 
 def _discovarr_local_traits(
@@ -1483,9 +1543,16 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
     }
 
 
-def _shell_context(request: Request, section: str = "", view: str = "", q: str = "") -> Dict[str, Any]:
-    service_snapshot = request.app.state.service.snapshot()
-    counts = request.app.state.db.status_counts()
+def _shell_context(
+    request: Request,
+    section: str = "",
+    view: str = "",
+    q: str = "",
+    service_snapshot: Optional[Dict[str, Any]] = None,
+    counts: Optional[Dict[str, int]] = None,
+) -> Dict[str, Any]:
+    service_snapshot = service_snapshot or request.app.state.service.snapshot()
+    counts = counts or request.app.state.db.status_counts()
     return {
         "section": section,
         "service": service_snapshot,
@@ -1501,7 +1568,7 @@ def _home_context(request: Request) -> Dict[str, Any]:
     counts = request.app.state.db.status_counts()
     total = sum(int(value or 0) for value in counts.values())
     return {
-        **_shell_context(request, section="home"),
+        **_shell_context(request, section="home", service_snapshot=service, counts=counts),
         "request": request,
         "summary_cards": [
             {"label": "Service", "value": "Running" if service["running"] else "Stopped", "detail": f"{service['running_jobs']} UA active"},
@@ -1602,32 +1669,13 @@ def _filtered_rows(
     due_errors_only: bool = False,
     q: str = "",
 ) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
-    selected_valid = [str(tracker).upper() for tracker in (valid_for or []) if str(tracker).strip()]
-    if selected_valid:
-        rows = db.list_items_filtered(
-            statuses,
-            limit=5000,
-            offset=0,
-            media=media,
-            missing=missing,
-            reasons=reasons,
-            hide_any_primary=hide_any_primary,
-            due_errors_only=due_errors_only,
-            q=q,
-        )
-        coverage = _coverage_for_rows(db, rows)
-        decorated = [_row_dict(row, coverage) for row in rows]
-        wanted = set(selected_valid)
-        filtered = [item for item in decorated if wanted.intersection(set(item.get("valid_for_trackers") or []))]
-        total = len(filtered)
-        return filtered[offset : offset + limit], total, coverage
-
     rows = db.list_items_filtered(
         statuses,
         limit=limit,
         offset=offset,
         media=media,
         missing=missing,
+        valid_for=valid_for,
         reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
@@ -1637,6 +1685,7 @@ def _filtered_rows(
         statuses,
         media=media,
         missing=missing,
+        valid_for=valid_for,
         reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
@@ -1658,36 +1707,13 @@ def _filtered_dashboard_items(
     due_errors_only: bool = False,
     q: str = "",
 ) -> tuple[List[Dict[str, Any]], int]:
-    selected_valid = [str(tracker).upper() for tracker in (valid_for or []) if str(tracker).strip()]
-    if selected_valid:
-        rows = db.list_items_filtered(
-            statuses,
-            limit=5000,
-            offset=0,
-            media=media,
-            missing=missing,
-            valid_for=selected_valid,
-            reasons=reasons,
-            hide_any_primary=hide_any_primary,
-            due_errors_only=due_errors_only,
-            q=q,
-        )
-        coverage = _coverage_for_rows(db, rows)
-        wanted = set(selected_valid)
-        filtered = [
-            item
-            for item in (_dashboard_row_dict(row, coverage) for row in rows)
-            if wanted.intersection(set(item.get("valid_for_trackers") or []))
-        ]
-        total = len(filtered)
-        return filtered[offset : offset + limit], total
-
-    rows = db.list_items_filtered(
+    rows = db.list_dashboard_items_filtered(
         statuses,
         limit=limit,
         offset=offset,
         media=media,
         missing=missing,
+        valid_for=valid_for,
         reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
@@ -1697,6 +1723,7 @@ def _filtered_dashboard_items(
         statuses,
         media=media,
         missing=missing,
+        valid_for=valid_for,
         reasons=reasons,
         hide_any_primary=hide_any_primary,
         due_errors_only=due_errors_only,
@@ -1837,12 +1864,13 @@ async def dashboard(
         q=search_query,
     )
     service_snapshot = request.app.state.service.snapshot()
+    counts = request.app.state.db.status_counts()
     context = {
-        **_shell_context(request, section="dashboard", view=selected, q=search_query),
+        **_shell_context(request, section="dashboard", view=selected, q=search_query, service_snapshot=service_snapshot, counts=counts),
         "request": request,
         "items": items,
         "view": selected,
-        "counts": request.app.state.db.status_counts(),
+        "counts": counts,
         "service": service_snapshot,
         "message": message,
         "primary_trackers": PRIMARY_TRACKERS,
@@ -1939,6 +1967,14 @@ async def queued_imports(request: Request) -> HTMLResponse:
     )
 
 
+@app.post("/imports/run-pending")
+async def run_pending_imports(request: Request) -> RedirectResponse:
+    counts = request.app.state.db.queued_import_counts()
+    if counts.get("pending"):
+        await request.app.state.service.request_queued_import_run()
+    return RedirectResponse(url="/imports", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/items/{item_id}/recheck")
 async def recheck_item(item_id: int, return_to: str = Form("")) -> RedirectResponse:
     app.state.db.requeue(item_id)
@@ -2011,7 +2047,6 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
             path=path,
             args=_with_unattended_arg(str(console.get("args") or "")),
         )
-        await request.app.state.service.run_queued_import()
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#upload-assistant"), status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2085,7 +2120,6 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
         path=path,
         args=queued_args,
     )
-    await request.app.state.service.run_queued_import()
     return JSONResponse({"success": True, "id": import_id, "args": queued_args})
 
 

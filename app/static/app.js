@@ -20,6 +20,13 @@
     },
   };
 
+  function setButtonTick(button, label = "Done") {
+    if (!button) return;
+    button.classList.add("button-ticked");
+    button.setAttribute("aria-label", label);
+    button.innerHTML = '<span class="submit-tick" aria-hidden="true">&#10003;</span><span class="sr-only">' + label + "</span>";
+  }
+
   function setSidebar(collapsed) {
     if (!shell) return;
     shell.classList.toggle("sidebar-collapsed", collapsed);
@@ -116,6 +123,13 @@
     if (target instanceof Node && !notificationMenu.contains(target)) {
       notificationPopout.hidden = true;
     }
+  });
+
+  document.querySelectorAll("form[data-submit-tick]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
+      setButtonTick(button, form.dataset.submitTick || "Done");
+    });
   });
 
   document.querySelectorAll("[data-resizable-table]").forEach((table) => {
@@ -517,6 +531,7 @@
             return;
           }
           appendLine(`Queued unattended import #${payload.id}.`, "system");
+          setButtonTick(queueButton, "Upload queued");
         } catch (error) {
           appendLine(error.message || String(error), "error");
         } finally {
@@ -623,7 +638,7 @@
         setText('[data-queue-field="active"]', String(queue.active || 0));
         const maintenance = service.maintenance || {};
         const uaExecution = service.ua_execution || {};
-        const footer = maintenance.active ? "Paused" : ((uaExecution.busy || service.running_jobs || queue.active || imports.active) ? "Running" : "Ready");
+        const footer = maintenance.active ? "Paused" : ((uaExecution.busy || service.running_jobs || queue.active || imports.running) ? "Running" : "Ready");
         setText("[data-service-footer]", footer);
         document.querySelectorAll("[data-service-footer-dot]").forEach((node) => {
           node.classList.toggle("ok", footer === "Ready");

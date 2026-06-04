@@ -191,6 +191,7 @@ class WhackamoleService:
         self._last_srrdb_request_at = 0.0
         self._maintenance_probe_at = 0.0
         self._maintenance_probe_ok: Optional[bool] = None
+        self._queued_import_run_requested = False
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -219,10 +220,12 @@ class WhackamoleService:
                 maintenance_active = await self._maintenance_pause_active(cfg)
                 if not maintenance_active and cfg.qui.url and self.secrets.has("qui_api_key"):
                     await self.poll_once()
-                    await self.run_queued_import()
+                    if self._queued_import_run_requested:
+                        await self.run_queued_import()
                     await self.run_due_jobs()
                 elif not maintenance_active:
-                    await self.run_queued_import()
+                    if self._queued_import_run_requested:
+                        await self.run_queued_import()
             except Exception as exc:
                 self.db.append_service_error(str(exc))
 
@@ -357,8 +360,10 @@ class WhackamoleService:
             return
         cfg = self.config_manager.load()
         if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
+            self._queued_import_run_requested = False
             return
         if not self.db.queued_import_counts().get("pending"):
+            self._queued_import_run_requested = False
             return
         lease = await self.ua_execution.acquire(
             kind="queued_import",
@@ -372,9 +377,15 @@ class WhackamoleService:
         session_id = f"whackamole-queued-import-{int(time.time() * 1000)}"
         row = self.db.claim_next_import(session_id)
         if row is None:
+            self._queued_import_run_requested = False
             await lease.release()
             return
         self._import_task = asyncio.create_task(self._run_queued_import_row(row, cfg, lease))
+
+    async def request_queued_import_run(self) -> bool:
+        self._queued_import_run_requested = True
+        await self.run_queued_import()
+        return bool(self._queued_import_run_requested or (self._import_task and not self._import_task.done()))
 
     async def _run_queued_import_row(self, row: Mapping[str, Any], cfg: Any, lease: Any) -> None:
         import_id = int(row["id"])
@@ -409,6 +420,8 @@ class WhackamoleService:
             self.db.append_service_error(message)
         finally:
             await lease.release()
+            if not self.db.queued_import_counts().get("pending"):
+                self._queued_import_run_requested = False
 
     def snapshot(self) -> dict:
         cfg = self.config_manager.load()

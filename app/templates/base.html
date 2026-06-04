@@ -45,7 +45,7 @@
               </button>
             </form>
             <div class="sidebar-status">
-              {% set footer_state = "Paused" if service.maintenance.active else ("Running" if service.ua_execution.busy or service.running_jobs or service.queue.active or service.imports.active else "Ready") %}
+              {% set footer_state = "Paused" if service.maintenance.active else ("Running" if service.ua_execution.busy or service.running_jobs or service.queue.active or service.imports.running else "Ready") %}
               <span class="state-dot {% if footer_state == 'Ready' %}ok{% elif footer_state == 'Paused' %}warn{% else %}run{% endif %}" data-service-footer-dot></span>
               <span data-service-footer>{{ footer_state }}</span>
             </div>
@@ -74,7 +74,6 @@
           </div>
 
           {% if show_dashboard_search | default(false) %}
-            <button class="button secondary small mobile-search-toggle" type="button" data-search-open>Search</button>
             <form class="top-search" method="get" action="/dashboard">
               <input type="hidden" name="view" value="{{ view }}">
               {% for media in dashboard_filters.media %}
@@ -101,6 +100,9 @@
           {% endif %}
 
           <div class="topbar-actions">
+            {% if show_dashboard_search | default(false) %}
+              <button class="button secondary small mobile-search-toggle" type="button" data-search-open>Search</button>
+            {% endif %}
             {% block topbar_actions %}{% endblock %}
             {% if service is defined %}
               {% set service_errors = service.service_errors or [] %}
@@ -142,9 +144,18 @@
           {% block content %}{% endblock %}
         </main>
         <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
-          <a href="/" class="{% if section == 'home' %}active{% endif %}">Dashboard</a>
-          <a href="/dashboard?view=candidates" class="{% if section == 'dashboard' %}active{% endif %}">List View</a>
-          <a href="/config" class="{% if section == 'settings' %}active{% endif %}">Settings</a>
+          <a href="/" class="{% if section == 'home' %}active{% endif %}">
+            <span aria-hidden="true">⌂</span>
+            <strong>Dashboard</strong>
+          </a>
+          <a href="/dashboard?view=candidates" class="{% if section == 'dashboard' %}active{% endif %}">
+            <span aria-hidden="true">☰</span>
+            <strong>List View</strong>
+          </a>
+          <a href="/config" class="{% if section == 'settings' %}active{% endif %}">
+            <span aria-hidden="true">⚙</span>
+            <strong>Settings</strong>
+          </a>
         </nav>
       </div>
     </div>

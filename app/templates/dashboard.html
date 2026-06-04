@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · Whackamole{% endblock %}
-{% block page_label %}Dashboard{% endblock %}
+{% block page_label %}{{ dashboard_filters.label | title }}{% endblock %}
 {% block topbar_actions %}
   <button class="button secondary small mobile-only" type="button" data-filter-toggle>Filters</button>
   <a class="button secondary small" href="{{ current_url }}">Refresh</a>
@@ -222,7 +222,6 @@
             {% endfor %}
           </div>
           {% if problem_view %}
-            <p class="muted">{{ item.verdict or item.next_action }}</p>
             {% if item.decision_notice %}<p class="muted">{{ item.decision_notice }}</p>{% endif %}
           {% endif %}
           <footer class="card-tracker-row">
@@ -231,9 +230,9 @@
                 <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
               {% endfor %}
             </div>
-            <form method="post" action="/items/{{ item.id }}/upload-assistant/queue">
+            <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small success" type="submit">Upload</button>
+                <button class="button small success" type="submit" data-submit-tick-button>Upload</button>
             </form>
           </footer>
         </article>

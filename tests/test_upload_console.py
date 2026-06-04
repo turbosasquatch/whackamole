@@ -99,7 +99,52 @@ def test_upload_console_queue_endpoint_enqueues_unattended_import_when_lock_busy
         assert rows[0]["args"] == "--trackers dp --unattended"
         assert imports_page.status_code == 200
         assert "Queued Imports" in imports_page.text
+        assert "Run pending imports" in imports_page.text
         assert "--trackers dp --unattended" in imports_page.text
+
+
+def test_upload_console_queue_endpoint_waits_for_manual_import_run(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+
+        async def fail_auto_run():
+            raise AssertionError("queue endpoint should not auto-run pending imports")
+
+        client.app.state.service.run_queued_import = fail_auto_run
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers dp"})
+
+        assert response.status_code == 200
+        rows = client.app.state.db.list_imports()
+        assert len(rows) == 1
+        assert rows[0]["status"] == "pending"
+
+
+def test_imports_run_pending_button_triggers_runner(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.db.enqueue_import(
+            item_id=42,
+            item_name="Queued.Movie.2026.1080p.NF.WEB-DL-GRP",
+            path="/ua/movie.mkv",
+            args="--trackers dp --unattended",
+        )
+        calls = []
+
+        async def fake_run_pending():
+            calls.append(True)
+            return True
+
+        client.app.state.service.request_queued_import_run = fake_run_pending
+
+        response = client.post("/imports/run-pending", follow_redirects=False)
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/imports"
+        assert calls == [True]
 
 
 def test_upload_console_full_snapshots_are_not_terminal_replacements():
@@ -108,6 +153,14 @@ def test_upload_console_full_snapshots_are_not_terminal_replacements():
     assert "lastFullSnapshotText" in script
     assert 'payload.type === "html_full"' in script
     assert 'if (replace) output.innerHTML = "";' not in script
+
+
+def test_submit_buttons_have_tick_feedback_script():
+    script = Path("app/static/app.js").read_text()
+
+    assert "function setButtonTick" in script
+    assert "form[data-submit-tick]" in script
+    assert "&#10003;" in script
 
 
 def test_item_page_upload_console_does_not_duplicate_service_when_title_has_it(tmp_path, monkeypatch):

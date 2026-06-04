@@ -12,6 +12,17 @@ from app.media_policy import apply_release_group_policy
 from app.reducer import TRACKER_BUCKETS
 
 
+_DASHBOARD_COLUMNS = """
+    i.id, i.instance_id, i.hash, i.name, i.category, i.tags, i.content_path, i.mapped_path,
+    i.status, i.verdict, i.reason, i.size, i.added_on, i.completion_on, i.discovered_at,
+    i.updated_at, i.last_checked_at, i.next_check_at, i.attempt_count, i.tracker_results,
+    i.arr_results, i.inventory_meta, i.ignored_reason, i.baseline, i.inventory_group_key,
+    i.inventory_media_type, i.inventory_tracker_key, i.inventory_tracker_label,
+    i.inventory_tracker_primary, i.inventory_is_cross_seed, i.inventory_is_upload,
+    i.inventory_is_support, i.check_stage, i.check_results
+"""
+
+
 class Database:
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -123,6 +134,10 @@ class Database:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_items_status_media_group "
                 "ON items(status, inventory_media_type, inventory_group_key, updated_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_items_inventory_status_group_tracker "
+                "ON items(status, inventory_group_key, inventory_tracker_key, inventory_tracker_primary)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_status_created ON queued_imports(status, created_at ASC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_item ON queued_imports(item_id)")
@@ -385,6 +400,29 @@ class Database:
                 params + [limit, offset],
             ).fetchall()
 
+    def list_dashboard_items_filtered(
+        self,
+        statuses: Iterable[str],
+        limit: int = 100,
+        offset: int = 0,
+        media: Any = "all",
+        missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+        due_errors_only: bool = False,
+        q: str = "",
+    ) -> List[sqlite3.Row]:
+        where_sql, params = self._filtered_where(
+            statuses, media, missing, valid_for, reasons, hide_any_primary, due_errors_only, q
+        )
+        offset = max(0, int(offset or 0))
+        with self.connect() as conn:
+            return conn.execute(
+                f"SELECT {_DASHBOARD_COLUMNS} FROM items AS i {where_sql} ORDER BY i.updated_at DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+
     def count_items_filtered(
         self,
         statuses: Iterable[str],
@@ -568,14 +606,8 @@ class Database:
         if selected_valid:
             tracker_clauses: List[str] = []
             for tracker in selected_valid:
-                tracker_clauses.append(
-                    "("
-                    "(i.arr_results LIKE ? AND i.arr_results LIKE '%candidate%') "
-                    "OR (i.check_results LIKE ? AND i.check_results LIKE '%candidate%') "
-                    "OR (i.tracker_results LIKE ? AND i.status = 'candidate')"
-                    ")"
-                )
-                params.extend([f'%"{tracker}"%', f'%"{tracker}"%', f'%"{tracker}"%'])
+                tracker_clauses.append(_valid_for_tracker_clause())
+                params.extend([tracker, tracker, tracker, tracker, tracker])
             clauses.append("(" + " OR ".join(tracker_clauses) + ")")
         reason_clauses, reason_params = _reason_filter_clauses(reasons)
         if reason_clauses:
@@ -1227,6 +1259,61 @@ def _selected_media_values(media: Any) -> List[str]:
 def _selected_tracker_values(values: Any) -> List[str]:
     raw_values = values if isinstance(values, (list, tuple, set)) else [values]
     return list(dict.fromkeys(str(value).strip().upper() for value in raw_values if str(value or "").strip()))
+
+
+def _valid_for_tracker_clause() -> str:
+    policy_path = "$.release_group_policy.candidate_trackers"
+    arr_path = "$.decisions"
+    return f"""
+        (
+            (
+                COALESCE(json_array_length(json_extract(i.check_results, '{policy_path}')), 0) > 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM json_each(json_extract(i.check_results, '{policy_path}')) AS policy_tracker
+                    WHERE UPPER(CAST(policy_tracker.value AS TEXT)) = ?
+                )
+            )
+            OR (
+                COALESCE(json_array_length(json_extract(i.check_results, '{policy_path}')), 0) = 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM json_each(json_extract(i.arr_results, '{arr_path}')) AS arr_decision
+                    WHERE UPPER(COALESCE(json_extract(arr_decision.value, '$.tracker'), '')) = ?
+                      AND LOWER(COALESCE(json_extract(arr_decision.value, '$.status'), '')) = 'candidate'
+                )
+            )
+            OR (
+                COALESCE(json_array_length(json_extract(i.check_results, '{policy_path}')), 0) = 0
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM json_each(json_extract(i.arr_results, '{arr_path}')) AS arr_any
+                    WHERE LOWER(COALESCE(json_extract(arr_any.value, '$.status'), '')) = 'candidate'
+                )
+                AND i.status = 'candidate'
+                AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM json_each(json_extract(i.tracker_results, '$.passed')) AS passed_tracker
+                        WHERE UPPER(CAST(passed_tracker.value AS TEXT)) = ?
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM json_each(json_extract(i.tracker_results, '$.groups.passed')) AS grouped_passed_tracker
+                        WHERE UPPER(CAST(grouped_passed_tracker.value AS TEXT)) = ?
+                    )
+                    OR (
+                        json_type(i.tracker_results) = 'array'
+                        AND EXISTS (
+                            SELECT 1
+                            FROM json_each(i.tracker_results) AS legacy_tracker
+                            WHERE UPPER(CAST(legacy_tracker.value AS TEXT)) = ?
+                        )
+                    )
+                )
+            )
+        )
+    """
 
 
 def _reason_filter_clauses(reasons: Optional[Iterable[str]]) -> Tuple[List[str], List[Any]]:

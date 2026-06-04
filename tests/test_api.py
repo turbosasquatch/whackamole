@@ -352,6 +352,8 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "data-search-open" in page.text
         assert "data-search-modal" in page.text
         assert f'/items/{item_id}/upload-assistant/queue' in page.text
+        assert 'data-submit-tick="Upload queued"' in page.text
+        assert "data-submit-tick-button" in page.text
         assert "Upload" in page.text
         assert "filter-view-list" not in page.text
 
@@ -365,6 +367,28 @@ def test_dashboard_valid_for_filter_excludes_other_tracker_candidates(tmp_path, 
         assert page.status_code == 200
         assert "Example.Show.S01E01" not in page.text
         assert "No items in this view." in page.text
+
+
+def test_candidate_dashboard_suppresses_non_final_dupe_flags(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: IHD",
+            tracker_results={"passed": ["IHD"], "dupe": ["DP"], "skipped": [], "error": []},
+            arr_results={
+                "decisions": [{"tracker": "IHD", "status": "candidate", "reason": "ok"}],
+            },
+        )
+
+        response = client.get("/api/items?status=candidate", headers=_auth_headers())
+
+        assert response.status_code == 200
+        tags = response.json()["items"][0]["alert_tags"]
+        assert "Dupe" not in {tag["label"] for tag in tags}
 
 
 def test_dashboard_list_does_not_build_detail_release_views(tmp_path, monkeypatch):
@@ -504,6 +528,42 @@ def test_dashboard_reason_filter_and_table_shape(tmp_path, monkeypatch):
         assert "coverage-badge missing-default" in page.text
 
 
+def test_blocked_dashboard_tags_final_verdict_without_duplicate_mobile_verdict_text(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "no-tracker-passed",
+                "name": "Blocked.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "",
+                "content_path": "/media/torrents/tv/Blocked.Show.S01E01.1080p.WEB-DL-GRP",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "blocked",
+            "no_tracker_passed",
+            "No tracker passed UA checks.",
+            tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+        )
+
+        api_response = client.get("/api/items?status=blocked", headers=_auth_headers())
+        page = client.get("/dashboard?view=blocked")
+
+        assert api_response.status_code == 200
+        assert "No Tracker Passed" in {tag["label"] for tag in api_response.json()["items"][0]["alert_tags"]}
+        assert page.status_code == 200
+        assert "No tracker passed UA checks." in page.text
+        assert '<p class="muted">no_tracker_passed</p>' not in page.text
+
+
 def test_discovarr_ranking_tags_mark_equal_values_as_same():
     tags = main_module._ranking_tags(
         {
@@ -624,6 +684,8 @@ def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monk
         assert ">Checks<" not in page.text
         assert ">Trackers<" not in page.text
         assert "Queue Upload" in page.text
+        assert 'data-submit-tick="Recheck triggered"' in page.text
+        assert 'data-submit-tick="Upload queued"' in page.text
         assert "Next Item" in page.text
         assert ">Size<" not in page.text
 

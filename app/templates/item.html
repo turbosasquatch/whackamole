@@ -38,12 +38,12 @@
       </div>
     </div>
     <div class="hero-actions">
-      <form method="post" action="/items/{{ item.id }}/recheck">
-        <button class="button" type="submit">Recheck</button>
+      <form method="post" action="/items/{{ item.id }}/recheck" data-submit-tick="Recheck triggered">
+        <button class="button" type="submit" data-submit-tick-button>Recheck</button>
       </form>
-      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue">
+      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued">
         <input type="hidden" name="return_to" value="/items/{{ item.id }}#upload-assistant">
-        <button class="button success" type="submit">Queue Upload</button>
+        <button class="button success" type="submit" data-submit-tick-button>Queue Upload</button>
       </form>
       <form method="post" action="/items/{{ item.id }}/ignore">
         <button class="button secondary" type="submit">Ignore</button>
@@ -58,13 +58,6 @@
       <strong>{{ item.verdict or item.next_action }}</strong>
       <p>{{ item.decision_notice or item.reason or item.display_status.detail or "No decision reason recorded yet." }}</p>
       <p class="muted">Last checked {{ item.last_checked_at | datetime }}</p>
-      <div class="big-trackers">
-        {% for tracker in item.valid_for_trackers %}
-          <span class="big-tracker">{{ tracker }}</span>
-        {% else %}
-          <span class="muted">No tracker eligibility recorded.</span>
-        {% endfor %}
-      </div>
       <div class="coverage-badges">
         {% for tracker in item.tracker_coverage %}
           <span class="coverage-badge {{ tracker.state }} {% if tracker.state == 'not-valid' %}missing-default{% endif %}">{{ tracker.label }}</span>
@@ -89,7 +82,7 @@
     </div>
 
     <div class="tab-panel active" data-tab-panel="overview">
-      <div class="info-grid">
+      <div class="info-grid overview-summary-grid">
         <section>
           <h2>Checks Summary</h2>
           <div class="check-summary">
@@ -102,19 +95,6 @@
               </div>
             {% endfor %}
           </div>
-        </section>
-        <section>
-          <h2>Coverage</h2>
-          <div class="coverage-badges">
-            {% for tracker in item.tracker_coverage %}
-              <span class="coverage-badge {{ tracker.state }} {% if tracker.state == 'not-valid' %}missing-default{% endif %}">{{ tracker.label }}</span>
-            {% else %}
-              <span class="muted">No tracker coverage recorded.</span>
-            {% endfor %}
-          </div>
-          {% if item.missing_primary_trackers %}
-            <p class="muted">Missing {{ item.missing_primary_trackers | join(", ") }}</p>
-          {% endif %}
         </section>
       </div>
 
