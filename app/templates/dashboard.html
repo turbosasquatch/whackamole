@@ -224,25 +224,13 @@
           {% if problem_view %}
             <p class="muted">{{ item.verdict or item.next_action }}</p>
             {% if item.decision_notice %}<p class="muted">{{ item.decision_notice }}</p>{% endif %}
-          {% else %}
-            <div class="tracker-chip-list">
-              {% for tracker in item.valid_for_trackers %}
-                <span class="tracker-chip valid">{{ tracker }}</span>
+          {% endif %}
+          <footer class="card-tracker-row">
+            <div class="coverage-badges">
+              {% for tracker in item.tracker_coverage %}
+                <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
               {% endfor %}
             </div>
-          {% endif %}
-          <div class="card-facts">
-            <span>{{ item.source_label }}</span>
-            <span>{{ item.size | bytes }}</span>
-            <span>{{ item.updated_at | datetime }}</span>
-            <span>{{ item.category or "No category" }}</span>
-          </div>
-          <div class="coverage-badges">
-            {% for tracker in item.tracker_coverage %}
-              <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
-            {% endfor %}
-          </div>
-          <footer>
             <form method="post" action="/items/{{ item.id }}/upload-assistant/queue">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
                 <button class="button small success" type="submit">Upload</button>

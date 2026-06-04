@@ -2231,6 +2231,25 @@ dd {
     justify-content: flex-end;
   }
 
+  .topbar {
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .topbar-left {
+    gap: 8px;
+  }
+
+  .topbar-title strong {
+    font-size: 18px;
+  }
+
+  .topbar-actions .button,
+  .mobile-search-toggle {
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+
   .notification-popout {
     left: max(8px, env(safe-area-inset-left));
     right: max(8px, env(safe-area-inset-right));
@@ -2291,6 +2310,10 @@ dd {
     min-width: 0;
   }
 
+  .topbar-title > span {
+    display: none;
+  }
+
   .topbar-title strong,
   .topbar-title span {
     overflow: hidden;
@@ -2301,7 +2324,7 @@ dd {
   .topbar-actions {
     display: flex;
     flex-wrap: nowrap;
-    gap: 6px;
+    gap: 4px;
     min-width: 0;
   }
 
@@ -2309,6 +2332,17 @@ dd {
   .notification-button,
   .mobile-search-toggle {
     flex: 0 0 auto;
+  }
+
+  .topbar-actions .button,
+  .mobile-search-toggle {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  .notification-button {
+    height: 34px;
+    width: 34px;
   }
 
   .top-search {
@@ -2386,18 +2420,50 @@ dd {
     width: 100%;
   }
 
-  .media-card .coverage-badges {
+  .media-card .coverage-badges,
+  .card-tracker-row .coverage-badges {
     justify-content: flex-start;
+    min-width: 0;
   }
 
-  .media-card footer {
+  .media-card footer,
+  .card-tracker-row {
     align-items: center;
     display: flex;
+    gap: 8px;
     justify-content: flex-end;
   }
 
-  .media-card footer form {
+  .card-tracker-row .coverage-badges {
+    flex: 1 1 auto;
+  }
+
+  .card-tracker-row form {
+    flex: 0 0 auto;
     margin-left: auto;
+  }
+
+  .media-card .card-facts,
+  .media-card .tracker-chip-list {
+    display: none;
+  }
+
+  .media-card .pill,
+  .media-card .flag-badge,
+  .media-card .coverage-badge,
+  .media-card .tracker-chip,
+  .media-card .button.small {
+    align-items: center;
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 800;
+    min-height: 30px;
+    padding: 5px 11px;
+  }
+
+  .media-card .button.small {
+    min-height: 36px;
+    padding: 7px 13px;
   }
 
   .item-hero .hero-actions {
