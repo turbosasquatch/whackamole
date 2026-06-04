@@ -1975,6 +1975,26 @@ dd {
     order: initial;
   }
 
+  .notification-popout {
+    left: max(10px, env(safe-area-inset-left));
+    max-height: calc(100dvh - 92px);
+    min-width: 0;
+    overflow: hidden;
+    position: fixed;
+    right: max(10px, env(safe-area-inset-right));
+    top: calc(72px + env(safe-area-inset-top));
+    width: auto;
+  }
+
+  .notification-popout header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .notification-popout ol {
+    max-height: calc(100dvh - 160px);
+  }
+
   .top-search input {
     max-width: none;
     min-width: 0;
@@ -2097,9 +2117,9 @@ dd {
   }
 
   .notification-popout {
-    min-width: min(92vw, 340px);
-    right: auto;
-    left: 0;
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    top: calc(66px + env(safe-area-inset-top));
   }
 
   .button,

@@ -430,6 +430,62 @@ def test_queued_import_runner_executes_and_notifies(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_queued_import_watchdog_kills_stuck_upload_and_notifies(tmp_path, monkeypatch):
+    killed_sessions = []
+
+    class FakeUploadAssistantClient:
+        def __init__(self, _config, _token):
+            pass
+
+        async def execute_upload_stream(self, _path, _args, _session_id):
+            yield sse_payload("system", "started")
+            await asyncio.Event().wait()
+
+        async def kill_session(self, session_id):
+            killed_sessions.append(session_id)
+            return {"success": True}
+
+    monkeypatch.setattr("app.service.UploadAssistantClient", FakeUploadAssistantClient)
+
+    async def run():
+        cfg = AppConfig()
+        cfg.upload_assistant.url = "http://ua"
+        cfg.upload_assistant.request_timeout_seconds = 1
+        secrets = SecretStore(str(tmp_path))
+        secrets.set("ua_bearer_token", "token")
+        db = Database(str(tmp_path / "whackamole.db"))
+        db.enqueue_import(
+            item_id=42,
+            item_name="Stuck.Movie.2026.1080p.NF.WEB-DL-GRP",
+            path="/ua/stuck.mkv",
+            args="--trackers dp --unattended",
+        )
+        coordinator = UaExecutionCoordinator()
+        service = WhackamoleService(AppConfigManagerStub(cfg), secrets, db, coordinator)
+
+        await service.run_queued_import()
+        assert service._import_task is not None
+        await asyncio.wait_for(service._import_task, timeout=2)
+
+        row = db.list_imports()[0]
+        assert row["status"] == "error"
+        assert "timed out" in row["message"]
+        assert "started" in row["output"]
+        assert killed_sessions
+        assert coordinator.snapshot()["busy"] is False
+        assert "timed out" in db.service_error_history()[-1]["message"]
+
+    asyncio.run(run())
+
+
+def test_mobile_notification_popout_uses_fixed_viewport_positioning():
+    styles = Path("app/static/style.css").read_text()
+
+    assert ".notification-popout" in styles
+    assert "position: fixed;" in styles
+    assert "max-height: calc(100dvh - 92px);" in styles
+
+
 class AppConfigManagerStub:
     def __init__(self, cfg):
         self._cfg = cfg

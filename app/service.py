@@ -155,6 +155,13 @@ def _source_provider_for_web_gate(item_name: str, media_result: Mapping[str, Any
     return _source_provider_from_media_result(media_result)
 
 
+def _queued_import_timeout_seconds(cfg: Any) -> int:
+    try:
+        return max(1, int(cfg.upload_assistant.request_timeout_seconds or 3600))
+    except (AttributeError, TypeError, ValueError):
+        return 3600
+
+
 def _int_kv(value: Optional[str]) -> int:
     try:
         return int(value or 0)
@@ -380,11 +387,22 @@ class WhackamoleService:
         client = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
         self._last_ua_job_started_at = time.time()
         try:
-            async for chunk in client.execute_upload_stream(path, args, session_id):
-                output_chunks.append(str(chunk))
+            async def consume_stream() -> None:
+                async for chunk in client.execute_upload_stream(path, args, session_id):
+                    output_chunks.append(str(chunk))
+
+            await asyncio.wait_for(consume_stream(), timeout=_queued_import_timeout_seconds(cfg))
             message = f"Queued import complete: {item_name}"
             self.db.mark_import_complete(import_id, message, "".join(output_chunks))
             self.db.append_service_error(message)
+        except asyncio.TimeoutError:
+            with contextlib.suppress(Exception):
+                await client.kill_session(session_id)
+            message = f"Queued import timed out and was killed: {item_name}"
+            self.db.mark_import_error(import_id, message, "".join(output_chunks))
+            self.db.append_service_error(message)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             message = f"Queued import failed: {item_name}: {str(exc)[:180]}"
             self.db.mark_import_error(import_id, message, "".join(output_chunks))
