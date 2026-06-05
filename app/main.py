@@ -1959,6 +1959,10 @@ async def dashboard(
         due_errors_only=selected == "active",
         q=search_query,
     )
+    active_imports = request.app.state.db.active_imports_by_item_ids([int(item["id"]) for item in items])
+    for item in items:
+        active_import = active_imports.get(int(item["id"]))
+        item["active_import"] = dict(active_import) if active_import is not None else {}
     service_snapshot = request.app.state.service.snapshot()
     counts = request.app.state.db.status_counts()
     context = {
@@ -2174,6 +2178,9 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
     row = request.app.state.db.get_item(item_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Item not found")
+    existing = request.app.state.db.active_import_for_item(item_id)
+    if existing is not None:
+        return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
     cfg = request.app.state.config_manager.load()
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
     console = item["upload_console"]
@@ -2239,6 +2246,18 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
     cfg = request.app.state.config_manager.load()
     if not cfg.upload_assistant.url or not request.app.state.secrets.has("ua_bearer_token"):
         return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
+
+    existing = request.app.state.db.active_import_for_item(item_id)
+    if existing is not None:
+        return JSONResponse(
+            {
+                "success": True,
+                "id": int(existing["id"]),
+                "args": str(existing["args"] or ""),
+                "already_queued": True,
+                "status": str(existing["status"] or ""),
+            }
+        )
 
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
     console = item["upload_console"]

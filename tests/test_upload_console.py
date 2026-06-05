@@ -124,6 +124,28 @@ def test_upload_console_queue_endpoint_waits_for_manual_import_run(tmp_path, mon
         assert rows[0]["status"] == "pending"
 
 
+def test_upload_console_queue_endpoint_reuses_active_import(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+        existing_id = client.app.state.db.enqueue_import(
+            item_id=item_id,
+            item_name="Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
+            path="/ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
+            args="--trackers dp --unattended",
+        )
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers ulcx"})
+
+        assert response.status_code == 200
+        assert response.json()["id"] == existing_id
+        assert response.json()["already_queued"] is True
+        assert len(client.app.state.db.list_imports()) == 1
+
+
 def test_upload_console_queue_endpoint_uses_default_args_when_payload_omits_args(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         cfg = client.app.state.config_manager.load()

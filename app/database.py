@@ -946,6 +946,43 @@ class Database:
             )
             return int(cursor.lastrowid)
 
+    def active_import_for_item(self, item_id: int) -> Optional[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM queued_imports
+                WHERE item_id = ? AND status IN ('pending', 'running')
+                ORDER BY
+                  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+                  created_at ASC
+                LIMIT 1
+                """,
+                (int(item_id),),
+            ).fetchone()
+
+    def active_imports_by_item_ids(self, item_ids: Iterable[int]) -> Dict[int, sqlite3.Row]:
+        ids = [int(item_id) for item_id in dict.fromkeys(item_ids)]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM queued_imports
+                WHERE item_id IN ({placeholders}) AND status IN ('pending', 'running')
+                ORDER BY
+                  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+                  created_at ASC
+                """,
+                ids,
+            ).fetchall()
+        imports: Dict[int, sqlite3.Row] = {}
+        for row in rows:
+            imports.setdefault(int(row["item_id"]), row)
+        return imports
+
     def list_imports(self, limit: int = 100, offset: int = 0) -> List[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute(

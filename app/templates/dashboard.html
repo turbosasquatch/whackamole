@@ -230,9 +230,19 @@
                 <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
               {% endfor %}
             </div>
-            <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued">
+            {% set active_import = item.active_import or {} %}
+            <form
+              method="post"
+              action="/items/{{ item.id }}/upload-assistant/queue"
+              data-submit-tick="Upload queued"
+              data-queue-upload-form
+              data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
+              data-queued-import-id="{{ active_import.id or '' }}"
+            >
                 <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small success" type="submit" data-submit-tick-button>Upload</button>
+                <button class="button small success" type="submit" data-submit-tick-button {% if active_import %}disabled{% endif %}>
+                  {% if active_import %}Queued{% else %}Upload{% endif %}
+                </button>
             </form>
           </footer>
         </article>

@@ -352,10 +352,30 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "data-search-open" in page.text
         assert "data-search-modal" in page.text
         assert f'/items/{item_id}/upload-assistant/queue' in page.text
+        assert f'data-queue-url="/api/items/{item_id}/upload-assistant/queue"' in page.text
+        assert "data-queue-upload-form" in page.text
         assert 'data-submit-tick="Upload queued"' in page.text
         assert "data-submit-tick-button" in page.text
         assert "Upload" in page.text
         assert "filter-view-list" not in page.text
+
+
+def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        import_id = client.app.state.db.enqueue_import(
+            item_id=item_id,
+            item_name="Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+            path="/media/torrents/tv/example.mkv",
+            args="--trackers ihd --unattended",
+        )
+
+        page = client.get("/dashboard?view=candidates")
+
+        assert page.status_code == 200
+        assert f'data-queued-import-id="{import_id}"' in page.text
+        assert "Queued" in page.text
+        assert "disabled" in page.text
 
 
 def test_dashboard_valid_for_filter_excludes_other_tracker_candidates(tmp_path, monkeypatch):

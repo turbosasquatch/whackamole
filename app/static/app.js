@@ -134,6 +134,11 @@
   });
 
   document.querySelectorAll("form[data-queue-upload-form]").forEach((form) => {
+    const initialButton = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
+    if (form.dataset.queuedImportId && initialButton) {
+      setButtonTick(initialButton, form.dataset.submitTick || "Upload queued");
+      initialButton.disabled = true;
+    }
     form.addEventListener("submit", async (event) => {
       const queueUrl = form.dataset.queueUrl;
       const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
@@ -149,6 +154,9 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload.success === false) {
           throw new Error(payload.error || `Queue failed with ${response.status}`);
+        }
+        if (payload.id) {
+          form.dataset.queuedImportId = String(payload.id);
         }
         setButtonTick(button, form.dataset.submitTick || "Upload queued");
       } catch (error) {
