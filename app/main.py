@@ -2607,7 +2607,10 @@ async def save_config(
     max_queue_size: str = Form("250"),
     max_concurrent_ua_jobs: str = Form("1"),
     min_seconds_between_ua_jobs: str = Form("120"),
+    max_qui_poll_pages: str = Form("100"),
+    max_mediainfo_files_per_check: str = Form("8"),
     arr_search_timeout_seconds: str = Form("300"),
+    arr_metadata_cache_seconds: str = Form("900"),
     recheck_cooldown_hours: str = Form("24"),
     max_error_retries: str = Form("3"),
     error_backoff_minutes: str = Form("15, 60, 360"),
@@ -2661,10 +2664,25 @@ async def save_config(
         cfg.safety.min_seconds_between_ua_jobs,
         minimum=0,
     )
+    cfg.safety.max_qui_poll_pages = _as_int(
+        max_qui_poll_pages,
+        cfg.safety.max_qui_poll_pages,
+        minimum=1,
+    )
+    cfg.safety.max_mediainfo_files_per_check = _as_int(
+        max_mediainfo_files_per_check,
+        cfg.safety.max_mediainfo_files_per_check,
+        minimum=1,
+    )
     cfg.safety.arr_search_timeout_seconds = _as_int(
         arr_search_timeout_seconds,
         cfg.safety.arr_search_timeout_seconds,
         minimum=5,
+    )
+    cfg.safety.arr_metadata_cache_seconds = _as_int(
+        arr_metadata_cache_seconds,
+        cfg.safety.arr_metadata_cache_seconds,
+        minimum=0,
     )
     cfg.safety.recheck_cooldown_hours = _as_int(recheck_cooldown_hours, cfg.safety.recheck_cooldown_hours, minimum=1)
     cfg.safety.max_error_retries = _as_int(max_error_retries, cfg.safety.max_error_retries, minimum=0)

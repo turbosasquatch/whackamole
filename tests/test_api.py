@@ -91,6 +91,9 @@ def test_config_page_saves_maintenance_guard_settings(tmp_path, monkeypatch):
                 "maintenance_timezone": "Europe/London",
                 "maintenance_start_time": "04:45",
                 "maintenance_lead_minutes": "45",
+                "max_qui_poll_pages": "5",
+                "max_mediainfo_files_per_check": "4",
+                "arr_metadata_cache_seconds": "120",
             },
         )
 
@@ -102,6 +105,9 @@ def test_config_page_saves_maintenance_guard_settings(tmp_path, monkeypatch):
         assert cfg.maintenance.start_time == "04:45"
         assert cfg.maintenance.lead_minutes == 45
         assert cfg.maintenance.resume_signal == "qui_down_up"
+        assert cfg.safety.max_qui_poll_pages == 5
+        assert cfg.safety.max_mediainfo_files_per_check == 4
+        assert cfg.safety.arr_metadata_cache_seconds == 120
 
 
 def test_config_save_reapplies_release_group_policy_to_candidates(tmp_path, monkeypatch):

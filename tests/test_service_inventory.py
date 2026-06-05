@@ -174,6 +174,30 @@ class DeletedCoverageQuiClient:
         }
 
 
+class EndlessQuiClient:
+    calls = []
+
+    def __init__(self, _cfg, _api_key):
+        pass
+
+    async def list_torrents_page(self, page=0, limit=None):
+        self.calls.append(page)
+        return {
+            "total": 9999,
+            "hasMore": True,
+            "torrents": [
+                {
+                    "hash": f"runaway-{page}",
+                    "name": f"Runaway.Show.S01E{page + 1:02d}.1080p.WEB-DL-GRP",
+                    "category": "tv",
+                    "tags": "",
+                    "content_path": f"/media/torrents/tv/Runaway.Show.S01E{page + 1:02d}.1080p.WEB-DL-GRP",
+                    "progress": 1,
+                }
+            ],
+        }
+
+
 class InterruptedUploadAssistantClient:
     def __init__(self, _cfg, _bearer_token):
         pass
@@ -186,6 +210,7 @@ class MediaQuiClient:
     files = []
     mediainfo = {}
     mediainfo_error = None
+    mediainfo_calls = []
     download_calls = 0
     nfo_content = None
 
@@ -196,6 +221,7 @@ class MediaQuiClient:
         return self.files
 
     async def torrent_file_mediainfo(self, _torrent_hash, file_index):
+        type(self).mediainfo_calls.append(file_index)
         if self.mediainfo_error:
             raise self.mediainfo_error
         return self.mediainfo or {
@@ -277,6 +303,31 @@ def test_poll_captures_support_inventory_without_queueing(tmp_path, monkeypatch)
     assert db.count_active_queue() == 0
     assert db.get_kv("inventory_done") == "true"
     assert db.get_kv("inventory_full_crawl_v2_done") == "true"
+
+
+def test_poll_stops_at_configured_qui_page_cap_without_completing_full_inventory(tmp_path, monkeypatch):
+    EndlessQuiClient.calls = []
+    monkeypatch.setattr("app.service.QuiClient", EndlessQuiClient)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.qui.url = "http://qui.test"
+    cfg.safety.max_qui_poll_pages = 2
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("qui_api_key", "token")
+    db = Database(str(tmp_path / "whackamole.db"))
+
+    async def run_poll():
+        service = WhackamoleService(manager, secrets, db)
+        await service.poll_once()
+
+    asyncio.run(run_poll())
+
+    assert EndlessQuiClient.calls == [0, 1]
+    assert db.get_kv("baseline_done") is None
+    assert db.get_kv("inventory_done") is None
+    assert db.get_kv("inventory_full_crawl_v2_done") is None
+    assert "QUI poll stopped after 2 page(s)" in (db.get_kv("last_service_error") or "")
 
 
 def test_incremental_poll_stops_after_all_known_page(tmp_path, monkeypatch):
@@ -659,6 +710,63 @@ def test_web_source_missing_uses_nfo_provider_and_continues_to_ua(tmp_path, monk
     assert PassingUploadAssistantClient.calls == 1
     assert checks["nfo"]["provider_abbreviation"] == "NF"
     assert [stage["stage"] for stage in checks["diagnostics"]["stages"]][:4] == ["media", "nfo", "path", "ua"]
+
+
+def test_mediainfo_requests_are_limited_for_large_packs(tmp_path, monkeypatch):
+    release_title = "Example.Show.S01.1080p.NF.WEB-DL.DDP2.0.H.264-GRP"
+    MediaQuiClient.files = [
+        {
+            "index": index,
+            "name": f"{release_title}/Example.Show.S01E{index + 1:02d}.1080p.NF.WEB-DL.DDP2.0.H.264-GRP.mkv",
+            "size": 1000,
+        }
+        for index in range(12)
+    ]
+    MediaQuiClient.mediainfo = {
+        "streams": [
+            {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.mediainfo_calls = []
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = None
+    PassingUploadAssistantClient.calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    cfg.safety.max_mediainfo_files_per_check = 3
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert MediaQuiClient.mediainfo_calls == [0, 1, 2]
+    assert checks["media"]["mediainfo_limit"] == 3
+    assert checks["media"]["mediainfo_truncated"] is True
+    assert len(checks["media"]["raw_mediainfo_payloads"]) == 3
+    assert any(issue["key"] == "mediainfo_truncated" for issue in checks["media"]["issues"])
 
 
 def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):

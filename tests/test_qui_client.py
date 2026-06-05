@@ -84,6 +84,28 @@ def test_qui_client_walks_all_pages(monkeypatch):
     assert FakeAsyncClient.calls[1][1]["page"] == "1"
 
 
+def test_qui_client_stops_at_configured_page_cap(monkeypatch):
+    FakeAsyncClient.responses = [
+        {"total": 100, "hasMore": True, "torrents": [{"hash": "1", "name": "one"}]},
+        {"total": 100, "hasMore": True, "torrents": [{"hash": "2", "name": "two"}]},
+        {"total": 100, "hasMore": True, "torrents": [{"hash": "3", "name": "three"}]},
+    ]
+    FakeAsyncClient.calls = []
+    monkeypatch.setattr("app.clients.httpx.AsyncClient", FakeAsyncClient)
+
+    cfg = AppConfig()
+    cfg.qui.url = "http://qui.test"
+    cfg.qui.instance_id = 1
+    cfg.qui.page_limit = 1
+    cfg.safety.max_qui_poll_pages = 2
+    client = QuiClient(cfg, "token")
+
+    torrents = asyncio.run(client.list_torrents())
+
+    assert [torrent["hash"] for torrent in torrents] == ["1", "2"]
+    assert [call[1]["page"] for call in FakeAsyncClient.calls] == ["0", "1"]
+
+
 def test_qui_client_lists_torrent_files_with_indexes(monkeypatch):
     FakeAsyncClient.responses = [
         [

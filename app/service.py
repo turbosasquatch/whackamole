@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from app.arr_compare import compare_item_with_arr
+from app.arr_compare import ArrMetadataCache, compare_item_with_arr
 from app.check_results import add_stage_diagnostic
 from app.clients import QuiClient, SrrdbClient, UploadAssistantClient
 from app.config import ConfigManager, SecretStore
@@ -188,6 +188,20 @@ def _queued_import_timeout_seconds(cfg: Any) -> int:
         return 3600
 
 
+def _max_mediainfo_files_per_check(cfg: Any) -> int:
+    try:
+        return max(1, int(cfg.safety.max_mediainfo_files_per_check or 8))
+    except (AttributeError, TypeError, ValueError):
+        return 8
+
+
+def _max_qui_poll_pages(cfg: Any) -> int:
+    try:
+        return max(1, int(cfg.safety.max_qui_poll_pages or 100))
+    except (AttributeError, TypeError, ValueError):
+        return 100
+
+
 def _queued_import_failure_message(output: str) -> str:
     for event in _iter_ua_events(output):
         event_type = str(event.get("type") or "").lower()
@@ -249,6 +263,7 @@ class WhackamoleService:
         self._running_jobs = 0
         self._last_ua_job_started_at = 0.0
         self._arr_lock = asyncio.Lock()
+        self._arr_metadata_cache = ArrMetadataCache()
         self._srrdb_lock = asyncio.Lock()
         self._last_srrdb_request_at = 0.0
         self._maintenance_probe_at = 0.0
@@ -314,10 +329,12 @@ class WhackamoleService:
         active_count = self.db.count_active_queue()
         page = 0
         limit = max(1, cfg.qui.page_limit)
+        max_pages = _max_qui_poll_pages(cfg)
         fetched = 0
         seen_hashes = set()
         seen_completed_hashes = set()
-        while True:
+        poll_truncated = False
+        while page < max_pages:
             data = await client.list_torrents_page(page=page, limit=limit)
             torrents = data.get("torrents", [])
             torrents = torrents if isinstance(torrents, list) else []
@@ -388,15 +405,25 @@ class WhackamoleService:
                 break
             if not has_more_known and len(torrents) < limit:
                 break
+        else:
+            poll_truncated = True
 
-        if not baseline_done:
+        if poll_truncated:
+            self.db.append_service_error(
+                f"QUI poll stopped after {max_pages} page(s) to avoid runaway pagination. "
+                "Increase Max QUI poll pages if your inventory is larger."
+            )
+
+        if not poll_truncated and not baseline_done:
             self.db.set_kv("baseline_done", "true")
-        if not inventory_done:
+        if not poll_truncated and not inventory_done:
             self.db.set_kv("inventory_done", "true")
-        if full_crawl:
+        if full_crawl and not poll_truncated:
             self.db.set_kv("inventory_full_crawl_v2_done", "true")
             self.db.prune_missing_inventory(cfg.qui.instance_id, seen_completed_hashes)
             self.db.requeue_covered_with_missing_coverage()
+            self.db.set_kv("inventory_reconcile_completed_at", str(int(time.time())))
+        elif full_crawl and poll_truncated and full_inventory_done:
             self.db.set_kv("inventory_reconcile_completed_at", str(int(time.time())))
         self.db.resolve_covered_candidates()
 
@@ -745,8 +772,9 @@ class WhackamoleService:
         try:
             torrent_files = await qui.list_torrent_files(str(item["hash"]))
             video_files = video_file_payloads(torrent_files)
+            mediainfo_limit = _max_mediainfo_files_per_check(cfg)
             mediainfo_payloads = []
-            for video_file in video_files:
+            for video_file in video_files[:mediainfo_limit]:
                 payload = await qui.torrent_file_mediainfo(str(item["hash"]), int(video_file["index"]))
                 payload.setdefault("fileIndex", int(video_file["index"]))
                 payload.setdefault("relativePath", str(video_file.get("name") or ""))
@@ -757,6 +785,7 @@ class WhackamoleService:
                 mediainfo_payloads=mediainfo_payloads,
             )
             media_result["raw_mediainfo_payloads"] = mediainfo_payloads
+            media_result["mediainfo_limit"] = mediainfo_limit
             if len(video_files) > len(mediainfo_payloads):
                 media_result["mediainfo_truncated"] = True
         except Exception as exc:
@@ -1052,6 +1081,7 @@ class WhackamoleService:
                     cfg=cfg,
                     secrets=self.secrets,
                     local_traits=local_traits,
+                    metadata_cache=self._arr_metadata_cache,
                 )
             status = str(arr_results.get("status") or "manual_review")
             verdict = "candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review")

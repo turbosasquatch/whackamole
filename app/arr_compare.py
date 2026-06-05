@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import httpx
 
@@ -43,6 +44,27 @@ class MediaIdentity:
     episode: Optional[int] = None
 
 
+class ArrMetadataCache:
+    def __init__(self) -> None:
+        self._entries: Dict[Tuple[str, ...], Tuple[float, List[Dict[str, Any]]]] = {}
+
+    async def get(
+        self,
+        key: Tuple[str, ...],
+        ttl_seconds: int,
+        loader: Callable[[], Awaitable[List[Dict[str, Any]]]],
+    ) -> List[Dict[str, Any]]:
+        if ttl_seconds <= 0:
+            return await loader()
+        now = time.monotonic()
+        cached = self._entries.get(key)
+        if cached and now - cached[0] < ttl_seconds:
+            return [dict(row) for row in cached[1]]
+        rows = await loader()
+        self._entries[key] = (now, [dict(row) for row in rows if isinstance(row, dict)])
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+
 async def compare_item_with_arr(
     *,
     item_name: str,
@@ -51,6 +73,7 @@ async def compare_item_with_arr(
     cfg: AppConfig,
     secrets: SecretStore,
     local_traits: Optional[ReleaseTraits] = None,
+    metadata_cache: Optional[ArrMetadataCache] = None,
 ) -> Dict[str, Any]:
     local_traits = local_traits or parse_release_traits(item_name)
     identity = parse_media_identity(ua_log, item_name, local_traits=local_traits)
@@ -77,9 +100,9 @@ async def compare_item_with_arr(
 
     try:
         if identity.kind == "sonarr":
-            releases, indexers = await _sonarr_releases(identity, local_traits, cfg, secrets)
+            releases, indexers = await _sonarr_releases(identity, local_traits, cfg, secrets, metadata_cache)
         elif identity.kind == "radarr":
-            releases, indexers = await _radarr_releases(identity, cfg, secrets)
+            releases, indexers = await _radarr_releases(identity, cfg, secrets, metadata_cache)
         else:
             result["reason"] = "Whackamole could not determine whether this item belongs to Sonarr or Radarr."
             result["decisions"] = _manual_decisions(passed_trackers, result["reason"])
@@ -280,13 +303,17 @@ async def _sonarr_releases(
     local_traits: ReleaseTraits,
     cfg: AppConfig,
     secrets: SecretStore,
+    metadata_cache: Optional[ArrMetadataCache] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     api_key = secrets.get("sonarr_api_key")
     if not cfg.sonarr.url or not api_key:
         raise RuntimeError("Sonarr URL or API key is not configured")
     client = SonarrClient(cfg.sonarr.url, api_key, cfg.safety.arr_search_timeout_seconds)
-    indexers = await client.list_indexers()
-    series = _match_series(await client.list_series(), identity)
+    cache_ttl = _arr_metadata_cache_ttl(cfg)
+    cache_prefix = ("sonarr", cfg.sonarr.url)
+    indexers = await _cached_arr_metadata(metadata_cache, (*cache_prefix, "indexers"), cache_ttl, client.list_indexers)
+    series_rows = await _cached_arr_metadata(metadata_cache, (*cache_prefix, "series"), cache_ttl, client.list_series)
+    series = _match_series(series_rows, identity)
     if not series:
         raise RuntimeError("No matching Sonarr series found")
     series_id = int(series["id"])
@@ -296,7 +323,12 @@ async def _sonarr_releases(
         releases = await client.search_releases(series_id=series_id, season_number=identity.season)
         return releases, indexers
 
-    episodes = await client.list_episodes(series_id, identity.season)
+    episodes = await _cached_arr_metadata(
+        metadata_cache,
+        (*cache_prefix, "episodes", str(series_id), str(identity.season)),
+        cache_ttl,
+        lambda: client.list_episodes(series_id, identity.season),
+    )
     if _season_appears_fully_released(episodes, identity.season):
         raise RuntimeError("Sonarr season appears fully released; review for a season pack instead of an episode upload")
     episode = _match_episode(episodes, identity.episode)
@@ -310,17 +342,39 @@ async def _radarr_releases(
     identity: MediaIdentity,
     cfg: AppConfig,
     secrets: SecretStore,
+    metadata_cache: Optional[ArrMetadataCache] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     api_key = secrets.get("radarr_api_key")
     if not cfg.radarr.url or not api_key:
         raise RuntimeError("Radarr URL or API key is not configured")
     client = RadarrClient(cfg.radarr.url, api_key, cfg.safety.arr_search_timeout_seconds)
-    indexers = await client.list_indexers()
-    movie = _match_movie(await client.list_movies(), identity)
+    cache_ttl = _arr_metadata_cache_ttl(cfg)
+    cache_prefix = ("radarr", cfg.radarr.url)
+    indexers = await _cached_arr_metadata(metadata_cache, (*cache_prefix, "indexers"), cache_ttl, client.list_indexers)
+    movie_rows = await _cached_arr_metadata(metadata_cache, (*cache_prefix, "movies"), cache_ttl, client.list_movies)
+    movie = _match_movie(movie_rows, identity)
     if not movie:
         raise RuntimeError("No matching Radarr movie found")
     releases = await client.search_releases(int(movie["id"]))
     return releases, indexers
+
+
+def _arr_metadata_cache_ttl(cfg: AppConfig) -> int:
+    try:
+        return max(0, int(cfg.safety.arr_metadata_cache_seconds or 0))
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+async def _cached_arr_metadata(
+    metadata_cache: Optional[ArrMetadataCache],
+    key: Tuple[str, ...],
+    ttl_seconds: int,
+    loader: Callable[[], Awaitable[List[Dict[str, Any]]]],
+) -> List[Dict[str, Any]]:
+    if metadata_cache is None:
+        return await loader()
+    return await metadata_cache.get(key, ttl_seconds, loader)
 
 
 def _match_series(series: Iterable[Dict[str, Any]], identity: MediaIdentity) -> Optional[Dict[str, Any]]:

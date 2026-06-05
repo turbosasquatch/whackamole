@@ -143,8 +143,20 @@
         <input name="min_seconds_between_ua_jobs" type="number" min="0" value="{{ cfg.safety.min_seconds_between_ua_jobs }}">
       </label>
       <label>
+        Max QUI poll pages
+        <input name="max_qui_poll_pages" type="number" min="1" value="{{ cfg.safety.max_qui_poll_pages }}">
+      </label>
+      <label>
+        Max MediaInfo files per check
+        <input name="max_mediainfo_files_per_check" type="number" min="1" value="{{ cfg.safety.max_mediainfo_files_per_check }}">
+      </label>
+      <label>
         Arr search timeout seconds
         <input name="arr_search_timeout_seconds" type="number" min="5" value="{{ cfg.safety.arr_search_timeout_seconds }}">
+      </label>
+      <label>
+        Arr metadata cache seconds
+        <input name="arr_metadata_cache_seconds" type="number" min="0" value="{{ cfg.safety.arr_metadata_cache_seconds }}">
       </label>
       <label>
         Manual recheck cooldown hours

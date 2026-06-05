@@ -47,7 +47,10 @@ class SafetyConfig:
     max_queue_size: int = 250
     max_concurrent_ua_jobs: int = 1
     min_seconds_between_ua_jobs: int = 120
+    max_qui_poll_pages: int = 100
+    max_mediainfo_files_per_check: int = 8
     arr_search_timeout_seconds: int = DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS
+    arr_metadata_cache_seconds: int = 900
     recheck_cooldown_hours: int = 24
     max_error_retries: int = 3
     error_backoff_minutes: List[int] = field(default_factory=lambda: [15, 60, 360])

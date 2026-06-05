@@ -50,10 +50,11 @@ class QuiClient:
 
     async def list_torrents(self) -> List[Dict[str, Any]]:
         limit = max(1, self.config.qui.page_limit)
+        max_pages = _max_qui_poll_pages(self.config)
         page = 0
         torrents: List[Dict[str, Any]] = []
         seen_hashes = set()
-        while True:
+        while page < max_pages:
             data = await self.list_torrents_page(page=page, limit=limit)
             rows = data.get("torrents", [])
             rows = rows if isinstance(rows, list) else []
@@ -124,6 +125,13 @@ class QuiClient:
 
     def _headers(self) -> Dict[str, str]:
         return {"X-API-Key": self.api_key or ""}
+
+
+def _max_qui_poll_pages(config: AppConfig) -> int:
+    try:
+        return max(1, int(config.safety.max_qui_poll_pages or 100))
+    except (AttributeError, TypeError, ValueError):
+        return 100
 
 
 class UploadAssistantClient:

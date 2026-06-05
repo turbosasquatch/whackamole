@@ -1,6 +1,7 @@
 import asyncio
 
 from app.arr_compare import (
+    ArrMetadataCache,
     _season_appears_fully_released,
     canonical_tracker,
     compare_item_with_arr,
@@ -10,6 +11,7 @@ from app.arr_compare import (
     release_is_equal_or_better,
     summarize_decisions,
 )
+from app.config import AppConfig, SecretStore
 
 
 def test_tracker_aliases_match_ua_and_prowlarr_names():
@@ -415,3 +417,102 @@ def test_compare_item_with_arr_uses_precomputed_local_traits():
     assert result["local_traits"]["season"] == 3
     assert result["local_traits"]["episode"] == 4
     assert result["local_traits"]["audio_format"] == "DD+"
+
+
+def test_compare_item_with_arr_caches_sonarr_metadata_lists(tmp_path, monkeypatch):
+    class FakeSonarrClient:
+        calls = {"indexers": 0, "series": 0, "episodes": 0, "search": 0}
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def list_indexers(self):
+            self.calls["indexers"] += 1
+            return [{"name": "Darkpeers (API) (Prowlarr)", "protocol": "torrent"}]
+
+        async def list_series(self):
+            self.calls["series"] += 1
+            return [{"id": 10, "title": "Show Name", "sortTitle": "show name", "year": 2026}]
+
+        async def list_episodes(self, series_id, season_number=None):
+            self.calls["episodes"] += 1
+            return [
+                {
+                    "id": 100,
+                    "seriesId": series_id,
+                    "seasonNumber": season_number,
+                    "episodeNumber": 1,
+                    "monitored": True,
+                    "airDateUtc": "2099-01-01T00:00:00Z",
+                }
+            ]
+
+        async def search_releases(self, **_kwargs):
+            self.calls["search"] += 1
+            return []
+
+    monkeypatch.setattr("app.arr_compare.SonarrClient", FakeSonarrClient)
+    cfg = AppConfig()
+    cfg.sonarr.url = "http://sonarr.test"
+    cfg.safety.arr_metadata_cache_seconds = 900
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("sonarr_api_key", "token")
+    cache = ArrMetadataCache()
+
+    for _ in range(2):
+        result = asyncio.run(
+            compare_item_with_arr(
+                item_name="Show.Name.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP",
+                ua_log="Title: Show Name\nCategory: TV",
+                passed_trackers=["DP"],
+                cfg=cfg,
+                secrets=secrets,
+                metadata_cache=cache,
+            )
+        )
+        assert result["status"] == "candidate"
+
+    assert FakeSonarrClient.calls == {"indexers": 1, "series": 1, "episodes": 1, "search": 2}
+
+
+def test_compare_item_with_arr_caches_radarr_metadata_lists(tmp_path, monkeypatch):
+    class FakeRadarrClient:
+        calls = {"indexers": 0, "movies": 0, "search": 0}
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def list_indexers(self):
+            self.calls["indexers"] += 1
+            return [{"name": "upload.cx (API) (Prowlarr)", "protocol": "torrent"}]
+
+        async def list_movies(self):
+            self.calls["movies"] += 1
+            return [{"id": 20, "title": "Movie Name", "sortTitle": "movie name", "year": 2026, "tmdbId": 123}]
+
+        async def search_releases(self, _movie_id):
+            self.calls["search"] += 1
+            return []
+
+    monkeypatch.setattr("app.arr_compare.RadarrClient", FakeRadarrClient)
+    cfg = AppConfig()
+    cfg.radarr.url = "http://radarr.test"
+    cfg.safety.arr_metadata_cache_seconds = 900
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("radarr_api_key", "token")
+    cache = ArrMetadataCache()
+
+    for _ in range(2):
+        result = asyncio.run(
+            compare_item_with_arr(
+                item_name="Movie.Name.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
+                ua_log="Title: Movie Name (2026)\nCategory: Movie\nTMDB: https://www.themoviedb.org/movie/123",
+                passed_trackers=["ULCX"],
+                cfg=cfg,
+                secrets=secrets,
+                metadata_cache=cache,
+            )
+        )
+        assert result["status"] == "candidate"
+
+    assert FakeRadarrClient.calls == {"indexers": 1, "movies": 1, "search": 2}

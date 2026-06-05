@@ -10,6 +10,9 @@ def test_default_arr_timeout_is_300_seconds(tmp_path):
 
     assert cfg.config_version == 3
     assert cfg.safety.arr_search_timeout_seconds == 300
+    assert cfg.safety.arr_metadata_cache_seconds == 900
+    assert cfg.safety.max_qui_poll_pages == 100
+    assert cfg.safety.max_mediainfo_files_per_check == 8
     assert sorted(cfg.tracker_policies.keys()) == ["DP", "IHD", "ULCX"]
 
 
