@@ -39,6 +39,7 @@ from app.inventory import (
 from app.reducer import TRACKER_BUCKETS
 from app.service import WhackamoleService
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
+from app.srrdb import srrdb_lookup_name
 from app.ua_execution import UaExecutionCoordinator, UploadConsoleManager
 
 APP_DIR = Path(__file__).resolve().parent
@@ -237,6 +238,9 @@ def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]
     item["nfo_info"] = _nfo_info_for_item(item)
     item["discovarr_local_traits"] = _discovarr_local_traits(item, item["check_results"], item["arr_result"], item["nfo_info"])
     item["arr_release_views"] = _arr_release_views(item["arr_result"], item["discovarr_local_traits"])
+    item["source_label"] = _source_label(item, item["tracker_results"])
+    item["overview_checks"] = _overview_checks(item, item["check_results"], item["arr_result"])
+    item["alert_tags"] = _alert_tags(item, item["check_results"], item["arr_result"])
     item["video_files"] = _video_files_for_item(item)
     item["raw_payloads"] = _raw_payloads(item)
     item["upload_console"] = _upload_console_context(item)
@@ -397,7 +401,7 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
         categories.append("media_error")
     if "equal-or-better" in reason or "equal-or-better" in json.dumps(arr_result).lower():
         categories.append("arr_equal_or_better")
-    if "banned_release_group" in verdict or "banned_release_group" in flag_keys:
+    if ("banned_release_group" in verdict or "banned_release_group" in flag_keys) and not _policy_allows_any_tracker(check_results):
         categories.append("banned_release_group")
     if "srrdb_filename_mismatch" in verdict or "srrdb_filename_mismatch" in flag_keys:
         categories.append("srrdb_filename_mismatch")
@@ -478,8 +482,7 @@ def _cross_check_status(coverage: List[Dict[str, Any]], valid_for: List[str]) ->
     if not selected:
         return {"state": "not_applicable", "label": "Not Validated", "trackers": [], "selected": []}
     coverage_keys = {str(item.get("key") or "").upper() for item in coverage}
-    valid_keys = set(_dedupe_trackers(valid_for or []))
-    matched = sorted((coverage_keys | valid_keys).intersection(selected))
+    matched = sorted(coverage_keys.intersection(selected))
     if matched:
         return {"state": "pass", "label": "Validated On High Quality Tracker", "trackers": matched, "selected": sorted(selected)}
     return {"state": "warning", "label": "Not Validated", "trackers": [], "selected": sorted(selected)}
@@ -498,6 +501,10 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
 
     for flag in _check_flags(check_results):
         key = str(flag.get("key") or "").lower()
+        if key in {"web_source_missing", "source_missing"} and _source_provider_for_item(item):
+            continue
+        if key == "banned_release_group" and _policy_allows_any_tracker(check_results):
+            continue
         label = _canonical_alert_label(key, str(flag.get("label") or "").strip())
         severity = str(flag.get("severity") or "").lower()
         if key in CRITICAL_TAG_LABELS or severity in {"blocker", "error", "critical"}:
@@ -540,6 +547,12 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
         add("cross_check_warning", "Cross Check", "warning")
 
     return tags
+
+
+def _policy_allows_any_tracker(check_results: Dict[str, Any]) -> bool:
+    policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    candidates = policy.get("candidate_trackers") if isinstance(policy.get("candidate_trackers"), list) else []
+    return any(str(tracker).strip() for tracker in candidates)
 
 
 def _final_verdict_alert_tag(item: Dict[str, Any]) -> Optional[Dict[str, str]]:
@@ -681,12 +694,13 @@ def _policy_summary_state(policy: Dict[str, Any]) -> tuple[str, str]:
 
 def _bucket_summary_state(groups: Dict[str, Any]) -> tuple[str, str]:
     passed = groups.get("passed") or groups.get("covered") or []
-    failed = groups.get("dupe") or groups.get("error") or []
-    if passed and not failed:
+    errors = groups.get("error") or groups.get("skipped") or []
+    dupes = groups.get("dupe") or []
+    if passed and not errors:
         return "Pass", "pass"
-    if passed and failed:
+    if passed and errors:
         return "Warning", "warning"
-    if failed:
+    if dupes or errors:
         return "Fail", "error"
     return "Not Applicable", "neutral"
 
@@ -1198,14 +1212,19 @@ def _upload_console_context(item: Dict[str, Any]) -> Dict[str, Any]:
     path_info = _upload_console_path(item)
     args = _upload_console_args(item)
     warnings = list(path_info.get("warnings") or [])
+    blocked = bool(path_info.get("blocked"))
     if _is_web_release(item) and not _source_provider_for_item(item):
         warnings.append("Source Missing: detected WEB-DL/WEBRip but no streaming service provider is known yet.")
+    if any(str(flag.get("key") or "").lower() == "possible_renamed_release" for flag in item.get("check_flags") or [] if isinstance(flag, dict)):
+        warnings.append("Possible renamed release: review the tracker title before uploading.")
+        blocked = True
     return {
         "path": path_info["path"],
         "path_label": path_info["label"],
         "path_kind": path_info["kind"],
         "args": args,
         "warnings": list(dict.fromkeys(warnings)),
+        "blocked": blocked,
     }
 
 
@@ -1222,6 +1241,10 @@ def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
         selected = root
         label = root
         kind = "folder" if len(files) != 1 else "path"
+        root_name = Path(root).name if root else ""
+        normalized_root = srrdb_lookup_name(root_name)
+        if kind == "folder" and root_name and normalized_root and normalized_root != root_name:
+            warnings.append(f"Folder name would be normalised to {normalized_root}; review before uploading.")
     if not selected:
         warnings.append("No mapped Upload Assistant path is recorded for this item.")
     else:
@@ -1230,7 +1253,8 @@ def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
                 warnings.append("Path is not visible inside the Whackamole container; Upload Assistant may still see it if mappings differ.")
         except OSError as exc:
             warnings.append(f"Could not inspect path visibility: {str(exc)[:160]}")
-    return {"path": selected, "label": label, "kind": kind, "warnings": warnings}
+    blocked = any("review before uploading" in warning.lower() for warning in warnings)
+    return {"path": selected, "label": label, "kind": kind, "warnings": warnings, "blocked": blocked}
 
 
 def _upload_console_args(item: Dict[str, Any]) -> str:
@@ -2178,6 +2202,9 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
     path = str(console.get("path") or "").strip()
     if not path:
         return JSONResponse({"error": "No Upload Assistant path is available for this item.", "success": False}, status_code=400)
+    if console.get("blocked"):
+        message = "; ".join(str(warning) for warning in console.get("warnings") or [] if str(warning).strip())
+        return JSONResponse({"error": message or "Upload requires manual review.", "success": False}, status_code=400)
 
     try:
         payload = await request.json()
@@ -2218,6 +2245,9 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
     path = str(console.get("path") or "").strip()
     if not path:
         return JSONResponse({"error": "No Upload Assistant path is available for this item.", "success": False}, status_code=400)
+    if console.get("blocked"):
+        message = "; ".join(str(warning) for warning in console.get("warnings") or [] if str(warning).strip())
+        return JSONResponse({"error": message or "Upload requires manual review.", "success": False}, status_code=400)
     try:
         payload = await request.json()
     except Exception:

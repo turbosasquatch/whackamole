@@ -391,6 +391,44 @@ def test_candidate_dashboard_suppresses_non_final_dupe_flags(tmp_path, monkeypat
         assert "Dupe" not in {tag["label"] for tag in tags}
 
 
+def test_candidate_dashboard_suppresses_partial_release_group_ban_badge(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: DP, ULCX",
+            tracker_results={"passed": ["IHD", "DP", "ULCX"], "dupe": [], "skipped": [], "error": []},
+            check_results={
+                "flags": [
+                    {
+                        "key": "banned_release_group",
+                        "label": "Banned release group",
+                        "severity": "blocker",
+                        "detail": "GRACE is banned on: IHD",
+                    }
+                ],
+                "release_group_policy": {
+                    "candidate_trackers": ["DP", "ULCX"],
+                    "blocked_trackers": ["IHD"],
+                    "decisions": [
+                        {"tracker": "IHD", "status": "blocked", "reason": "GRACE is banned on IHD."},
+                        {"tracker": "DP", "status": "candidate", "reason": "Release group policy allows this tracker."},
+                        {"tracker": "ULCX", "status": "candidate", "reason": "Release group policy allows this tracker."},
+                    ],
+                },
+            },
+        )
+
+        response = client.get("/api/items?status=candidate", headers=_auth_headers())
+
+        assert response.status_code == 200
+        tags = response.json()["items"][0]["alert_tags"]
+        assert "Banned" not in {tag["label"] for tag in tags}
+
+
 def test_dashboard_list_does_not_build_detail_release_views(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         _seed_item(client)
@@ -782,6 +820,55 @@ def test_item_overview_shortens_source_not_required_status(tmp_path, monkeypatch
         assert "Source Not Required" not in page.text
 
 
+def test_item_detail_recomputes_source_summary_after_title_provider_enrichment(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "amazon-title-source",
+                "name": "24.Hours.in.Police.Custody.S01.1080p.Amazon.WEB-DL.DD+.2.0.x264-TrollHD",
+                "category": "tv",
+                "tags": "",
+                "content_path": "/media/torrents/tv/24.Hours.in.Police.Custody.S01.1080p.Amazon.WEB-DL.DD+.2.0.x264-TrollHD",
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "covered",
+            "covered",
+            "Covered in QUI: DP",
+            tracker_results={"passed": [], "covered": ["DP"], "dupe": [], "skipped": [], "error": []},
+            arr_results={
+                "status": "covered",
+                "local_traits": {"source": "web", "source_tag": "WEB-DL", "source_provider": "", "rip_type": "web-dl"},
+                "decisions": [{"tracker": "DP", "status": "covered", "reason": "Tracker coverage is now present in QUI."}],
+            },
+            check_results={
+                "media": {"status": "confirmed", "local_traits": {"source": "web", "source_tag": "WEB-DL", "source_provider": "", "rip_type": "web-dl"}},
+                "flags": [
+                    {
+                        "key": "web_source_missing",
+                        "label": "Source Missing",
+                        "severity": "warning",
+                        "detail": "Detected WEB-DL/WEBRip but no streaming service provider is known yet.",
+                    }
+                ],
+            },
+        )
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert "Source: AMZN" in page.text
+        assert "Source Missing" not in page.text
+        assert "Web Source" not in page.text
+
+
 def test_high_quality_trackers_default_empty_and_cross_check_setting(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
@@ -789,14 +876,30 @@ def test_high_quality_trackers_default_empty_and_cross_check_setting(tmp_path, m
 
         default_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
         save = client.post("/config", data={"high_quality_trackers": "IHD"})
-        configured_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+        valid_only_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+        client.app.state.db.insert_discovered(
+            1,
+            {
+                "hash": "ihd-covered",
+                "name": "Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+                "category": "uploads",
+                "tags": "upload",
+                "content_path": "/media/torrents/uploads/IHD/Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+                "progress": 1,
+            },
+            status="inventory",
+            baseline=True,
+        )
+        covered_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
 
         assert default_response.json()["cross_check"]["selected"] == []
         assert default_response.json()["cross_check"]["label"] == "Not Validated"
         assert save.status_code == 200
         assert "High Quality Trackers" in save.text
-        assert configured_response.json()["cross_check"]["selected"] == ["IHD"]
-        assert configured_response.json()["cross_check"]["label"] == "Validated On High Quality Tracker"
+        assert valid_only_response.json()["cross_check"]["selected"] == ["IHD"]
+        assert valid_only_response.json()["cross_check"]["label"] == "Not Validated"
+        assert covered_response.json()["cross_check"]["selected"] == ["IHD"]
+        assert covered_response.json()["cross_check"]["label"] == "Validated On High Quality Tracker"
 
 
 def test_item_detail_includes_video_files_in_paths_section(tmp_path, monkeypatch):

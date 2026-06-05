@@ -1,4 +1,4 @@
-from app.main import _arr_summary, _tracker_result_groups, _tracker_summary
+from app.main import _arr_summary, _bucket_summary_state, _tracker_result_groups, _tracker_summary
 
 
 def test_tracker_result_groups_support_new_shape():
@@ -27,6 +27,11 @@ def test_tracker_summary_labels_covered_trackers():
     summary = _tracker_summary({"passed": [], "covered": ["IHD"], "dupe": [], "skipped": [], "error": []})
 
     assert summary == "Covered in QUI: IHD"
+
+
+def test_bucket_summary_passes_when_any_tracker_passes_despite_dupes():
+    assert _bucket_summary_state({"passed": ["IHD"], "dupe": ["DP", "ULCX"], "skipped": [], "error": []}) == ("Pass", "pass")
+    assert _bucket_summary_state({"passed": ["IHD"], "dupe": [], "skipped": [], "error": ["UA"]}) == ("Warning", "warning")
 
 
 def test_arr_summary_labels_policy_blocked_decisions():

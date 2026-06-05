@@ -220,6 +220,9 @@ def extract_provider_from_release_title(title: str) -> str:
         provider = PROVIDER_BY_UPPER_ABBREVIATION.get(normalized_tokens[index])
         if provider:
             return provider
+        provider = _match_provider(tokens[index], allow_short_abbreviations=False)
+        if provider:
+            return provider
     return ""
 
 

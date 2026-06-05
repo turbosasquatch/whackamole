@@ -287,6 +287,8 @@ def analyze_media_payloads(
     for payload in mediainfo_payloads:
         file_result = media_file_payload(payload)
         analyzed_files.append(file_result)
+        if _is_sample_video_file(str(file_result.get("name") or "")):
+            continue
         issues.extend(_validate_media_file(title_traits, file_result))
 
     if not media_files:
@@ -744,6 +746,12 @@ def _validate_media_file(title_traits: ReleaseTraits, file_result: Mapping[str, 
     return issues
 
 
+def _is_sample_video_file(path: str) -> bool:
+    name = PurePosixPath(str(path or "")).name.lower()
+    stem = PurePosixPath(name).stem
+    return stem == "sample" or stem.endswith(".sample") or stem.endswith("-sample") or stem.endswith("_sample")
+
+
 def _validate_hdr(title_traits: ReleaseTraits, media_traits: Mapping[str, Any], file_result: Mapping[str, Any]) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
     title_formats = set(title_traits.hdr_formats)
@@ -822,7 +830,7 @@ def _track_sanity_warnings(
     if audios and default_audio and audios[0] != default_audio:
         issues.append(_issue("WARNING", "main_audio_not_first", "Default/main audio track is not the first audio track.", file_result))
     languages = {_language_name(track) for track in audios if _language_name(track)}
-    if languages and not {"english", "eng"}.intersection(languages) and not title_traits.languages:
+    if languages and not {"english", "eng", "multi"}.intersection(languages) and not title_traits.languages:
         issues.append(_issue("WARNING", "no_english_audio", "No English audio track is marked on an English-looking release.", file_result))
     if "atmos" in default_title and "Atmos" not in traits.get("audio_objects", []):
         issues.append(_issue("WARNING", "atmos_title_without_metadata", "Audio title says Atmos but object/JOC metadata was not found.", file_result))
@@ -1406,6 +1414,10 @@ def _language_name(track: Mapping[str, Any]) -> str:
         "jpn": "japanese",
         "ko": "korean",
         "kor": "korean",
+        "mul": "multi",
+        "multi": "multi",
+        "multiple languages": "multi",
+        "multiple": "multi",
         "ru": "russian",
         "rus": "russian",
     }

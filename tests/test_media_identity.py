@@ -33,6 +33,7 @@ def test_source_provider_can_be_extracted_from_nfo_long_and_short_names():
 def test_source_provider_can_be_extracted_from_release_title_web_position():
     assert extract_provider_from_release_title("Amy_Bradley_Is_Missing_S01E03_2025_2160p_NF_WEB-DL_DDP5_1") == "NF"
     assert extract_provider_from_release_title("Squatters.S01E07.1080p.HULU.WEB-DL.AAC2.0") == "HULU"
+    assert extract_provider_from_release_title("24.Hours.in.Police.Custody.S01.1080p.Amazon.WEB-DL.DD+.2.0.x264-TrollHD") == "AMZN"
 
 
 def test_source_provider_title_extraction_avoids_short_title_words():
@@ -154,6 +155,56 @@ def test_media_analysis_keeps_warnings_non_blocking():
     assert result["status"] == "passed"
     assert result["media_status"] == "warning"
     assert any(issue["key"] == "video_bitrate_low" and issue["severity"] == "WARNING" for issue in result["issues"])
+
+
+def test_media_analysis_ignores_sample_file_bitrate_warnings():
+    release = "True.Story.2015.BluRay.1080p.DTS.x264-iFT"
+    result = analyze_media_payloads(
+        release_title=release,
+        media_files=[
+            {"index": 0, "name": f"{release}/Sample.mkv", "size": 1000},
+            {"index": 1, "name": f"{release}/{release}.mkv", "size": 1000},
+        ],
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/Sample.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1040", "ScanType": "Progressive", "BitRate": "22000000"},
+                    {"@type": "Audio", "Format": "DTS", "Channels": "6"},
+                ],
+            },
+            {
+                "fileIndex": 1,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1040", "ScanType": "Progressive", "BitRate": "14000000"},
+                    {"@type": "Audio", "Format": "DTS", "Channels": "6"},
+                    {"@type": "Text", "Language": "en"},
+                ],
+            },
+        ],
+    )
+
+    assert result["media_status"] == "confirmed"
+    assert not any(issue["key"] == "video_bitrate_high" for issue in result["issues"])
+
+
+def test_media_analysis_does_not_warn_when_bitrate_is_exactly_boundary():
+    release = "True.Story.2015.BluRay.1080p.DTS.x264-iFT"
+    result = _analyze_sample(
+        release,
+        {
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1040", "ScanType": "Progressive", "BitRate": "22000000"},
+                {"@type": "Audio", "Format": "DTS", "Channels": "6"},
+                {"@type": "Text", "Language": "en"},
+            ],
+        },
+    )
+
+    assert not any(issue["key"] == "video_bitrate_high" for issue in result["issues"])
 
 
 def test_real_shape_item_2719_infers_hdr10_without_hdr_format():
@@ -320,6 +371,42 @@ def test_live_qui_stream_field_wrappers_are_flattened_without_raw_json():
     assert traits["languages"] == ["english"]
     assert traits["subtitle_tags"] == ["Subtitles", "Default Subs"]
     assert not any(issue["severity"] == "ERROR" for issue in result["issues"])
+
+
+def test_mediainfo_mul_audio_is_treated_as_multi_not_missing_english():
+    release = "The.Cave.2019.1080p.BluRay.DD-EX.5.1.x264-iFT"
+    payload = {
+        "fileIndex": 0,
+        "relativePath": f"{release}/{release}.mkv",
+        "streams": [
+            {
+                "kind": "Video",
+                "fields": [
+                    {"name": "Format", "value": "AVC"},
+                    {"name": "Width", "value": "1 920 pixels"},
+                    {"name": "Height", "value": "808 pixels"},
+                    {"name": "Language", "value": "English"},
+                ],
+            },
+            {
+                "kind": "Audio",
+                "fields": [
+                    {"name": "Format", "value": "AC-3"},
+                    {"name": "Commercial name", "value": "Dolby Digital"},
+                    {"name": "Channel(s)", "value": "6 channels"},
+                    {"name": "Language", "value": "mul"},
+                    {"name": "Title", "value": "AC3 DD-EX 5.1"},
+                ],
+            },
+            {"kind": "Text", "fields": [{"name": "Format", "value": "UTF-8"}, {"name": "Language", "value": "English"}]},
+        ],
+    }
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert traits["languages"] == ["multi"]
+    assert not any(issue["key"] == "no_english_audio" for issue in result["issues"])
 
 
 def test_live_qui_display_fields_infer_hdr10_without_hdr_format():

@@ -156,6 +156,66 @@ def test_upload_console_queue_endpoint_uses_default_args_when_payload_args_is_nu
         assert rows[0]["args"] == "--trackers dp,ulcx --service AMZN --unattended"
 
 
+def test_upload_console_blocks_folder_name_that_would_be_normalized(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        media_dir = tmp_path / "Dirty Business 2026 S01 1080p ALL4 WEB-DL AAC2 0 H 264-RAWR"
+        media_dir.mkdir()
+        (media_dir / "Dirty.Business.2026.S01E01.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR.mkv").write_text("x", encoding="utf-8")
+        (media_dir / "Dirty.Business.2026.S01E02.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR.mkv").write_text("x", encoding="utf-8")
+        item_id = _seed_candidate(client, name=media_dir.name)
+        client.app.state.db.update_status(item_id, "candidate", "candidate", "Valid upload candidate on: DP", mapped_path=str(media_dir))
+
+        page = client.get(f"/items/{item_id}#upload-assistant")
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers dp"})
+
+        assert page.status_code == 200
+        assert "Folder name would be normalised to Dirty.Business.2026.S01.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR" in page.text
+        assert 'data-can-queue="false"' in page.text
+        assert response.status_code == 400
+        assert "review before uploading" in response.json()["error"]
+
+
+def test_upload_console_blocks_possible_renamed_release_flag(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+        client.app.state.db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Arr found a same-group release with a different release title.",
+            check_results={
+                "version": 1,
+                "media": {"local_traits": {"rip_type": "web-dl", "source_tag": "WEB-DL", "source_provider": "AMZN"}},
+                "release_group_policy": {"candidate_trackers": ["DP"], "blocked_trackers": []},
+                "flags": [
+                    {
+                        "key": "possible_renamed_release",
+                        "label": "Possible renamed release",
+                        "severity": "warning",
+                        "detail": "Arr found a same-group release with a different release title.",
+                    }
+                ],
+            },
+        )
+
+        page = client.get(f"/items/{item_id}#upload-assistant")
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers dp"})
+
+        assert page.status_code == 200
+        assert "Possible renamed release: review the tracker title before uploading." in page.text
+        assert 'data-can-execute="false"' in page.text
+        assert response.status_code == 400
+        assert "Possible renamed release" in response.json()["error"]
+
+
 def test_item_queue_upload_form_stays_on_item_page(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         cfg = client.app.state.config_manager.load()
@@ -531,6 +591,83 @@ def test_queued_import_runner_executes_and_notifies(tmp_path, monkeypatch):
         assert "ran /ua/movie.mkv" in row["output"]
         assert coordinator.snapshot()["busy"] is False
         assert "Queued import complete" in db.service_error_history()[-1]["message"]
+
+    asyncio.run(run())
+
+
+def test_queued_import_runner_marks_ua_error_event_failed(tmp_path, monkeypatch):
+    class FakeUploadAssistantClient:
+        def __init__(self, _config, _token):
+            pass
+
+        async def execute_upload_stream(self, _path, _args, _session_id):
+            yield sse_payload("system", "started")
+            yield sse_payload("error", "Upload failed in UA")
+
+    monkeypatch.setattr("app.service.UploadAssistantClient", FakeUploadAssistantClient)
+
+    async def run():
+        cfg = AppConfig()
+        cfg.upload_assistant.url = "http://ua"
+        secrets = SecretStore(str(tmp_path))
+        secrets.set("ua_bearer_token", "token")
+        db = Database(str(tmp_path / "whackamole.db"))
+        db.enqueue_import(
+            item_id=42,
+            item_name="Broken.Movie.2026.1080p.NF.WEB-DL-GRP",
+            path="/ua/broken.mkv",
+            args="--trackers dp --unattended",
+        )
+        coordinator = UaExecutionCoordinator()
+        service = WhackamoleService(AppConfigManagerStub(cfg), secrets, db, coordinator)
+
+        await service.run_queued_import()
+        assert service._import_task is not None
+        await asyncio.wait_for(service._import_task, timeout=1)
+
+        row = db.list_imports()[0]
+        assert row["status"] == "error"
+        assert "Upload failed in UA" in row["message"]
+        assert "Upload failed in UA" in row["output"]
+        assert coordinator.snapshot()["busy"] is False
+
+    asyncio.run(run())
+
+
+def test_queued_import_runner_marks_nonzero_exit_failed(tmp_path, monkeypatch):
+    class FakeUploadAssistantClient:
+        def __init__(self, _config, _token):
+            pass
+
+        async def execute_upload_stream(self, _path, _args, _session_id):
+            yield sse_payload("system", "started")
+            yield sse_payload("exit", "", code=2)
+
+    monkeypatch.setattr("app.service.UploadAssistantClient", FakeUploadAssistantClient)
+
+    async def run():
+        cfg = AppConfig()
+        cfg.upload_assistant.url = "http://ua"
+        secrets = SecretStore(str(tmp_path))
+        secrets.set("ua_bearer_token", "token")
+        db = Database(str(tmp_path / "whackamole.db"))
+        db.enqueue_import(
+            item_id=42,
+            item_name="Broken.Exit.2026.1080p.NF.WEB-DL-GRP",
+            path="/ua/broken-exit.mkv",
+            args="--trackers dp --unattended",
+        )
+        coordinator = UaExecutionCoordinator()
+        service = WhackamoleService(AppConfigManagerStub(cfg), secrets, db, coordinator)
+
+        await service.run_queued_import()
+        assert service._import_task is not None
+        await asyncio.wait_for(service._import_task, timeout=1)
+
+        row = db.list_imports()[0]
+        assert row["status"] == "error"
+        assert "UA exited with code 2" in row["message"]
+        assert coordinator.snapshot()["busy"] is False
 
     asyncio.run(run())
 

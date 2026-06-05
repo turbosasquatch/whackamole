@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import re
 import time
 from dataclasses import replace
@@ -160,6 +161,42 @@ def _queued_import_timeout_seconds(cfg: Any) -> int:
         return max(1, int(cfg.upload_assistant.request_timeout_seconds or 3600))
     except (AttributeError, TypeError, ValueError):
         return 3600
+
+
+def _queued_import_failure_message(output: str) -> str:
+    for event in _iter_ua_events(output):
+        event_type = str(event.get("type") or "").lower()
+        if event_type == "error":
+            return str(event.get("data") or event.get("message") or "UA returned an error.").strip()
+        if event_type == "exit":
+            code = event.get("code", event.get("returncode", event.get("return_code")))
+            try:
+                exit_code = int(code)
+            except (TypeError, ValueError):
+                continue
+            if exit_code != 0:
+                return f"UA exited with code {exit_code}."
+    reduction = reduce_ua_log(output)
+    if reduction.status == "error":
+        return reduction.reason
+    return ""
+
+
+def _iter_ua_events(output: str) -> Sequence[Dict[str, Any]]:
+    events: list[Dict[str, Any]] = []
+    for raw_line in (output or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events
 
 
 def _int_kv(value: Optional[str]) -> int:
@@ -403,8 +440,15 @@ class WhackamoleService:
                     output_chunks.append(str(chunk))
 
             await asyncio.wait_for(consume_stream(), timeout=_queued_import_timeout_seconds(cfg))
+            output = "".join(output_chunks)
+            failure = _queued_import_failure_message(output)
+            if failure:
+                message = f"Queued import failed: {item_name}: {failure}"
+                self.db.mark_import_error(import_id, message, output)
+                self.db.append_service_error(message)
+                return
             message = f"Queued import complete: {item_name}"
-            self.db.mark_import_complete(import_id, message, "".join(output_chunks))
+            self.db.mark_import_complete(import_id, message, output)
             self.db.append_service_error(message)
         except asyncio.TimeoutError:
             with contextlib.suppress(Exception):
