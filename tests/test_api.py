@@ -653,32 +653,45 @@ def test_reporting_api_tracks_active_resolved_and_deleted_reports(tmp_path, monk
         active = client.get("/api/reports", headers=_auth_headers())
         report_id = created.json()["report"]["id"]
         detail = client.get(f"/api/reports/{report_id}", headers=_auth_headers())
+        attempted = client.post(f"/api/reports/{report_id}/attempt", headers=_auth_headers())
+        active_after_attempt = client.get("/api/reports", headers=_auth_headers())
+        attempted_list = client.get("/api/reports?state=attempted", headers=_auth_headers())
         resolved = client.post(f"/api/reports/{report_id}/resolve", headers=_auth_headers())
         active_after_resolve = client.get("/api/reports", headers=_auth_headers())
         resolved_list = client.get("/api/reports?state=resolved", headers=_auth_headers())
         deleted = client.delete(f"/api/reports/{report_id}", headers=_auth_headers())
         missing = client.get(f"/api/reports/{report_id}", headers=_auth_headers())
+        deleted_attempt = client.post(f"/api/reports/{report_id}/attempt", headers=_auth_headers())
 
         assert created.status_code == 201
         assert created.json()["report"]["stage"] == "MediaInfo"
         assert active.json()["count"] == 1
         assert detail.json()["report"]["notes"] == "Audio tags look wrong"
+        assert attempted.status_code == 200
+        assert attempted.json()["report"]["state"] == "attempted"
+        assert active_after_attempt.json()["count"] == 0
+        assert attempted_list.json()["count"] == 1
         assert resolved.status_code == 200
         assert active_after_resolve.json()["count"] == 0
         assert resolved_list.json()["count"] == 1
         assert deleted.status_code == 200
         assert missing.status_code == 404
+        assert deleted_attempt.status_code == 404
 
 
 def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         item_id = _seed_item(client)
+        report_id = client.app.state.db.create_report(item_id, "Example Item", "MediaInfo", "Audio tags look wrong")
+        client.app.state.db.mark_report_attempted(report_id)
         page = client.get(f"/items/{item_id}")
 
         assert page.status_code == 200
         assert 'data-tab-target="reporting"' in page.text
         assert "Flag Error" in page.text
         assert "Processing Stage" in page.text
+        assert "Attempted Reports" in page.text
+        assert "Audio tags look wrong" in page.text
         assert 'data-tab-target="checks"' not in page.text
         assert 'data-tab-target="trackers"' not in page.text
         assert ">Checks<" not in page.text
@@ -692,6 +705,47 @@ def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monk
         assert f'value="/items/{item_id}#upload-assistant"' not in page.text
         assert "Next Item" in page.text
         assert ">Size<" not in page.text
+
+
+def test_reports_page_groups_duplicates_and_sidebar_counts_open_reports(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        first = db.create_report(item_id, "Example Item", "MediaInfo", "Audio tags look wrong")
+        second = db.create_report(item_id, "Example Item", "MediaInfo", " Audio   tags look wrong ")
+        third = db.create_report(item_id, "Example Item", "Upload Assistant", "Prompt hung")
+
+        page = client.get("/reports")
+
+        assert page.status_code == 200
+        assert "Reports" in page.text
+        assert "3" in page.text
+        assert "2 duplicates" in page.text
+        assert f'name="report_ids" value="{first}"' in page.text
+        assert f'name="report_ids" value="{second}"' in page.text
+        assert f'name="report_ids" value="{third}"' in page.text
+        assert "Prompt hung" in page.text
+
+
+def test_report_group_attempt_form_marks_duplicates_attempted(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        first = db.create_report(item_id, "Example Item", "MediaInfo", "Audio tags look wrong")
+        second = db.create_report(item_id, "Example Item", "MediaInfo", "Audio tags look wrong")
+
+        response = client.post(
+            "/reports/attempt",
+            data={"report_ids": [str(first), str(second)], "return_to": "/reports?state=active"},
+            follow_redirects=False,
+        )
+        attempted = client.get("/reports?state=attempted")
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/reports?state=active"
+        assert db.report_counts()["active"] == 0
+        assert db.report_counts()["attempted"] == 2
+        assert "2 duplicates" in attempted.text
 
 
 def test_item_overview_shortens_source_not_required_status(tmp_path, monkeypatch):

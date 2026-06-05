@@ -12,6 +12,9 @@ from app.media_policy import apply_release_group_policy
 from app.reducer import TRACKER_BUCKETS
 
 
+REPORT_STATES = {"active", "attempted", "resolved", "deleted"}
+
+
 _DASHBOARD_COLUMNS = """
     i.id, i.instance_id, i.hash, i.name, i.category, i.tags, i.content_path, i.mapped_path,
     i.status, i.verdict, i.reason, i.size, i.added_on, i.completion_on, i.discovered_at,
@@ -1181,6 +1184,7 @@ class Database:
             return int(cur.lastrowid)
 
     def list_reports(self, state: str = "active", item_id: Optional[int] = None, limit: int = 200) -> List[sqlite3.Row]:
+        state = state if state in REPORT_STATES else "active"
         clauses = ["state = ?"]
         params: List[Any] = [state]
         if item_id is not None:
@@ -1199,9 +1203,48 @@ class Database:
                 params,
             ).fetchall()
 
+    def report_counts(self, item_id: Optional[int] = None) -> Dict[str, int]:
+        params: List[Any] = []
+        clause = ""
+        if item_id is not None:
+            clause = "WHERE item_id = ?"
+            params.append(int(item_id))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT state, COUNT(*) AS count FROM item_reports {clause} GROUP BY state",
+                params,
+            ).fetchall()
+        counts = {state: 0 for state in REPORT_STATES}
+        counts.update({str(row["state"]): int(row["count"] or 0) for row in rows})
+        counts["open"] = counts["active"] + counts["attempted"]
+        return counts
+
     def get_report(self, report_id: int) -> Optional[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute("SELECT * FROM item_reports WHERE id = ?", (int(report_id),)).fetchone()
+
+    def mark_report_attempted(self, report_id: int) -> bool:
+        now = int(time.time())
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE item_reports
+                SET state = 'attempted', updated_at = ?
+                WHERE id = ? AND state IN ('active', 'attempted')
+                """,
+                (now, int(report_id)),
+            )
+            return cur.rowcount > 0
+
+    def mark_reports_attempted(self, report_ids: Iterable[int]) -> int:
+        ids = [int(report_id) for report_id in report_ids]
+        if not ids:
+            return 0
+        updated = 0
+        for report_id in ids:
+            if self.mark_report_attempted(report_id):
+                updated += 1
+        return updated
 
     def resolve_report(self, report_id: int) -> bool:
         now = int(time.time())

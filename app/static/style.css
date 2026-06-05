@@ -1181,13 +1181,35 @@ tr:last-child td {
   gap: 0.75rem;
 }
 
+.report-tabs .button {
+  gap: 0.45rem;
+}
+
+.button-count {
+  color: inherit;
+  font-size: 0.78rem;
+  opacity: 0.72;
+}
+
 .report-card {
   align-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   display: flex;
   gap: 1rem;
   justify-content: space-between;
   padding: 0.85rem;
+}
+
+.report-card.attempted,
+.report-group-card {
+  background: var(--surface-soft);
+}
+
+.report-card-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .report-card p {
@@ -1198,6 +1220,34 @@ tr:last-child td {
   color: var(--muted);
   display: block;
   font-size: 0.8rem;
+}
+
+.report-group-card {
+  align-items: flex-start;
+}
+
+.report-group-card > div:first-child {
+  min-width: 0;
+}
+
+.report-item-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.report-item-links a {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  max-width: 340px;
+  overflow: hidden;
+  padding: 0.18rem 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-search-toggle {

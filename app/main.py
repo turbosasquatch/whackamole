@@ -29,7 +29,7 @@ from app.config import (
     parse_csv,
     parse_path_mappings,
 )
-from app.database import Database
+from app.database import REPORT_STATES, Database
 from app.inventory import (
     PRIMARY_TRACKERS,
     coverage_for_item,
@@ -102,6 +102,11 @@ REPORTING_STAGES = [
     "Queue Import",
     "UI",
     "Other",
+]
+REPORT_TABS = [
+    {"key": "active", "label": "Active"},
+    {"key": "attempted", "label": "Attempted"},
+    {"key": "resolved", "label": "Resolved"},
 ]
 WARNING_TAG_LABELS = {
     "media_warning": "Media Info",
@@ -1074,9 +1079,58 @@ def _report_payload(row: Any) -> Dict[str, Any]:
     }
 
 
+def _sanitize_report_state(value: str, default: str = "active") -> str:
+    text = str(value or "").strip().lower()
+    return text if text in REPORT_STATES else default
+
+
 def _sanitize_report_stage(value: str) -> str:
     text = str(value or "").strip()
     return text if text in REPORTING_STAGES else "Other"
+
+
+def _report_group_key(report: Mapping[str, Any]) -> str:
+    stage = re.sub(r"\s+", " ", str(report.get("stage") or "Other")).strip().lower()
+    notes = re.sub(r"\s+", " ", str(report.get("notes") or "")).strip().lower()
+    return f"{stage}\n{notes}"
+
+
+def _report_groups(reports: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for report in reports:
+        key = _report_group_key(report)
+        group = grouped.setdefault(
+            key,
+            {
+                "key": key,
+                "stage": report.get("stage") or "Other",
+                "notes": report.get("notes") or "",
+                "reports": [],
+                "items": {},
+                "oldest_at": int(report.get("created_at") or 0),
+                "newest_at": int(report.get("updated_at") or 0),
+            },
+        )
+        group["reports"].append(report)
+        group["items"][int(report["item_id"])] = {
+            "id": int(report["item_id"]),
+            "name": report.get("item_name") or f"Item {report['item_id']}",
+        }
+        group["oldest_at"] = min(int(group["oldest_at"] or 0) or int(report.get("created_at") or 0), int(report.get("created_at") or 0))
+        group["newest_at"] = max(int(group["newest_at"] or 0), int(report.get("updated_at") or 0))
+
+    rows = []
+    for group in grouped.values():
+        reports_list = list(group["reports"])
+        rows.append(
+            {
+                **group,
+                "count": len(reports_list),
+                "report_ids": [int(report["id"]) for report in reports_list],
+                "items": sorted(group["items"].values(), key=lambda item: item["name"].lower()),
+            }
+        )
+    return sorted(rows, key=lambda group: (-int(group["count"]), -int(group["newest_at"] or 0), str(group["stage"]).lower()))
 
 
 def _video_files_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -1195,6 +1249,14 @@ def _with_unattended_arg(args: str) -> str:
     if re.search(r"(^|\s)--unattended(\s|$)", value):
         return value
     return f"{value} --unattended".strip()
+
+
+def _upload_payload_args(payload: Any, console: Mapping[str, Any]) -> str:
+    raw_args = payload.get("args") if isinstance(payload, dict) else None
+    args = str(raw_args or "").strip()
+    if args:
+        return args
+    return str(console.get("args") or "").strip()
 
 
 def _source_provider_for_item(item: Dict[str, Any]) -> str:
@@ -1588,6 +1650,7 @@ def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = 
     rows = []
     queue = service.get("queue") if isinstance(service.get("queue"), dict) else {}
     imports = service.get("imports") if isinstance(service.get("imports"), dict) else {}
+    report_counts = service.get("reports") if isinstance(service.get("reports"), dict) else {}
     for key, label, statuses in DASHBOARD_TABS:
         if key == "active":
             total = int(queue.get("active") or 0)
@@ -1611,6 +1674,15 @@ def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = 
             "total": int(imports.get("active") or 0),
             "href": "/imports",
             "selected": view == "imports",
+        }
+    )
+    rows.append(
+        {
+            "key": "reports",
+            "label": "Reports",
+            "total": int(report_counts.get("open") or 0),
+            "href": "/reports",
+            "selected": view == "reports",
         }
     )
     return rows
@@ -1933,6 +2005,9 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
     cfg = request.app.state.config_manager.load()
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
     item["active_reports"] = [_report_payload(report) for report in request.app.state.db.list_reports(item_id=item_id)]
+    item["attempted_reports"] = [
+        _report_payload(report) for report in request.app.state.db.list_reports(state="attempted", item_id=item_id, limit=50)
+    ]
     item["resolved_reports"] = [
         _report_payload(report) for report in request.app.state.db.list_reports(state="resolved", item_id=item_id, limit=50)
     ]
@@ -1947,6 +2022,26 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             "next_item_url": _next_item_url(request.app.state.db, item),
             "upload_console_configured": bool(cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token")),
             "upload_console_session": request.app.state.upload_console.snapshot(),
+        },
+    )
+
+
+@app.get("/reports", response_class=HTMLResponse)
+async def reports_page(request: Request, state_filter: str = Query("active", alias="state")) -> HTMLResponse:
+    state_value = _sanitize_report_state(state_filter)
+    reports = [_report_payload(report) for report in request.app.state.db.list_reports(state=state_value, limit=500)]
+    counts = request.app.state.db.report_counts()
+    return templates.TemplateResponse(
+        request,
+        "reports.html",
+        {
+            **_shell_context(request, section="reports", view="reports"),
+            "request": request,
+            "report_state": state_value,
+            "report_tabs": REPORT_TABS,
+            "report_counts": counts,
+            "report_groups": _report_groups(reports),
+            "current_url": f"/reports?state={state_value}",
         },
     )
 
@@ -2007,10 +2102,29 @@ async def create_item_report_form(
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#reporting"), status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.post("/reports/attempt")
+async def attempt_reports_form(request: Request, report_ids: Optional[List[int]] = Form(None), return_to: str = Form("")) -> RedirectResponse:
+    request.app.state.db.mark_reports_attempted(report_ids or [])
+    return RedirectResponse(url=_safe_local_redirect(return_to, "/reports?state=active"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/reports/{report_id}/attempt")
+async def attempt_report_form(request: Request, report_id: int, return_to: str = Form("")) -> RedirectResponse:
+    report = request.app.state.db.get_report(report_id)
+    if report is None or str(report["state"]) == "deleted":
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not request.app.state.db.mark_report_attempted(report_id):
+        raise HTTPException(status_code=404, detail="Report not found")
+    return RedirectResponse(
+        url=_safe_local_redirect(return_to, f"/items/{int(report['item_id'])}#reporting"),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @app.post("/reports/{report_id}/resolve")
 async def resolve_report_form(request: Request, report_id: int, return_to: str = Form("")) -> RedirectResponse:
     report = request.app.state.db.get_report(report_id)
-    if report is None:
+    if report is None or str(report["state"]) == "deleted":
         raise HTTPException(status_code=404, detail="Report not found")
     request.app.state.db.resolve_report(report_id)
     return RedirectResponse(
@@ -2022,7 +2136,7 @@ async def resolve_report_form(request: Request, report_id: int, return_to: str =
 @app.post("/reports/{report_id}/delete")
 async def delete_report_form(request: Request, report_id: int, return_to: str = Form("")) -> RedirectResponse:
     report = request.app.state.db.get_report(report_id)
-    if report is None:
+    if report is None or str(report["state"]) == "deleted":
         raise HTTPException(status_code=404, detail="Report not found")
     request.app.state.db.delete_report(report_id)
     return RedirectResponse(
@@ -2069,9 +2183,7 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
         payload = await request.json()
     except Exception:
         payload = {}
-    args = str(payload.get("args") if isinstance(payload, dict) else console.get("args") or "").strip()
-    if not args:
-        args = str(console.get("args") or "").strip()
+    args = _upload_payload_args(payload, console)
 
     session, busy = await request.app.state.upload_console.start(
         item_id=item_id,
@@ -2110,9 +2222,7 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
         payload = await request.json()
     except Exception:
         payload = {}
-    args = str(payload.get("args") if isinstance(payload, dict) else console.get("args") or "").strip()
-    if not args:
-        args = str(console.get("args") or "").strip()
+    args = _upload_payload_args(payload, console)
     queued_args = _with_unattended_arg(args)
     import_id = request.app.state.db.enqueue_import(
         item_id=item_id,
@@ -2578,7 +2688,7 @@ async def api_reports(
     limit: int = Query(200, ge=1, le=500),
 ) -> JSONResponse:
     _require_api_auth(request)
-    state_value = state_filter if state_filter in {"active", "resolved", "deleted"} else "active"
+    state_value = _sanitize_report_state(state_filter)
     reports = request.app.state.db.list_reports(state=state_value, item_id=item_id, limit=limit)
     return JSONResponse({"reports": [_report_payload(report) for report in reports], "state": state_value, "count": len(reports)})
 
@@ -2590,6 +2700,15 @@ async def api_report_detail(request: Request, report_id: int) -> JSONResponse:
     if report is None or str(report["state"]) == "deleted":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
     return JSONResponse({"report": _report_payload(report)})
+
+
+@app.post("/api/reports/{report_id}/attempt")
+async def api_attempt_report(request: Request, report_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    if not request.app.state.db.mark_report_attempted(report_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    report = request.app.state.db.get_report(report_id)
+    return JSONResponse({"success": True, "report": _report_payload(report)})
 
 
 @app.post("/api/reports/{report_id}/resolve")

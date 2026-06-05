@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Reports · Whackamole{% endblock %}
+{% block page_label %}Reports{% endblock %}
+{% block content %}
+<section class="details-panel reports-panel">
+  <div class="panel-heading">
+    <div>
+      <span class="eyebrow">Report Triage</span>
+      <h2>Reported Issues</h2>
+    </div>
+    <div class="button-row report-tabs">
+      {% for tab in report_tabs %}
+        <a class="button small {% if report_state != tab.key %}secondary{% endif %}" href="/reports?state={{ tab.key }}">
+          {{ tab.label }}
+          <span class="button-count">{{ report_counts[tab.key] }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="report-list report-group-list">
+    {% for group in report_groups %}
+      <article class="report-card report-group-card">
+        <div>
+          <div class="report-card-heading">
+            <strong>{{ group.stage }}</strong>
+            {% if group.count > 1 %}<span class="pill neutral">{{ group.count }} duplicates</span>{% endif %}
+          </div>
+          <p>{{ group.notes or "-" }}</p>
+          <p class="muted">
+            Oldest {{ group.oldest_at | datetime }} · Newest {{ group.newest_at | datetime }}
+          </p>
+          <div class="report-item-links">
+            {% for item in group["items"] %}
+              <a href="/items/{{ item.id }}#reporting">{{ item.name }}</a>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="button-row">
+          {% if report_state == "active" %}
+            <form method="post" action="/reports/attempt">
+              <input type="hidden" name="return_to" value="/reports?state=active">
+              {% for report_id in group.report_ids %}
+                <input type="hidden" name="report_ids" value="{{ report_id }}">
+              {% endfor %}
+              <button class="button small secondary" type="submit">Mark attempted</button>
+            </form>
+          {% endif %}
+          {% for report_id in group.report_ids %}
+            <form method="post" action="/reports/{{ report_id }}/resolve">
+              <input type="hidden" name="return_to" value="/reports?state={{ report_state }}">
+              <button class="button small" type="submit">Resolve #{{ report_id }}</button>
+            </form>
+          {% endfor %}
+        </div>
+      </article>
+    {% else %}
+      <p class="muted">No {{ report_state }} reports.</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

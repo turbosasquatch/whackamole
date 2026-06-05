@@ -124,6 +124,38 @@ def test_upload_console_queue_endpoint_waits_for_manual_import_run(tmp_path, mon
         assert rows[0]["status"] == "pending"
 
 
+def test_upload_console_queue_endpoint_uses_default_args_when_payload_omits_args(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={})
+
+        assert response.status_code == 200
+        assert response.json()["args"] == "--trackers dp,ulcx --service AMZN --unattended"
+        rows = client.app.state.db.list_imports()
+        assert rows[0]["args"] == "--trackers dp,ulcx --service AMZN --unattended"
+
+
+def test_upload_console_queue_endpoint_uses_default_args_when_payload_args_is_null(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": None})
+
+        assert response.status_code == 200
+        assert response.json()["args"] == "--trackers dp,ulcx --service AMZN --unattended"
+        rows = client.app.state.db.list_imports()
+        assert rows[0]["args"] == "--trackers dp,ulcx --service AMZN --unattended"
+
+
 def test_item_queue_upload_form_stays_on_item_page(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         cfg = client.app.state.config_manager.load()
@@ -141,6 +173,7 @@ def test_item_queue_upload_form_stays_on_item_page(tmp_path, monkeypatch):
         assert response.status_code == 303
         assert response.headers["location"] == f"/items/{item_id}"
         assert client.app.state.db.list_imports()[0]["item_id"] == item_id
+        assert client.app.state.db.list_imports()[0]["args"] == "--trackers dp,ulcx --service AMZN --unattended"
 
 
 def test_imports_run_pending_button_triggers_runner(tmp_path, monkeypatch):

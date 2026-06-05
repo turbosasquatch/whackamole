@@ -365,13 +365,44 @@
       </section>
 
       <section class="details-panel">
-        <h2>Reported Issues</h2>
+        <h2>Active Reports</h2>
         <div class="report-list">
           {% for report in item.active_reports %}
             <article class="report-card">
               <div>
                 <strong>{{ report.stage }}</strong>
                 <time>{{ report.created_at | datetime }}</time>
+                <p>{{ report.notes or "-" }}</p>
+              </div>
+              <div class="button-row">
+                <form method="post" action="/reports/{{ report.id }}/attempt">
+                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+                  <button class="button small secondary" type="submit">Mark attempted</button>
+                </form>
+                <form method="post" action="/reports/{{ report.id }}/resolve">
+                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+                  <button class="button small" type="submit">Resolve</button>
+                </form>
+                <form method="post" action="/reports/{{ report.id }}/delete">
+                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+                  <button class="button small danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </article>
+          {% else %}
+            <p class="muted">No active reports.</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="details-panel">
+        <h2>Attempted Reports</h2>
+        <div class="report-list">
+          {% for report in item.attempted_reports %}
+            <article class="report-card attempted">
+              <div>
+                <strong>{{ report.stage }}</strong>
+                <time>{{ report.updated_at | datetime }}</time>
                 <p>{{ report.notes or "-" }}</p>
               </div>
               <div class="button-row">
@@ -386,7 +417,7 @@
               </div>
             </article>
           {% else %}
-            <p class="muted">No active reports.</p>
+            <p class="muted">No attempted reports.</p>
           {% endfor %}
         </div>
       </section>

@@ -437,6 +437,7 @@ class WhackamoleService:
             "inventory_count": self.db.count_items([]),
             "queue": self.db.queue_counts(),
             "imports": self.db.queued_import_counts(),
+            "reports": self.db.report_counts(),
             "whacked": self.db.whacked_stats(),
             "maintenance": self.maintenance_snapshot(cfg),
             "ua_execution": self.ua_execution.snapshot(),
