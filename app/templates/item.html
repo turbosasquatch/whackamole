@@ -24,6 +24,8 @@
   {% set ua_busy_this_item = ua_busy and ua_owner.kind == "upload" and ua_owner.item_id == item.id %}
   {% set ua_check_busy = ua_busy and ua_owner.kind == "check" %}
   {% set ua_execute_disabled = (not upload_console_configured) or (not ua_console.path) or ua_console.blocked or (ua_busy and not ua_busy_this_item) %}
+  {% set active_import = item.active_import or {} %}
+  {% set queue_warning = (ua_console.warnings or []) | join('; ') %}
 
   <section class="item-hero">
     <div>
@@ -41,9 +43,11 @@
       <form method="post" action="/items/{{ item.id }}/recheck" data-submit-tick="Recheck triggered">
         <button class="button" type="submit" data-submit-tick-button>Recheck</button>
       </form>
-      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-queue-upload-form data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue">
+      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-submit-error-label="Retry" data-queue-upload-form data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue" data-queued-import-id="{{ active_import.id or '' }}">
         <input type="hidden" name="return_to" value="/items/{{ item.id }}">
-        <button class="button success" type="submit" data-submit-tick-button>Queue Upload</button>
+        <button class="button success" type="submit" data-submit-tick-button {% if active_import or ua_console.blocked %}disabled{% endif %}{% if ua_console.blocked and queue_warning %} title="{{ queue_warning }}"{% endif %}>
+          {% if active_import %}Queued{% else %}Queue Upload{% endif %}
+        </button>
       </form>
       <form method="post" action="/items/{{ item.id }}/ignore">
         <button class="button secondary" type="submit">Ignore</button>
@@ -55,7 +59,7 @@
   <section class="decision-panel">
     <div class="decision-widget">
       <span class="eyebrow">Decision</span>
-      <strong>{{ item.verdict or item.next_action }}</strong>
+      <strong>{{ item.decision_label }}</strong>
       <p>{{ item.decision_notice or item.reason or item.display_status.detail or "No decision reason recorded yet." }}</p>
       <p class="muted">Last checked {{ item.last_checked_at | datetime }}</p>
       <div class="coverage-badges">

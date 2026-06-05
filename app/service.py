@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,11 +27,12 @@ from app.media_policy import (
     build_media_manual_result,
     empty_check_results,
     merge_check_results,
+    VIDEO_EXTENSIONS,
     video_file_payloads,
 )
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
-from app.srrdb import apply_srrdb_result, verify_srrdb_release
+from app.srrdb import apply_srrdb_result, srrdb_lookup_name, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
 
@@ -65,6 +66,30 @@ def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> Rele
             local = replace(local, **updates)
         break
     return local
+
+
+def _folder_name_review_warning(mapped_path: str, media_result: Mapping[str, Any]) -> Dict[str, Any]:
+    video_files = media_result.get("video_files") if isinstance(media_result.get("video_files"), list) else []
+    if len(video_files) == 1:
+        return {}
+
+    root_name = str(media_result.get("torrent_root") or PurePosixPath(str(mapped_path or "")).name).strip()
+    if not root_name or PurePosixPath(root_name).suffix.lower() in VIDEO_EXTENSIONS:
+        return {}
+
+    normalized = srrdb_lookup_name(root_name)
+    if not normalized or normalized == root_name:
+        return {}
+
+    reason = f"Folder name would be normalised to {normalized}."
+    return {
+        "key": "folder_name_warning",
+        "label": "Folder Name",
+        "severity": "warning",
+        "detail": reason,
+        "root_name": root_name,
+        "normalized": normalized,
+    }
 
 
 def _is_web_media_result(item_name: str, media_result: Mapping[str, Any]) -> bool:
@@ -1099,6 +1124,22 @@ class WhackamoleService:
                     extra={
                         "queried_name": str(srrdb_result.get("queried_name") or ""),
                         "matched": srrdb_result.get("matched"),
+                    },
+                )
+            folder_name_warning = _folder_name_review_warning(mapped_path, media_result)
+            if status == "candidate" and folder_name_warning:
+                flags = [*flags, folder_name_warning]
+                status = "manual_review"
+                verdict = "folder_name_warning"
+                reason = str(folder_name_warning["detail"])
+                check_results = add_stage_diagnostic(
+                    check_results,
+                    stage="folder_name",
+                    status="warning",
+                    reason=reason,
+                    extra={
+                        "root_name": str(folder_name_warning.get("root_name") or ""),
+                        "normalized": str(folder_name_warning.get("normalized") or ""),
                     },
                 )
             check_results = merge_check_results(

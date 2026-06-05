@@ -195,10 +195,15 @@ def test_upload_console_blocks_folder_name_that_would_be_normalized(tmp_path, mo
         response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers dp"})
 
         assert page.status_code == 200
-        assert "Folder name would be normalised to Dirty.Business.2026.S01.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR" in page.text
-        assert 'data-can-queue="false"' in page.text
-        assert response.status_code == 400
-        assert "review before uploading" in response.json()["error"]
+        assert "Folder name would be normalised to Dirty.Business.2026.S01.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR." in page.text
+        assert "Folder Name" in page.text
+        assert '<strong>Folder Name</strong>' in page.text
+        assert '<span class="check-state warning">Warning</span>' in page.text
+        assert "Review Required" not in page.text
+        assert "Queue Upload" in page.text
+        assert 'data-can-queue="true"' in page.text
+        assert response.status_code == 200
+        assert response.json()["args"] == "--trackers dp --unattended"
 
 
 def test_upload_console_blocks_possible_renamed_release_flag(tmp_path, monkeypatch):
@@ -295,6 +300,14 @@ def test_submit_buttons_have_tick_feedback_script():
     assert "function setButtonTick" in script
     assert "form[data-submit-tick]" in script
     assert "&#10003;" in script
+
+
+def test_queue_button_errors_do_not_replace_label_with_full_message():
+    script = Path("app/static/app.js").read_text()
+
+    assert "button.textContent = error.message" not in script
+    assert "form.dataset.submitErrorLabel" in script
+    assert "button.title = message" in script
 
 
 def test_item_page_upload_console_does_not_duplicate_service_when_title_has_it(tmp_path, monkeypatch):

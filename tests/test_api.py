@@ -360,6 +360,50 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "filter-view-list" not in page.text
 
 
+def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "candidate",
+            "candidate",
+            "Valid upload candidate on: IHD",
+            mapped_path="/media/torrents/tv/American Crime Story S03 1080p AMZN WEB-DL DDP5 1 H 264-NTb",
+        )
+
+        def fail_video_scan(*args, **kwargs):
+            raise AssertionError("dashboard rows should not scan media folders")
+
+        monkeypatch.setattr(main_module, "_video_files_for_item", fail_video_scan)
+
+        candidates_page = client.get("/dashboard?view=candidates")
+        review_page = client.get("/dashboard?view=manual")
+        candidate_api = client.get("/api/items?status=candidate", headers=_auth_headers())
+        review_api = client.get("/api/items?status=manual_review", headers=_auth_headers())
+
+        assert candidates_page.status_code == 200
+        assert review_page.status_code == 200
+        assert "Example.Show.S01E01" not in candidates_page.text
+        assert "Example.Show.S01E01" in review_page.text
+        assert "Folder Name" in review_page.text
+        assert "Review" in review_page.text
+        assert "Folder name would be normalised to American.Crime.Story.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb." in review_page.text
+        assert 'class="button small success"' in review_page.text
+        assert "Upload" in review_page.text
+
+        assert candidate_api.status_code == 200
+        assert review_api.status_code == 200
+        assert candidate_api.json()["items"] == []
+        review_items = review_api.json()["items"]
+        assert len(review_items) == 1
+        assert review_items[0]["status"] == "candidate"
+        assert review_items[0]["effective_status"] == "manual_review"
+        assert review_items[0]["decision_label"] == "Review"
+        assert review_items[0]["display_status"]["label"] == "Needs Review"
+        assert "Folder Name" in {tag["label"] for tag in review_items[0]["alert_tags"]}
+
+
 def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         item_id = _seed_item(client)

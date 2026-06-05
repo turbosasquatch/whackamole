@@ -135,6 +135,9 @@
 
   document.querySelectorAll("form[data-queue-upload-form]").forEach((form) => {
     const initialButton = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
+    if (initialButton && !initialButton.dataset.originalLabel) {
+      initialButton.dataset.originalLabel = initialButton.textContent.trim();
+    }
     if (form.dataset.queuedImportId && initialButton) {
       setButtonTick(initialButton, form.dataset.submitTick || "Upload queued");
       initialButton.disabled = true;
@@ -144,6 +147,7 @@
       const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
       if (!queueUrl || !button || !window.fetch) return;
       event.preventDefault();
+      const originalLabel = button.dataset.originalLabel || button.textContent.trim() || "Upload";
       button.disabled = true;
       try {
         const response = await fetch(queueUrl, {
@@ -160,8 +164,11 @@
         }
         setButtonTick(button, form.dataset.submitTick || "Upload queued");
       } catch (error) {
+        const message = error.message || "Queue failed";
         button.disabled = false;
-        button.textContent = error.message || "Queue failed";
+        button.textContent = form.dataset.submitErrorLabel || originalLabel || "Retry";
+        button.title = message;
+        button.setAttribute("aria-label", message);
       }
     });
   });

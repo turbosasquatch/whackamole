@@ -6,7 +6,7 @@ import re
 import time
 from hmac import compare_digest
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
@@ -110,6 +110,7 @@ REPORT_TABS = [
     {"key": "resolved", "label": "Resolved"},
 ]
 WARNING_TAG_LABELS = {
+    "folder_name_warning": "Folder Name",
     "media_warning": "Media Info",
     "release_group_warning": "Release Group",
     "srrdb_filename_mismatch": "srrDB Name",
@@ -187,14 +188,17 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["arr_summary"] = _arr_summary(arr_result)
     item["check_results"] = check_results
     item["check_flags"] = _check_flags(check_results)
-    item["stage_flow"] = _stage_flow(item, check_results, arr_result)
     item["inventory_meta"] = inventory_meta
     item["coverage"] = item_coverage
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
+    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
+    item["folder_name_check"] = _folder_name_check(item)
+    item["effective_status"] = _effective_status(item)
+    item["stage_flow"] = _stage_flow(item, check_results, arr_result)
     item["display_status"] = _display_status(item)
     item["next_action"] = _next_action(item)
-    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
     item["decision_notice"] = _decision_notice(item, check_results)
+    item["decision_label"] = _decision_label(item)
     item["reason_categories"] = _reason_categories(item, check_results, arr_result)
     item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
     item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
@@ -221,10 +225,13 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     item["inventory_meta"] = inventory_meta
     item["coverage"] = item_coverage
     item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
+    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
+    item["folder_name_check"] = _folder_name_check(item)
+    item["effective_status"] = _effective_status(item)
     item["display_status"] = _display_status(item)
     item["next_action"] = _next_action(item)
-    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
     item["decision_notice"] = _decision_notice(item, check_results)
+    item["decision_label"] = _decision_label(item)
     item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
     item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
     item["tracker_coverage"] = _tracker_coverage(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
@@ -239,9 +246,16 @@ def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]
     item["discovarr_local_traits"] = _discovarr_local_traits(item, item["check_results"], item["arr_result"], item["nfo_info"])
     item["arr_release_views"] = _arr_release_views(item["arr_result"], item["discovarr_local_traits"])
     item["source_label"] = _source_label(item, item["tracker_results"])
+    item["video_files"] = _video_files_for_item(item)
+    item["folder_name_check"] = _folder_name_check(item, item["video_files"])
+    item["effective_status"] = _effective_status(item)
+    item["stage_flow"] = _stage_flow(item, item["check_results"], item["arr_result"])
+    item["display_status"] = _display_status(item)
+    item["next_action"] = _next_action(item)
+    item["decision_notice"] = _decision_notice(item, item["check_results"])
+    item["decision_label"] = _decision_label(item)
     item["overview_checks"] = _overview_checks(item, item["check_results"], item["arr_result"])
     item["alert_tags"] = _alert_tags(item, item["check_results"], item["arr_result"])
-    item["video_files"] = _video_files_for_item(item)
     item["raw_payloads"] = _raw_payloads(item)
     item["upload_console"] = _upload_console_context(item)
     return item
@@ -274,8 +288,16 @@ def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [flag for flag in flags if isinstance(flag, dict) and str(flag.get("key") or "")]
 
 
-def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
+def _effective_status(item: Mapping[str, Any]) -> str:
     value = str(item.get("status") or "")
+    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
+    if value == "candidate" and folder_check.get("group") == "warning":
+        return "manual_review"
+    return value
+
+
+def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
+    value = _effective_status(item)
     stage = str(item.get("check_stage") or "")
     next_check_at = item.get("next_check_at")
     now = int(time.time())
@@ -321,7 +343,7 @@ def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _next_action(item: Dict[str, Any]) -> str:
-    status_value = str(item.get("status") or "")
+    status_value = _effective_status(item)
     if status_value == "candidate":
         return "Review candidate"
     if status_value == "covered":
@@ -377,12 +399,21 @@ def _valid_for_trackers(
 
 
 def _decision_notice(item: Dict[str, Any], check_results: Dict[str, Any]) -> str:
+    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
+    if str(item.get("status") or "") == "candidate" and folder_check.get("group") == "warning":
+        return str(folder_check.get("notes") or "").strip()
     flags = _check_flags(check_results)
     for severity in ("blocker", "error", "warning"):
         for flag in flags:
             if str(flag.get("severity") or "").lower() == severity:
                 return str(flag.get("detail") or flag.get("message") or flag.get("label") or "").strip()
     return str(item.get("reason") or item.get("display_status", {}).get("detail") or "").strip()
+
+
+def _decision_label(item: Mapping[str, Any]) -> str:
+    if str(item.get("status") or "") == "candidate" and _effective_status(item) == "manual_review":
+        return "Review"
+    return str(item.get("verdict") or item.get("next_action") or "Open")
 
 
 def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[str]:
@@ -488,6 +519,70 @@ def _cross_check_status(coverage: List[Dict[str, Any]], valid_for: List[str]) ->
     return {"state": "warning", "label": "Not Validated", "trackers": [], "selected": sorted(selected)}
 
 
+def _folder_name_check(item: Mapping[str, Any], video_files: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    root = str(item.get("mapped_path") or item.get("content_path") or "").strip()
+    if not root:
+        return {
+            "state": "Not Applicable",
+            "group": "neutral",
+            "notes": "No mapped path is recorded.",
+            "blocked": False,
+            "root_name": "",
+            "normalized": "",
+        }
+
+    files = video_files.get("files") if isinstance(video_files, Mapping) and isinstance(video_files.get("files"), list) else []
+    if len(files) == 1 and str(files[0].get("path") or "").strip():
+        return {
+            "state": "Pass",
+            "group": "pass",
+            "notes": "Single video file will be uploaded.",
+            "blocked": False,
+            "root_name": PurePosixPath(str(files[0].get("path") or "")).name,
+            "normalized": "",
+        }
+
+    root_name = PurePosixPath(root).name.strip()
+    if not root_name:
+        return {
+            "state": "Not Applicable",
+            "group": "neutral",
+            "notes": "No folder name is available.",
+            "blocked": False,
+            "root_name": "",
+            "normalized": "",
+        }
+    if PurePosixPath(root_name).suffix.lower() in VIDEO_EXTENSIONS:
+        return {
+            "state": "Pass",
+            "group": "pass",
+            "notes": "Selected path is a video file.",
+            "blocked": False,
+            "root_name": root_name,
+            "normalized": "",
+        }
+
+    normalized = srrdb_lookup_name(root_name)
+    if normalized and normalized != root_name:
+        warning = f"Folder name would be normalised to {normalized}."
+        return {
+            "state": "Warning",
+            "group": "warning",
+            "notes": warning,
+            "blocked": False,
+            "root_name": root_name,
+            "normalized": normalized,
+        }
+    return {
+        "state": "Pass",
+        "group": "pass",
+        "notes": root_name,
+        "blocked": False,
+        "root_name": root_name,
+        "normalized": normalized,
+    }
+
+
 def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
     tags: List[Dict[str, str]] = []
     seen: set[str] = set()
@@ -545,6 +640,10 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
     cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
     if cross.get("state") == "warning":
         add("cross_check_warning", "Cross Check", "warning")
+
+    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
+    if folder_check.get("group") == "warning":
+        add("folder_name_warning", "Folder Name", "warning")
 
     return tags
 
@@ -613,10 +712,20 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
     srrdb = check_results.get("srrdb") if isinstance(check_results.get("srrdb"), dict) else {}
     policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
     cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
+    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
     rows = [
         _summary_row("Media Info", *_media_summary_state(media), str(media.get("reason") or ""), "mediainfo", "Raw MediaInfo", "json"),
         _summary_row("Source Detection", *_source_summary_state(item), str((item.get("nfo_info") or {}).get("message") or ""), "nfo", "NFO View", "text"),
         _summary_row("Path Mapping", *_path_summary_state(item, check_results), str(item.get("mapped_path") or item.get("content_path") or ""), "diagnostics", "Path Mapping View", "json"),
+        _summary_row(
+            "Folder Name",
+            str(folder_check.get("state") or "Not Applicable"),
+            str(folder_check.get("group") or "neutral"),
+            str(folder_check.get("notes") or ""),
+            "diagnostics",
+            "Folder Name View",
+            "json",
+        ),
         _summary_row("Upload Assistant", *_bucket_summary_state(item.get("tracker_results") or {}), str(ua.get("reason") or item.get("tracker_summary") or ""), "ua_log", "UA Log View", "text"),
         _summary_row("Discovarr", *_arr_summary_state(arr_result), str(arr_result.get("reason") or item.get("arr_summary") or ""), "arr", "Raw Arr Result View", "json"),
         _summary_row("Release Group", *_policy_summary_state(policy), str(policy.get("reason") or ""), "diagnostics", "Release Group View", "json"),
@@ -1007,6 +1116,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "content_path": item["content_path"],
         "mapped_path": item["mapped_path"],
         "status": item["status"],
+        "effective_status": item.get("effective_status") or _effective_status(item),
         "verdict": item["verdict"],
         "reason": item["reason"],
         "size": item["size"],
@@ -1033,10 +1143,12 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "missing_primary_trackers": item["missing_primary_trackers"],
         "valid_for_trackers": item["valid_for_trackers"],
         "decision_notice": item["decision_notice"],
+        "decision_label": item.get("decision_label") or _decision_label(item),
         "reason_categories": item["reason_categories"],
         "coverage_status": item["coverage_status"],
         "tracker_coverage": item.get("tracker_coverage") or [],
         "cross_check": item.get("cross_check") or {},
+        "folder_name_check": item.get("folder_name_check") or _folder_name_check(item),
         "source_label": item["source_label"],
     }
 
@@ -1233,6 +1345,7 @@ def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
     files = video_files.get("files") if isinstance(video_files.get("files"), list) else []
     root = str(item.get("mapped_path") or item.get("content_path") or "").strip()
     warnings: List[str] = []
+    folder_check = _folder_name_check(item, video_files)
     if len(files) == 1 and str(files[0].get("path") or "").strip():
         selected = str(files[0]["path"])
         label = str(files[0].get("relative_path") or files[0].get("name") or selected)
@@ -1241,10 +1354,8 @@ def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
         selected = root
         label = root
         kind = "folder" if len(files) != 1 else "path"
-        root_name = Path(root).name if root else ""
-        normalized_root = srrdb_lookup_name(root_name)
-        if kind == "folder" and root_name and normalized_root and normalized_root != root_name:
-            warnings.append(f"Folder name would be normalised to {normalized_root}; review before uploading.")
+        if kind == "folder" and folder_check.get("group") == "warning":
+            warnings.append(str(folder_check.get("notes") or "Folder name needs review before uploading."))
     if not selected:
         warnings.append("No mapped Upload Assistant path is recorded for this item.")
     else:
@@ -1493,7 +1604,7 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
 
 
 def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
-    status_value = str(item.get("status") or "")
+    status_value = _effective_status(item)
     stage = str(item.get("check_stage") or "")
     final_statuses = {"candidate", "covered", "blocked", "manual_review", "error", "ignored", "inventory", "baseline"}
     media_done = bool(check_results.get("media"))
@@ -1638,7 +1749,7 @@ def _shell_context(
     counts: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     service_snapshot = service_snapshot or request.app.state.service.snapshot()
-    counts = counts or request.app.state.db.status_counts()
+    counts = dict(counts) if counts is not None else _effective_status_counts(request.app.state.db, request.app.state.db.status_counts())
     return {
         "section": section,
         "service": service_snapshot,
@@ -1649,9 +1760,22 @@ def _shell_context(
     }
 
 
+def _effective_status_counts(db: Database, counts: Mapping[str, int]) -> Dict[str, int]:
+    adjusted = {str(key): int(value or 0) for key, value in counts.items()}
+    rows = db.list_dashboard_items_filtered(["candidate"], limit=1000)
+    if not rows:
+        return adjusted
+    coverage = _coverage_for_rows(db, rows)
+    moved = sum(1 for row in rows if _dashboard_row_dict(row, coverage).get("effective_status") == "manual_review")
+    if moved:
+        adjusted["candidate"] = max(0, int(adjusted.get("candidate", 0)) - moved)
+        adjusted["manual_review"] = int(adjusted.get("manual_review", 0)) + moved
+    return adjusted
+
+
 def _home_context(request: Request) -> Dict[str, Any]:
     service = request.app.state.service.snapshot()
-    counts = request.app.state.db.status_counts()
+    counts = _effective_status_counts(request.app.state.db, request.app.state.db.status_counts())
     total = sum(int(value or 0) for value in counts.values())
     return {
         **_shell_context(request, section="home", service_snapshot=service, counts=counts),
@@ -1752,6 +1876,24 @@ def _coverage_for_row(db: Database, row: Any) -> Dict[str, List[Dict[str, Any]]]
     return _coverage_for_rows(db, [row])
 
 
+def _effective_status_filter_applies(statuses: Sequence[str]) -> bool:
+    values = {str(status or "") for status in statuses}
+    return bool(values.intersection({"candidate", "manual_review"}))
+
+
+def _query_statuses_for_effective_filter(statuses: Sequence[str]) -> List[str]:
+    values = [str(status) for status in statuses]
+    if "manual_review" in values and "candidate" not in values:
+        values.append("candidate")
+    return values
+
+
+def _matches_effective_status(item: Mapping[str, Any], statuses: Sequence[str]) -> bool:
+    if not statuses:
+        return True
+    return str(item.get("effective_status") or _effective_status(item)) in {str(status) for status in statuses}
+
+
 def _filtered_rows(
     db: Database,
     statuses: Sequence[str],
@@ -1765,10 +1907,14 @@ def _filtered_rows(
     due_errors_only: bool = False,
     q: str = "",
 ) -> tuple[List[Any], int, Dict[str, List[Dict[str, Any]]]]:
+    effective_filter = _effective_status_filter_applies(statuses)
+    query_statuses = _query_statuses_for_effective_filter(statuses) if effective_filter else list(statuses)
+    query_limit = max(limit + offset, 1000) if effective_filter else limit
+    query_offset = 0 if effective_filter else offset
     rows = db.list_items_filtered(
-        statuses,
-        limit=limit,
-        offset=offset,
+        query_statuses,
+        limit=query_limit,
+        offset=query_offset,
         media=media,
         missing=missing,
         valid_for=valid_for,
@@ -1777,8 +1923,14 @@ def _filtered_rows(
         due_errors_only=due_errors_only,
         q=q,
     )
+    coverage = _coverage_for_rows(db, rows)
+    if effective_filter:
+        filtered_rows = [row for row in rows if _matches_effective_status(_row_dict(row, coverage), statuses)]
+        total = len(filtered_rows)
+        rows = filtered_rows[offset : offset + limit]
+        return rows, total, _coverage_for_rows(db, rows)
     total = db.count_items_filtered(
-        statuses,
+        query_statuses,
         media=media,
         missing=missing,
         valid_for=valid_for,
@@ -1787,7 +1939,7 @@ def _filtered_rows(
         due_errors_only=due_errors_only,
         q=q,
     )
-    return rows, total, _coverage_for_rows(db, rows)
+    return rows, total, coverage
 
 
 def _filtered_dashboard_items(
@@ -1803,20 +1955,14 @@ def _filtered_dashboard_items(
     due_errors_only: bool = False,
     q: str = "",
 ) -> tuple[List[Dict[str, Any]], int]:
+    effective_filter = _effective_status_filter_applies(statuses)
+    query_statuses = _query_statuses_for_effective_filter(statuses) if effective_filter else list(statuses)
+    query_limit = max(limit + offset, 1000) if effective_filter else limit
+    query_offset = 0 if effective_filter else offset
     rows = db.list_dashboard_items_filtered(
-        statuses,
-        limit=limit,
-        offset=offset,
-        media=media,
-        missing=missing,
-        valid_for=valid_for,
-        reasons=reasons,
-        hide_any_primary=hide_any_primary,
-        due_errors_only=due_errors_only,
-        q=q,
-    )
-    total = db.count_items_filtered(
-        statuses,
+        query_statuses,
+        limit=query_limit,
+        offset=query_offset,
         media=media,
         missing=missing,
         valid_for=valid_for,
@@ -1826,7 +1972,22 @@ def _filtered_dashboard_items(
         q=q,
     )
     coverage = _coverage_for_rows(db, rows)
-    return [_dashboard_row_dict(row, coverage) for row in rows], total
+    items = [_dashboard_row_dict(row, coverage) for row in rows]
+    if effective_filter:
+        items = [item for item in items if _matches_effective_status(item, statuses)]
+        total = len(items)
+        return items[offset : offset + limit], total
+    total = db.count_items_filtered(
+        query_statuses,
+        media=media,
+        missing=missing,
+        valid_for=valid_for,
+        reasons=reasons,
+        hide_any_primary=hide_any_primary,
+        due_errors_only=due_errors_only,
+        q=q,
+    )
+    return items, total
 
 
 def _dashboard_url(
@@ -1964,7 +2125,7 @@ async def dashboard(
         active_import = active_imports.get(int(item["id"]))
         item["active_import"] = dict(active_import) if active_import is not None else {}
     service_snapshot = request.app.state.service.snapshot()
-    counts = request.app.state.db.status_counts()
+    counts = _effective_status_counts(request.app.state.db, request.app.state.db.status_counts())
     context = {
         **_shell_context(request, section="dashboard", view=selected, q=search_query, service_snapshot=service_snapshot, counts=counts),
         "request": request,
@@ -2032,6 +2193,8 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
         )
     cfg = request.app.state.config_manager.load()
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    active_import = request.app.state.db.active_import_for_item(item_id)
+    item["active_import"] = dict(active_import) if active_import is not None else {}
     item["active_reports"] = [_report_payload(report) for report in request.app.state.db.list_reports(item_id=item_id)]
     item["attempted_reports"] = [
         _report_payload(report) for report in request.app.state.db.list_reports(state="attempted", item_id=item_id, limit=50)
@@ -2635,7 +2798,7 @@ async def api_status(request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "service": request.app.state.service.snapshot(),
-            "counts": request.app.state.db.status_counts(),
+            "counts": _effective_status_counts(request.app.state.db, request.app.state.db.status_counts()),
             "configured": _secret_state(request.app.state.secrets),
         }
     )

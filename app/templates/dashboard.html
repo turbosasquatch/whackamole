@@ -167,7 +167,7 @@
               <td><span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span></td>
               {% if problem_view %}
               <td>
-                <strong>{{ item.verdict or item.next_action }}</strong>
+                <strong>{{ item.decision_label }}</strong>
               </td>
               <td><span class="muted clamp">{{ item.decision_notice or "-" }}</span></td>
               {% else %}
@@ -235,6 +235,7 @@
               method="post"
               action="/items/{{ item.id }}/upload-assistant/queue"
               data-submit-tick="Upload queued"
+              data-submit-error-label="Retry"
               data-queue-upload-form
               data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
               data-queued-import-id="{{ active_import.id or '' }}"
