@@ -15,6 +15,7 @@ from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.gzip import GZipMiddleware
 from starlette import status
 
 from app.clients import ProfilarrClient, QuiClient, RadarrClient, SonarrClient, UploadAssistantClient
@@ -183,7 +184,7 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     item = dict(row)
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
     arr_result = _arr_result(item.get("arr_results"))
-    check_results = _check_results(item.get("check_results"))
+    check_results = _dashboard_check_results(item.get("check_results"))
     inventory_meta = item_inventory_meta(item)
     item_coverage = coverage_for_item(item, coverage or {})
     item["tracker_results"] = tracker_groups
@@ -250,6 +251,32 @@ def _check_results(value: Any) -> Dict[str, Any]:
     return CheckResults.from_any(parsed).to_dict()
 
 
+def _dashboard_check_results(value: Any) -> Dict[str, Any]:
+    check_results = _check_results(value)
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    if not media:
+        return check_results
+    media = dict(media)
+    provider = _source_provider_from_mediainfo(media)
+    if provider:
+        media["dashboard_source_provider"] = provider
+    for key in ("raw_mediainfo_payloads", "raw_local_mediainfo_payloads", "supplemental_mediainfo_files"):
+        media.pop(key, None)
+    slim_files = []
+    for file_info in media.get("mediainfo_files") if isinstance(media.get("mediainfo_files"), list) else []:
+        if not isinstance(file_info, dict):
+            continue
+        slim_file = {"traits": file_info.get("traits") if isinstance(file_info.get("traits"), dict) else {}}
+        name = str(file_info.get("name") or "")
+        if name:
+            slim_file["name"] = name
+        slim_files.append(slim_file)
+    if slim_files:
+        media["mediainfo_files"] = slim_files
+    check_results["media"] = media
+    return check_results
+
+
 def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
     flags = check_results.get("flags")
     if not isinstance(flags, list):
@@ -261,6 +288,14 @@ def _effective_status(item: Mapping[str, Any]) -> str:
     value = str(item.get("status") or "")
     folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
     if value == "candidate" and folder_check.get("group") == "warning":
+        return "manual_review"
+    return value
+
+
+def _effective_status_for_row(row: Any) -> str:
+    item = dict(row)
+    value = str(item.get("status") or "")
+    if value == "candidate" and _folder_name_check(item).get("group") == "warning":
         return "manual_review"
     return value
 
@@ -1353,6 +1388,9 @@ def _source_provider_for_item(item: Dict[str, Any]) -> str:
 
 
 def _source_provider_from_mediainfo(media: Mapping[str, Any]) -> str:
+    provider = str(media.get("dashboard_source_provider") or "").strip()
+    if provider:
+        return provider
     fields: List[str] = []
     files = media.get("mediainfo_files") if isinstance(media.get("mediainfo_files"), list) else []
     for file_info in files:
@@ -1710,8 +1748,7 @@ def _effective_status_counts(db: Database, counts: Mapping[str, int]) -> Dict[st
     rows = db.list_dashboard_items_filtered(["candidate"], limit=1000)
     if not rows:
         return adjusted
-    coverage = _coverage_for_rows(db, rows)
-    moved = sum(1 for row in rows if _dashboard_row_dict(row, coverage).get("effective_status") == "manual_review")
+    moved = sum(1 for row in rows if _effective_status_for_row(row) == "manual_review")
     if moved:
         adjusted["candidate"] = max(0, int(adjusted.get("candidate", 0)) - moved)
         adjusted["manual_review"] = int(adjusted.get("manual_review", 0)) + moved
@@ -1839,6 +1876,12 @@ def _matches_effective_status(item: Mapping[str, Any], statuses: Sequence[str]) 
     return str(item.get("effective_status") or _effective_status(item)) in {str(status) for status in statuses}
 
 
+def _row_matches_effective_status(row: Any, statuses: Sequence[str]) -> bool:
+    if not statuses:
+        return True
+    return _effective_status_for_row(row) in {str(status) for status in statuses}
+
+
 def _filtered_rows(
     db: Database,
     statuses: Sequence[str],
@@ -1868,12 +1911,12 @@ def _filtered_rows(
         due_errors_only=due_errors_only,
         q=q,
     )
-    coverage = _coverage_for_rows(db, rows)
     if effective_filter:
-        filtered_rows = [row for row in rows if _matches_effective_status(_row_dict(row, coverage), statuses)]
+        filtered_rows = [row for row in rows if _row_matches_effective_status(row, statuses)]
         total = len(filtered_rows)
         rows = filtered_rows[offset : offset + limit]
         return rows, total, _coverage_for_rows(db, rows)
+    coverage = _coverage_for_rows(db, rows)
     total = db.count_items_filtered(
         query_statuses,
         media=media,
@@ -1916,12 +1959,14 @@ def _filtered_dashboard_items(
         due_errors_only=due_errors_only,
         q=q,
     )
+    if effective_filter:
+        filtered_rows = [row for row in rows if _row_matches_effective_status(row, statuses)]
+        total = len(filtered_rows)
+        page_rows = filtered_rows[offset : offset + limit]
+        coverage = _coverage_for_rows(db, page_rows)
+        return [_dashboard_row_dict(row, coverage) for row in page_rows], total
     coverage = _coverage_for_rows(db, rows)
     items = [_dashboard_row_dict(row, coverage) for row in rows]
-    if effective_filter:
-        items = [item for item in items if _matches_effective_status(item, statuses)]
-        total = len(items)
-        return items[offset : offset + limit], total
     total = db.count_items_filtered(
         query_statuses,
         media=media,
@@ -2016,6 +2061,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Whackamole", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 
@@ -2045,7 +2091,7 @@ async def dashboard(
     missing_values = missing or []
     valid_for_values = [tracker.upper() for tracker in (valid_for or []) if tracker.strip()]
     reason_values = [value.strip().lower() for value in (reason or []) if value.strip()]
-    limit = 100 if selected in {"baseline", "inventory"} else 150
+    limit = 100 if selected in {"baseline", "inventory"} else 75
     offset = (page - 1) * limit
     filter_media = media_values if selected in FILTERABLE_VIEWS else []
     filter_missing = missing_values if selected in FILTERABLE_VIEWS else []

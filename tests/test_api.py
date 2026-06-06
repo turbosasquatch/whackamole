@@ -2,6 +2,7 @@ import json
 import time
 
 from fastapi.testclient import TestClient
+from starlette.middleware.gzip import GZipMiddleware
 
 import app.main as main_module
 from app.main import app
@@ -48,6 +49,37 @@ def test_discovarr_unavailable_summary_is_fail():
     )
 
     assert (state, group) == ("Fail", "error")
+
+
+def test_app_enables_gzip_for_large_responses():
+    assert any(middleware.cls is GZipMiddleware for middleware in app.user_middleware)
+
+
+def test_dashboard_check_results_strip_raw_mediainfo_payloads():
+    payload = {
+        "media": {
+            "status": "passed",
+            "raw_mediainfo_payloads": [{"large": "payload", "ServiceName": "Netflix"}],
+            "raw_local_mediainfo_payloads": [{"large": "local"}],
+            "supplemental_mediainfo_files": [{"traits": {"audio_format": "DD+"}}],
+            "mediainfo_files": [
+                {
+                    "name": "movie.mkv",
+                    "traits": {"source_provider": "Netflix", "audio_format": "DD+"},
+                    "video": {"huge": "track"},
+                }
+            ],
+        }
+    }
+
+    slim = main_module._dashboard_check_results(json.dumps(payload))
+    media = slim["media"]
+
+    assert media["dashboard_source_provider"] == "NF"
+    assert "raw_mediainfo_payloads" not in media
+    assert "raw_local_mediainfo_payloads" not in media
+    assert "supplemental_mediainfo_files" not in media
+    assert media["mediainfo_files"] == [{"traits": {"source_provider": "Netflix", "audio_format": "DD+"}, "name": "movie.mkv"}]
 
 
 def _seed_item(client: TestClient) -> int:
@@ -396,6 +428,41 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "data-submit-tick-button" in page.text
         assert "Upload" in page.text
         assert "filter-view-list" not in page.text
+
+
+def test_candidate_dashboard_uses_smaller_page_size(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        for index in range(80):
+            db.insert_discovered(
+                1,
+                {
+                    "hash": f"candidate-{index}",
+                    "name": f"Candidate.Show.S01E{index:02d}.1080p.WEB-DL-GRP",
+                    "category": "tv",
+                    "tags": "",
+                    "content_path": f"/media/torrents/tv/Candidate.Show.S01E{index:02d}.1080p.WEB-DL-GRP",
+                    "progress": 1,
+                },
+                status="candidate",
+                baseline=False,
+            )
+
+        original_row_builder = main_module._dashboard_row_dict
+        row_builds = 0
+
+        def counting_row_builder(*args, **kwargs):
+            nonlocal row_builds
+            row_builds += 1
+            return original_row_builder(*args, **kwargs)
+
+        monkeypatch.setattr(main_module, "_dashboard_row_dict", counting_row_builder)
+
+        page = client.get("/dashboard?view=candidates")
+
+        assert page.status_code == 200
+        assert "Showing 1-75 of 80" in page.text
+        assert row_builds == 75
 
 
 def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_path, monkeypatch):
