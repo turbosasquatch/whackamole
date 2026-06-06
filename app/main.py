@@ -246,6 +246,16 @@ def _json_object(value: Any) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _json_array(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return list(value)
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return list(parsed) if isinstance(parsed, list) else []
+
+
 def _check_results(value: Any) -> Dict[str, Any]:
     parsed = _json_object(value)
     return CheckResults.from_any(parsed).to_dict()
@@ -1048,8 +1058,10 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     media = checks.get("media") if isinstance(checks.get("media"), dict) else {}
     srrdb = checks.get("srrdb") if isinstance(checks.get("srrdb"), dict) else {}
     nfo_info = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
-    raw_mediainfo = media.get("raw_mediainfo_payloads") if isinstance(media, dict) else []
-    raw_local_mediainfo = media.get("raw_local_mediainfo_payloads") if isinstance(media, dict) else []
+    raw_mediainfo = _json_array(item.get("media_raw_mediainfo_payloads")) or (media.get("raw_mediainfo_payloads") if isinstance(media, dict) else [])
+    raw_local_mediainfo = _json_array(item.get("media_raw_local_mediainfo_payloads")) or (
+        media.get("raw_local_mediainfo_payloads") if isinstance(media, dict) else []
+    )
     diagnostics = checks.get("diagnostics") if isinstance(checks.get("diagnostics"), dict) else {}
     return {
         "ua_log": {

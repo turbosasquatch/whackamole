@@ -4,7 +4,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from app.inventory import build_inventory_meta, item_inventory_meta, sort_coverage_values
 from app.media_identity import extract_release_group
@@ -22,14 +22,14 @@ _DASHBOARD_COLUMNS = """
     i.arr_results, i.inventory_meta, i.ignored_reason, i.baseline, i.inventory_group_key,
     i.inventory_media_type, i.inventory_tracker_key, i.inventory_tracker_label,
     i.inventory_tracker_primary, i.inventory_is_cross_seed, i.inventory_is_upload,
-    i.inventory_is_support, i.check_stage,
-    json_remove(
-        i.check_results,
-        '$.media.raw_mediainfo_payloads',
-        '$.media.raw_local_mediainfo_payloads',
-        '$.media.supplemental_mediainfo_files'
-    ) AS check_results
+    i.inventory_is_support, i.check_stage, i.check_results
 """
+
+MEDIA_RAW_PAYLOAD_COLUMNS = {
+    "raw_mediainfo_payloads": "media_raw_mediainfo_payloads",
+    "raw_local_mediainfo_payloads": "media_raw_local_mediainfo_payloads",
+    "supplemental_mediainfo_files": "media_supplemental_mediainfo_files",
+}
 
 
 class Database:
@@ -134,6 +134,9 @@ class Database:
             self._ensure_column(conn, "items", "inventory_is_support", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "items", "check_stage", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "items", "check_results", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "items", "media_raw_mediainfo_payloads", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "items", "media_raw_local_mediainfo_payloads", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "items", "media_supplemental_mediainfo_files", "TEXT NOT NULL DEFAULT '[]'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status_updated ON items(status, updated_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_inventory_group ON items(inventory_group_key)")
             conn.execute(
@@ -152,11 +155,50 @@ class Database:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_item ON queued_imports(item_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_state_updated ON item_reports(state, updated_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_item ON item_reports(item_id, state)")
+            self._backfill_media_payload_columns(conn)
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _backfill_media_payload_columns(self, conn: sqlite3.Connection) -> None:
+        row = conn.execute("SELECT value FROM kv WHERE key = ?", ("media_payload_columns_backfilled_v1",)).fetchone()
+        if row and str(row["value"]) == "true":
+            return
+        rows = conn.execute(
+            """
+            SELECT id, check_results, media_raw_mediainfo_payloads, media_raw_local_mediainfo_payloads,
+                   media_supplemental_mediainfo_files
+            FROM items
+            WHERE check_results LIKE '%raw_mediainfo_payloads%'
+               OR check_results LIKE '%raw_local_mediainfo_payloads%'
+               OR check_results LIKE '%supplemental_mediainfo_files%'
+            """
+        ).fetchall()
+        for item in rows:
+            compact, raw_payloads = _split_media_payloads_for_storage(item["check_results"])
+            conn.execute(
+                """
+                UPDATE items
+                SET check_results = ?,
+                    media_raw_mediainfo_payloads = ?,
+                    media_raw_local_mediainfo_payloads = ?,
+                    media_supplemental_mediainfo_files = ?
+                WHERE id = ?
+                """,
+                (
+                    compact,
+                    _prefer_existing_payload(raw_payloads["raw_mediainfo_payloads"], item["media_raw_mediainfo_payloads"]),
+                    _prefer_existing_payload(raw_payloads["raw_local_mediainfo_payloads"], item["media_raw_local_mediainfo_payloads"]),
+                    _prefer_existing_payload(raw_payloads["supplemental_mediainfo_files"], item["media_supplemental_mediainfo_files"]),
+                    item["id"],
+                ),
+            )
+        conn.execute(
+            "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("media_payload_columns_backfilled_v1", "true"),
+        )
 
     def get_kv(self, key: str) -> Optional[str]:
         with self.connect() as conn:
@@ -1099,7 +1141,11 @@ class Database:
         now = int(time.time())
         encoded_arr_results = None if arr_results is None else json.dumps(arr_results)
         encoded_tracker_results = None if tracker_results is None else json.dumps(tracker_results or [])
-        encoded_check_results = None if check_results is None else json.dumps(check_results)
+        if check_results is None:
+            encoded_check_results = None
+            media_payloads = {key: None for key in MEDIA_RAW_PAYLOAD_COLUMNS}
+        else:
+            encoded_check_results, media_payloads = _split_media_payloads_for_storage(check_results)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -1112,6 +1158,9 @@ class Database:
                     arr_results = COALESCE(?, arr_results),
                     check_stage = COALESCE(?, check_stage),
                     check_results = COALESCE(?, check_results),
+                    media_raw_mediainfo_payloads = COALESCE(?, media_raw_mediainfo_payloads),
+                    media_raw_local_mediainfo_payloads = COALESCE(?, media_raw_local_mediainfo_payloads),
+                    media_supplemental_mediainfo_files = COALESCE(?, media_supplemental_mediainfo_files),
                     next_check_at = ?, updated_at = ?,
                     last_checked_at = CASE WHEN ? THEN ? ELSE last_checked_at END,
                     attempt_count = attempt_count + ?
@@ -1128,6 +1177,9 @@ class Database:
                     encoded_arr_results,
                     check_stage,
                     encoded_check_results,
+                    media_payloads["raw_mediainfo_payloads"],
+                    media_payloads["raw_local_mediainfo_payloads"],
+                    media_payloads["supplemental_mediainfo_files"],
                     next_check_at,
                     now,
                     1 if status in {"candidate", "blocked", "manual_review", "error"} else 0,
@@ -1145,6 +1197,9 @@ class Database:
                 UPDATE items
                 SET status = 'queued', verdict = '', reason = 'Manual recheck requested',
                     tracker_results = '[]', arr_results = '{}', check_stage = '', check_results = '{}',
+                    media_raw_mediainfo_payloads = '[]',
+                    media_raw_local_mediainfo_payloads = '[]',
+                    media_supplemental_mediainfo_files = '[]',
                     next_check_at = NULL, updated_at = ?
                 WHERE id = ?
                 """,
@@ -1153,29 +1208,57 @@ class Database:
 
     def update_check_stage(self, item_id: int, stage: str, reason: str, check_results: Optional[Any] = None) -> None:
         now = int(time.time())
-        encoded_check_results = None if check_results is None else json.dumps(check_results)
+        if check_results is None:
+            encoded_check_results = None
+            media_payloads = {key: None for key in MEDIA_RAW_PAYLOAD_COLUMNS}
+        else:
+            encoded_check_results, media_payloads = _split_media_payloads_for_storage(check_results)
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE items
                 SET status = 'checking', check_stage = ?, reason = ?,
                     check_results = COALESCE(?, check_results),
+                    media_raw_mediainfo_payloads = COALESCE(?, media_raw_mediainfo_payloads),
+                    media_raw_local_mediainfo_payloads = COALESCE(?, media_raw_local_mediainfo_payloads),
+                    media_supplemental_mediainfo_files = COALESCE(?, media_supplemental_mediainfo_files),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (stage, reason, encoded_check_results, now, item_id),
+                (
+                    stage,
+                    reason,
+                    encoded_check_results,
+                    media_payloads["raw_mediainfo_payloads"],
+                    media_payloads["raw_local_mediainfo_payloads"],
+                    media_payloads["supplemental_mediainfo_files"],
+                    now,
+                    item_id,
+                ),
             )
 
     def update_check_results(self, item_id: int, check_results: Any) -> None:
         now = int(time.time())
+        encoded_check_results, media_payloads = _split_media_payloads_for_storage(check_results)
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE items
-                SET check_results = ?, updated_at = ?
+                SET check_results = ?,
+                    media_raw_mediainfo_payloads = ?,
+                    media_raw_local_mediainfo_payloads = ?,
+                    media_supplemental_mediainfo_files = ?,
+                    updated_at = ?
                 WHERE id = ?
                 """,
-                (json.dumps(check_results), now, item_id),
+                (
+                    encoded_check_results,
+                    media_payloads["raw_mediainfo_payloads"],
+                    media_payloads["raw_local_mediainfo_payloads"],
+                    media_payloads["supplemental_mediainfo_files"],
+                    now,
+                    item_id,
+                ),
             )
 
     def ignore(self, item_id: int, reason: str = "Ignored from dashboard") -> None:
@@ -1727,6 +1810,35 @@ def _json_dict(value: Any) -> Dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return list(value)
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return list(parsed) if isinstance(parsed, list) else []
+
+
+def _split_media_payloads_for_storage(value: Any) -> Tuple[str, Dict[str, str]]:
+    payload = _json_dict(value)
+    media = payload.get("media") if isinstance(payload.get("media"), Mapping) else {}
+    raw_payloads = {key: "[]" for key in MEDIA_RAW_PAYLOAD_COLUMNS}
+    if media:
+        media = dict(media)
+        for key in MEDIA_RAW_PAYLOAD_COLUMNS:
+            raw_payloads[key] = json.dumps(_json_list(media.pop(key, [])))
+        payload["media"] = media
+    return json.dumps(payload), raw_payloads
+
+
+def _prefer_existing_payload(candidate: str, existing: Any) -> str:
+    if _json_list(candidate):
+        return candidate
+    existing_payload = json.dumps(_json_list(existing))
+    return existing_payload if _json_list(existing_payload) else candidate
 
 
 def _dedupe_trackers(trackers: Iterable[str]) -> List[str]:

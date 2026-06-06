@@ -888,7 +888,7 @@ def test_mediainfo_requests_are_limited_for_large_packs(tmp_path, monkeypatch):
     assert MediaQuiClient.mediainfo_calls == [0, 1, 2]
     assert checks["media"]["mediainfo_limit"] == 3
     assert checks["media"]["mediainfo_truncated"] is True
-    assert len(checks["media"]["raw_mediainfo_payloads"]) == 3
+    assert len(json.loads(row["media_raw_mediainfo_payloads"])) == 3
     assert any(issue["key"] == "mediainfo_truncated" for issue in checks["media"]["issues"])
 
 
@@ -955,7 +955,7 @@ def test_local_mediainfo_payloads_are_stored_and_can_clear_qui_atmos_miss(tmp_pa
 
     assert row["status"] == "candidate"
     assert MediaInfoCliClient.calls == [f"/data/torrents/tv/{release_title}/{release_title}.mkv"]
-    assert len(checks["media"]["raw_local_mediainfo_payloads"]) == 1
+    assert len(json.loads(row["media_raw_local_mediainfo_payloads"])) == 1
     assert not any(issue["key"] == "audio_object_missing" for issue in checks["media"]["issues"])
     assert checks["media"]["resolved_mediainfo_issues"][0]["key"] == "audio_object_missing"
 
@@ -1124,7 +1124,7 @@ def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, mo
     checks = json.loads(row["check_results"])
     stages = [stage["stage"] for stage in checks["diagnostics"]["stages"]]
     assert stages == ["media", "path", "ua", "arr", "policy"]
-    assert checks["media"]["raw_mediainfo_payloads"][0]["fileIndex"] == 1
+    assert json.loads(row["media_raw_mediainfo_payloads"])[0]["fileIndex"] == 1
 
 
 def test_bloated_audio_runs_ua_arr_then_blocks_candidate(tmp_path, monkeypatch):

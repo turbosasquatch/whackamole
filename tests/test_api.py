@@ -24,6 +24,8 @@ def test_raw_payloads_include_local_mediainfo_json():
     payloads = main_module._raw_payloads(
         {
             "raw_torrent": {},
+            "media_raw_mediainfo_payloads": json.dumps([{"source": "qui-column"}]),
+            "media_raw_local_mediainfo_payloads": json.dumps([{"source": "local-column"}]),
             "check_results": {
                 "media": {
                     "raw_mediainfo_payloads": [{"source": "qui"}],
@@ -37,7 +39,8 @@ def test_raw_payloads_include_local_mediainfo_json():
 
     assert payloads["mediainfo"]["title"] == "Raw QUI MediaInfo"
     assert payloads["local-mediainfo"]["title"] == "Raw Local MediaInfo"
-    assert payloads["local-mediainfo"]["content"] == [{"source": "local"}]
+    assert payloads["mediainfo"]["content"] == [{"source": "qui-column"}]
+    assert payloads["local-mediainfo"]["content"] == [{"source": "local-column"}]
 
 
 def test_discovarr_unavailable_summary_is_fail():
@@ -127,6 +130,49 @@ def test_dashboard_database_query_strips_raw_mediainfo_payloads(tmp_path, monkey
         assert "raw_local_mediainfo_payloads" not in media
         assert "supplemental_mediainfo_files" not in media
         assert media["mediainfo_files"][0]["traits"]["source_provider"] == "Netflix"
+        full_row = client.app.state.db.get_item(item_id)
+        assert json.loads(full_row["media_raw_mediainfo_payloads"]) == [{"large": "qui"}]
+        assert json.loads(full_row["media_raw_local_mediainfo_payloads"]) == [{"large": "local"}]
+        assert json.loads(full_row["media_supplemental_mediainfo_files"]) == [{"large": "supplemental"}]
+
+
+def test_database_backfill_moves_existing_raw_mediainfo_payloads(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        payload = {
+            "media": {
+                "status": "passed",
+                "raw_mediainfo_payloads": [{"large": "old-qui"}],
+                "raw_local_mediainfo_payloads": [{"large": "old-local"}],
+                "supplemental_mediainfo_files": [{"large": "old-supplemental"}],
+            }
+        }
+        db = client.app.state.db
+        with db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE items
+                SET check_results = ?,
+                    media_raw_mediainfo_payloads = '[]',
+                    media_raw_local_mediainfo_payloads = '[]',
+                    media_supplemental_mediainfo_files = '[]'
+                WHERE id = ?
+                """,
+                (json.dumps(payload), item_id),
+            )
+            conn.execute(
+                "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("media_payload_columns_backfilled_v1", "false"),
+            )
+
+        db._init()
+        row = db.get_item(item_id)
+        checks = json.loads(row["check_results"])
+
+        assert "raw_mediainfo_payloads" not in checks["media"]
+        assert json.loads(row["media_raw_mediainfo_payloads"]) == [{"large": "old-qui"}]
+        assert json.loads(row["media_raw_local_mediainfo_payloads"]) == [{"large": "old-local"}]
+        assert json.loads(row["media_supplemental_mediainfo_files"]) == [{"large": "old-supplemental"}]
 
 
 def _seed_item(client: TestClient) -> int:
