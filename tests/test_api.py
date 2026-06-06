@@ -412,7 +412,7 @@ def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_
         assert review_page.status_code == 200
         assert "Example.Show.S01E01" not in candidates_page.text
         assert "Example.Show.S01E01" in review_page.text
-        assert "Folder Name" in review_page.text
+        assert "Folder" in review_page.text
         assert "Review" in review_page.text
         assert "Folder name would be normalised to American.Crime.Story.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb." in review_page.text
         assert 'class="button small success"' in review_page.text
@@ -427,7 +427,7 @@ def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_
         assert review_items[0]["effective_status"] == "manual_review"
         assert review_items[0]["decision_label"] == "Review"
         assert review_items[0]["display_status"]["label"] == "Needs Review"
-        assert "Folder Name" in {tag["label"] for tag in review_items[0]["alert_tags"]}
+        assert "Folder" in {tag["label"] for tag in review_items[0]["alert_tags"]}
 
 
 def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monkeypatch):
@@ -443,6 +443,7 @@ def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monke
         page = client.get("/dashboard?view=candidates")
 
         assert page.status_code == 200
+        assert '<th data-column-key="actions">Upload</th>' in page.text
         assert f'data-queued-import-id="{import_id}"' in page.text
         assert "Queued" in page.text
         assert "disabled" in page.text
@@ -539,9 +540,37 @@ def test_dashboard_deduplicates_source_missing_alerts(tmp_path, monkeypatch):
         response = client.get("/api/items?status=manual_review", headers=_auth_headers())
 
         labels = [tag["label"] for tag in response.json()["items"][0]["alert_tags"]]
-        assert labels.count("Source Missing") == 1
+        assert labels.count("Source") == 1
         assert "Web Source" not in labels
+        assert "Source Missing" not in labels
         assert "Manual Review" not in labels
+
+
+def test_dashboard_alert_tags_follow_check_summary_not_raw_flags(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "media_error",
+            "Name says Atmos, but MediaInfo has no matching object/JOC metadata.",
+            check_results={
+                "media": {
+                    "media_status": "error",
+                    "status": "manual_review",
+                    "reason": "Name says Atmos, but MediaInfo has no matching object/JOC metadata.",
+                    "issues": [{"severity": "ERROR", "key": "audio_object_missing"}],
+                },
+                "flags": [{"key": "random_note", "label": "Random Old Flag", "severity": "warning"}],
+            },
+        )
+
+        response = client.get("/api/items?status=manual_review", headers=_auth_headers())
+
+        labels = [tag["label"] for tag in response.json()["items"][0]["alert_tags"]]
+        assert "Media Info" in labels
+        assert "Random Old Flag" not in labels
 
 
 def test_dashboard_suppresses_generic_manual_review_alert(tmp_path, monkeypatch):
@@ -729,7 +758,7 @@ def test_blocked_dashboard_tags_final_verdict_without_duplicate_mobile_verdict_t
         page = client.get("/dashboard?view=blocked")
 
         assert api_response.status_code == 200
-        assert "No Tracker Passed" in {tag["label"] for tag in api_response.json()["items"][0]["alert_tags"]}
+        assert "UA" in {tag["label"] for tag in api_response.json()["items"][0]["alert_tags"]}
         assert page.status_code == 200
         assert "No tracker passed UA checks." in page.text
         assert '<p class="muted">no_tracker_passed</p>' not in page.text

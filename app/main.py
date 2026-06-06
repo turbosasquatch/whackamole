@@ -109,40 +109,6 @@ REPORT_TABS = [
     {"key": "attempted", "label": "Attempted"},
     {"key": "resolved", "label": "Resolved"},
 ]
-WARNING_TAG_LABELS = {
-    "folder_name_warning": "Folder Name",
-    "media_warning": "Media Info",
-    "release_group_warning": "Release Group",
-    "srrdb_filename_mismatch": "srrDB Name",
-    "web_source_missing": "Web Source",
-    "cross_check_warning": "Cross Check",
-    "source_missing": "Source Missing",
-    "no_video": "No Video",
-    "no_video_files": "No Video",
-    "path_error": "Path Error",
-    "manual_review": "Manual Review",
-    "missing_release_group": "Release Group",
-    "srrdb_unavailable": "srrDB",
-}
-CRITICAL_TAG_LABELS = {
-    "media_error": "Media Info",
-    "bloated_audio": "Bloated Audio",
-    "primary_language": "Primary Lang",
-    "arr_check": "Arr Check",
-    "banned_release_group": "Banned",
-    "dupe": "Dupe",
-    "exact_match": "Exact Match",
-    "skipped": "Skipped",
-    "no_tracker_passed": "No Tracker Passed",
-    "ua_error": "UA Check",
-    "error": "UA Check",
-    "http_error": "UA Check",
-    "ua_interrupted": "UA Interrupted",
-    "path_mapping": "Path Mapping",
-    "not_upgrade": "Not Upgrade",
-    "tracker_validation": "Tracker Validation",
-}
-
 
 def _format_datetime(value: Optional[int]) -> str:
     if not value:
@@ -205,9 +171,9 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
     item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
     item["tracker_coverage"] = _tracker_coverage(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
-    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
     item["source_label"] = _source_label(item, tracker_groups)
     item["overview_checks"] = _overview_checks(item, check_results, arr_result)
+    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
     item["discovarr_local_traits"] = _discovarr_local_traits(item, check_results, arr_result)
     item["arr_release_views"] = _arr_release_views(arr_result, item["discovarr_local_traits"])
     return item
@@ -237,8 +203,9 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
     item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
     item["tracker_coverage"] = _tracker_coverage(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
-    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
     item["source_label"] = _source_label(item, tracker_groups)
+    item["overview_checks"] = _overview_checks(item, check_results, arr_result)
+    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
     return item
 
 
@@ -586,122 +553,53 @@ def _folder_name_check(item: Mapping[str, Any], video_files: Optional[Mapping[st
 
 
 def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
+    checks = item.get("overview_checks")
+    if not isinstance(checks, list):
+        checks = _overview_checks(item, check_results, arr_result)
     tags: List[Dict[str, str]] = []
     seen: set[str] = set()
-
-    def add(key: str, label: str, severity: str) -> None:
-        if key == "manual_review":
-            return
-        norm = _alert_tag_family(key, label)
-        if not norm or norm in seen:
-            return
-        seen.add(norm)
-        tags.append({"key": key, "label": label, "severity": severity})
-
-    for flag in _check_flags(check_results):
-        key = str(flag.get("key") or "").lower()
-        if key in {"web_source_missing", "source_missing"} and _source_provider_for_item(item):
+    for check in checks:
+        if not isinstance(check, dict):
             continue
-        if key == "banned_release_group" and _policy_allows_any_tracker(check_results):
+        group = str(check.get("group") or "").lower()
+        if group not in {"error", "warning"}:
             continue
-        label = _canonical_alert_label(key, str(flag.get("label") or "").strip())
-        severity = str(flag.get("severity") or "").lower()
-        if key in CRITICAL_TAG_LABELS or severity in {"blocker", "error", "critical"}:
-            add(key, CRITICAL_TAG_LABELS.get(key, label or "UA Check"), "critical")
-        elif key in WARNING_TAG_LABELS or severity == "warning":
-            add(key, WARNING_TAG_LABELS.get(key, label or "Media Info"), "warning")
-
-    for category in _reason_categories(item, check_results, arr_result):
-        if category in CRITICAL_TAG_LABELS:
-            add(category, CRITICAL_TAG_LABELS[category], "critical")
-        elif category in WARNING_TAG_LABELS:
-            add(category, WARNING_TAG_LABELS[category], "warning")
-
-    verdict_tag = _final_verdict_alert_tag(item)
-    if verdict_tag:
-        add(verdict_tag["key"], verdict_tag["label"], verdict_tag["severity"])
-
-    tracker_groups = item.get("tracker_results") if isinstance(item.get("tracker_results"), dict) else {}
-    valid_trackers = _dedupe_trackers(item.get("valid_for_trackers") or [])
-    final_verdict = str(item.get("verdict") or "").lower()
-    final_status = str(item.get("status") or "").lower()
-    tracker_issue_applies = not valid_trackers or final_status in {"blocked", "manual_review", "error"}
-    if tracker_groups.get("dupe") and tracker_issue_applies and (final_verdict == "dupe" or not valid_trackers):
-        add("dupe", "Dupe", "critical")
-    if tracker_groups.get("error") and tracker_issue_applies:
-        add("ua_error", "UA Check", "critical")
-
-    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
-    media_status = str(media.get("media_status") or media.get("verdict") or media.get("status") or "").lower()
-    if "warning" in media_status:
-        add("media_warning", "Media Info", "warning")
-    if "error" in media_status or "fail" in media_status:
-        add("media_error", "Media Info", "critical")
-
-    if _is_web_release(item) and not _source_provider_for_item(item):
-        add("web_source_missing", "Web Source", "warning")
-
-    cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
-    if cross.get("state") == "warning":
-        add("cross_check_warning", "Cross Check", "warning")
-
-    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
-    if folder_check.get("group") == "warning":
-        add("folder_name_warning", "Folder Name", "warning")
-
+        label = _summary_flag_label(str(check.get("label") or ""))
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        tags.append(
+            {
+                "key": _summary_flag_key(label),
+                "label": label,
+                "severity": "critical" if group == "error" else "warning",
+            }
+        )
     return tags
 
 
-def _alert_tag_family(key: str, label: str) -> str:
-    key_value = str(key or "").strip().lower()
-    if key_value in {"source_missing", "web_source_missing"}:
-        return "source_missing"
-    if key_value in {"media_error", "media_warning"}:
-        return "media_info"
-    if key_value in {"covered", "coverage_resolved"}:
-        return "covered"
-    return str(label or key or "").strip().lower()
+def _summary_flag_label(label: str) -> str:
+    return {
+        "Media Info": "Media Info",
+        "Source Detection": "Source",
+        "Path Mapping": "Path",
+        "Folder Name": "Folder",
+        "Upload Assistant": "UA",
+        "Discovarr": "Discovarr",
+        "Release Group": "Group",
+        "srrDB": "srrDB",
+        "Cross Check": "Cross Check",
+    }.get(str(label or "").strip(), "")
+
+
+def _summary_flag_key(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(label or "").lower()).strip("_")
 
 
 def _policy_allows_any_tracker(check_results: Dict[str, Any]) -> bool:
     policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
     candidates = policy.get("candidate_trackers") if isinstance(policy.get("candidate_trackers"), list) else []
     return any(str(tracker).strip() for tracker in candidates)
-
-
-def _final_verdict_alert_tag(item: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    status_value = str(item.get("status") or "").lower()
-    verdict = str(item.get("verdict") or "").strip().lower()
-    if status_value not in {"blocked", "manual_review", "error"} or not verdict or verdict == "candidate":
-        return None
-    if verdict in CRITICAL_TAG_LABELS:
-        return {"key": verdict, "label": CRITICAL_TAG_LABELS[verdict], "severity": "critical"}
-    if verdict in WARNING_TAG_LABELS:
-        return {"key": verdict, "label": WARNING_TAG_LABELS[verdict], "severity": "warning"}
-    label = verdict.replace("_", " ").replace("-", " ").title()
-    severity = "critical" if status_value in {"blocked", "error"} else "warning"
-    return {"key": verdict, "label": label, "severity": severity}
-
-
-def _canonical_alert_label(key: str, label: str) -> str:
-    value = f"{key} {label}".lower()
-    if "media" in value and ("info" in value or "mediainfo" in value):
-        return "Media Info"
-    if "release" in value and "group" in value:
-        return "Release Group"
-    if "srrdb" in value:
-        return "srrDB Name"
-    if "source" in value:
-        return "Web Source"
-    if "banned" in value:
-        return "Banned"
-    if "dupe" in value or "duplicate" in value:
-        return "Dupe"
-    if "ua" in value or "upload assistant" in value:
-        return "UA Check"
-    if "arr" in value or "discovarr" in value:
-        return "Arr Check"
-    return label
 
 
 def _source_label(item: Dict[str, Any], tracker_groups: Dict[str, List[str]]) -> str:
@@ -741,7 +639,7 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
             "Folder Name View",
             "json",
         ),
-        _summary_row("Upload Assistant", *_bucket_summary_state(item.get("tracker_results") or {}), str(ua.get("reason") or item.get("tracker_summary") or ""), "ua_log", "UA Log View", "text"),
+        _summary_row("Upload Assistant", *_ua_summary_state(item, item.get("tracker_results") or {}), str(ua.get("reason") or item.get("tracker_summary") or ""), "ua_log", "UA Log View", "text"),
         _summary_row("Discovarr", *_arr_summary_state(arr_result), str(arr_result.get("reason") or item.get("arr_summary") or ""), "arr", "Raw Arr Result View", "json"),
         _summary_row("Release Group", *_policy_summary_state(policy), str(policy.get("reason") or ""), "diagnostics", "Release Group View", "json"),
         _summary_row("srrDB", *_srrdb_summary_state(srrdb), str(srrdb.get("reason") or ""), "srrdb", "Raw srrDB View", "json"),
@@ -828,6 +726,26 @@ def _bucket_summary_state(groups: Dict[str, Any]) -> tuple[str, str]:
     if dupes or skipped or errors:
         return "Fail", "error"
     return "Not Applicable", "neutral"
+
+
+def _ua_summary_state(item: Dict[str, Any], groups: Dict[str, Any]) -> tuple[str, str]:
+    passed = groups.get("passed") or groups.get("covered") or []
+    if passed:
+        return _bucket_summary_state(groups)
+    status_value = str(item.get("status") or "").lower()
+    verdict = str(item.get("verdict") or "").lower()
+    reason = str(item.get("reason") or "").lower()
+    if status_value == "error" or "ua_error" in verdict or "http_error" in verdict:
+        return "Fail", "error"
+    if status_value in {"blocked", "manual_review"} and (
+        "no_tracker" in verdict
+        or "dupe" in verdict
+        or "ua" in verdict
+        or "tracker" in reason
+        or "upload assistant" in reason
+    ):
+        return "Fail", "error"
+    return _bucket_summary_state(groups)
 
 
 def _arr_summary_state(arr_result: Dict[str, Any]) -> tuple[str, str]:

@@ -130,6 +130,7 @@
           <col data-column-key="category">
           <col data-column-key="size">
           <col data-column-key="updated">
+          <col data-column-key="actions">
         </colgroup>
         <thead>
           <tr>
@@ -147,6 +148,7 @@
             <th data-column-key="category">Category</th>
             <th data-column-key="size">Size</th>
             <th data-column-key="updated">Updated</th>
+            <th data-column-key="actions">Upload</th>
           </tr>
         </thead>
         <tbody>
@@ -157,7 +159,7 @@
               </td>
               <td>
                 <div class="flag-stack">
-                  {% for flag in item.alert_tags[:3] %}
+                  {% for flag in item.alert_tags %}
                     <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
                   {% else %}
                     <span class="muted">-</span>
@@ -196,6 +198,23 @@
               </td>
               <td>{{ item.size | bytes }}</td>
               <td>{{ item.updated_at | datetime }}</td>
+              <td>
+                {% set active_import = item.active_import or {} %}
+                <form
+                  method="post"
+                  action="/items/{{ item.id }}/upload-assistant/queue"
+                  data-submit-tick="Upload queued"
+                  data-submit-error-label="Retry"
+                  data-queue-upload-form
+                  data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
+                  data-queued-import-id="{{ active_import.id or '' }}"
+                >
+                  <input type="hidden" name="return_to" value="{{ current_url }}">
+                  <button class="button small success" type="submit" data-submit-tick-button {% if active_import %}disabled{% endif %}>
+                    {% if active_import %}Queued{% else %}Upload{% endif %}
+                  </button>
+                </form>
+              </td>
             </tr>
           {% else %}
             <tr>

@@ -848,9 +848,9 @@ label {
 
 table {
   border-collapse: collapse;
-  min-width: 1320px;
+  min-width: 1450px;
   table-layout: fixed;
-  width: 1320px;
+  width: 1450px;
 }
 
 .media-table col[data-column-key="title"] {
@@ -1016,10 +1016,14 @@ tr:last-child td {
 }
 
 .media-table .coverage-badges,
-.media-table .flag-stack,
 .media-table .tracker-chip-list {
   flex-wrap: nowrap;
   overflow: hidden;
+}
+
+.media-table .flag-stack {
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .tracker-summary {
