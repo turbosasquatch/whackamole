@@ -15,7 +15,7 @@ import httpx
 
 from app.arr_compare import ArrMetadataCache, compare_item_with_arr
 from app.check_results import add_stage_diagnostic
-from app.clients import QuiClient, SrrdbClient, UploadAssistantClient
+from app.clients import LocalMediaInfoClient, QuiClient, SrrdbClient, UploadAssistantClient
 from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
@@ -26,6 +26,7 @@ from app.media_policy import (
     apply_release_group_policy,
     build_media_manual_result,
     empty_check_results,
+    merge_mediainfo_provider_results,
     merge_check_results,
     VIDEO_EXTENSIONS,
     video_file_payloads,
@@ -218,6 +219,59 @@ def _max_mediainfo_files_per_check(cfg: Any) -> int:
         return max(1, int(cfg.safety.max_mediainfo_files_per_check or 8))
     except (AttributeError, TypeError, ValueError):
         return 8
+
+
+async def _local_mediainfo_payloads(
+    cfg: Any,
+    item: Mapping[str, Any],
+    video_files: Sequence[Mapping[str, Any]],
+) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+    if not bool(getattr(getattr(cfg, "mediainfo", None), "enabled", False)):
+        return [], []
+    payloads: list[Dict[str, Any]] = []
+    errors: list[Dict[str, Any]] = []
+    client = LocalMediaInfoClient(cfg)
+    for video_file in video_files:
+        local_path = ""
+        try:
+            local_path = _local_torrent_file_path(cfg, item, video_file)
+            payload = await client.file_mediainfo(local_path)
+        except Exception as exc:
+            errors.append(
+                {
+                    "fileIndex": int(video_file.get("index") or 0),
+                    "relativePath": str(video_file.get("name") or ""),
+                    "path": local_path,
+                    "message": str(exc)[:180],
+                }
+            )
+            continue
+        payload.setdefault("fileIndex", int(video_file.get("index") or 0))
+        payload.setdefault("relativePath", str(video_file.get("name") or ""))
+        payload.setdefault("path", local_path)
+        payloads.append(payload)
+    return payloads, errors
+
+
+def _local_torrent_file_path(cfg: Any, item: Mapping[str, Any], video_file: Mapping[str, Any]) -> str:
+    content_path = _mapping_text(item, "content_path")
+    mapped_root = map_path(content_path, cfg.path_mappings)
+    relative = PurePosixPath(str(video_file.get("name") or ""))
+    parts = list(relative.parts)
+    root_name = PurePosixPath(content_path).name
+    if parts and parts[0] == root_name:
+        parts = parts[1:]
+    if not parts:
+        return mapped_root
+    return str(PurePosixPath(mapped_root).joinpath(*parts))
+
+
+def _mapping_text(value: Mapping[str, Any], key: str) -> str:
+    try:
+        return str(value[key] or "")
+    except (KeyError, TypeError, IndexError):
+        getter = getattr(value, "get", None)
+        return str(getter(key, "") if callable(getter) else "")
 
 
 def _max_qui_poll_pages(cfg: Any) -> int:
@@ -791,7 +845,7 @@ class WhackamoleService:
         check_results: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
         started_at = time.perf_counter()
-        self.db.update_check_stage(item_id, "media", "Checking QUI MediaInfo identity before UA.", check_results)
+        self.db.update_check_stage(item_id, "media", "Checking MediaInfo identity before UA.", check_results)
         qui = QuiClient(cfg, self.secrets.get("qui_api_key"))
         torrent_files = []
         try:
@@ -809,10 +863,34 @@ class WhackamoleService:
                 files=torrent_files,
                 mediainfo_payloads=mediainfo_payloads,
             )
+            media_result["provider"] = "qui"
             media_result["raw_mediainfo_payloads"] = mediainfo_payloads
             media_result["mediainfo_limit"] = mediainfo_limit
             if len(video_files) > len(mediainfo_payloads):
                 media_result["mediainfo_truncated"] = True
+            local_payloads, local_errors = await _local_mediainfo_payloads(cfg, item, video_files[:mediainfo_limit])
+            media_result["raw_local_mediainfo_payloads"] = local_payloads
+            if local_errors:
+                media_result["local_mediainfo_errors"] = local_errors
+            if local_payloads:
+                local_result = analyze_mediainfo(
+                    item_name=str(item["name"] or ""),
+                    files=torrent_files,
+                    mediainfo_payloads=local_payloads,
+                )
+                local_result["provider"] = "local"
+                media_result = merge_mediainfo_provider_results(
+                    media_result,
+                    local_result,
+                    supplemental_label="Local MediaInfo",
+                )
+                media_result["raw_mediainfo_payloads"] = mediainfo_payloads
+                media_result["raw_local_mediainfo_payloads"] = local_payloads
+                if local_errors:
+                    media_result["local_mediainfo_errors"] = local_errors
+                media_result["mediainfo_limit"] = mediainfo_limit
+                if len(video_files) > len(mediainfo_payloads):
+                    media_result["mediainfo_truncated"] = True
         except Exception as exc:
             media_result = build_media_manual_result(
                 "mediainfo_unavailable",

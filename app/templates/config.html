@@ -58,6 +58,24 @@
   </section>
 
   <section>
+    <h2>Local MediaInfo</h2>
+    <div class="form-grid">
+      <label class="checkbox">
+        <input name="mediainfo_enabled" type="checkbox" {% if cfg.mediainfo.enabled %}checked{% endif %}>
+        Use local MediaInfo CLI as a secondary source
+      </label>
+      <label>
+        Binary path
+        <input name="mediainfo_binary_path" value="{{ cfg.mediainfo.binary_path }}" placeholder="mediainfo">
+      </label>
+      <label>
+        Timeout seconds
+        <input name="mediainfo_timeout_seconds" type="number" min="1" value="{{ cfg.mediainfo.timeout_seconds }}">
+      </label>
+    </div>
+  </section>
+
+  <section>
     <h2>Upload Assistant</h2>
     <div class="form-grid">
       <label>

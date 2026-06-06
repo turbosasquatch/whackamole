@@ -19,6 +19,26 @@ def _auth_headers():
     return {"Authorization": f"Bearer {API_TOKEN}"}
 
 
+def test_raw_payloads_include_local_mediainfo_json():
+    payloads = main_module._raw_payloads(
+        {
+            "raw_torrent": {},
+            "check_results": {
+                "media": {
+                    "raw_mediainfo_payloads": [{"source": "qui"}],
+                    "raw_local_mediainfo_payloads": [{"source": "local"}],
+                }
+            },
+            "ua_log": "",
+            "arr_result": {},
+        }
+    )
+
+    assert payloads["mediainfo"]["title"] == "Raw QUI MediaInfo"
+    assert payloads["local-mediainfo"]["title"] == "Raw Local MediaInfo"
+    assert payloads["local-mediainfo"]["content"] == [{"source": "local"}]
+
+
 def _seed_item(client: TestClient) -> int:
     db = client.app.state.db
     torrent = {

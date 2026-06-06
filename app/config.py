@@ -29,6 +29,13 @@ class UploadAssistantConfig:
 
 
 @dataclass
+class MediaInfoConfig:
+    enabled: bool = True
+    binary_path: str = "mediainfo"
+    timeout_seconds: int = 60
+
+
+@dataclass
 class PathMapping:
     source: str = "/media/torrents"
     target: str = "/data/torrents"
@@ -78,6 +85,7 @@ class AppConfig:
     port: int = 8383
     qui: QuiConfig = field(default_factory=QuiConfig)
     upload_assistant: UploadAssistantConfig = field(default_factory=UploadAssistantConfig)
+    mediainfo: MediaInfoConfig = field(default_factory=MediaInfoConfig)
     path_mappings: List[PathMapping] = field(default_factory=lambda: [PathMapping()])
     watch: WatchConfig = field(default_factory=WatchConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)

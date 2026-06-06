@@ -1057,6 +1057,7 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     srrdb = checks.get("srrdb") if isinstance(checks.get("srrdb"), dict) else {}
     nfo_info = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
     raw_mediainfo = media.get("raw_mediainfo_payloads") if isinstance(media, dict) else []
+    raw_local_mediainfo = media.get("raw_local_mediainfo_payloads") if isinstance(media, dict) else []
     diagnostics = checks.get("diagnostics") if isinstance(checks.get("diagnostics"), dict) else {}
     return {
         "ua_log": {
@@ -1076,6 +1077,12 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "kind": "json",
             "available": bool(raw_mediainfo),
             "content": raw_mediainfo or {"message": "Raw MediaInfo will be available after this item is rechecked."},
+        },
+        "local-mediainfo": {
+            "title": "Raw Local MediaInfo",
+            "kind": "json",
+            "available": bool(raw_local_mediainfo),
+            "content": raw_local_mediainfo or {"message": "Raw local MediaInfo will be available after this item is rechecked."},
         },
         "nfo": {
             "title": "NFO",
@@ -2594,6 +2601,9 @@ async def save_config(
     qui_page_limit: str = Form("200"),
     qui_api_key: str = Form(""),
     clear_qui_api_key: Optional[str] = Form(None),
+    mediainfo_enabled: Optional[str] = Form(None),
+    mediainfo_binary_path: str = Form("mediainfo"),
+    mediainfo_timeout_seconds: str = Form("60"),
     ua_url: str = Form(""),
     ua_tmp_path: str = Form("/ua-tmp"),
     ua_timeout: str = Form("3600"),
@@ -2647,6 +2657,9 @@ async def save_config(
     cfg.qui.url = qui_url.strip().rstrip("/")
     cfg.qui.instance_id = _as_int(qui_instance_id, cfg.qui.instance_id, minimum=1)
     cfg.qui.page_limit = _as_int(qui_page_limit, cfg.qui.page_limit, minimum=1)
+    cfg.mediainfo.enabled = mediainfo_enabled == "on"
+    cfg.mediainfo.binary_path = mediainfo_binary_path.strip() or "mediainfo"
+    cfg.mediainfo.timeout_seconds = _as_int(mediainfo_timeout_seconds, cfg.mediainfo.timeout_seconds, minimum=1)
     cfg.upload_assistant.url = ua_url.strip().rstrip("/")
     cfg.upload_assistant.tmp_path = ua_tmp_path.strip() or "/ua-tmp"
     cfg.upload_assistant.request_timeout_seconds = _as_int(ua_timeout, cfg.upload_assistant.request_timeout_seconds, minimum=60)

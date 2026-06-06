@@ -114,6 +114,142 @@ def analyze_mediainfo(
     return base_result
 
 
+def merge_mediainfo_provider_results(
+    primary: Mapping[str, Any],
+    supplemental: Mapping[str, Any],
+    *,
+    supplemental_label: str = "Local MediaInfo",
+) -> Dict[str, Any]:
+    result = dict(primary)
+    supplemental_files = [
+        item for item in supplemental.get("mediainfo_files", []) if isinstance(item, Mapping)
+    ] if isinstance(supplemental, Mapping) else []
+    if not supplemental_files:
+        return result
+
+    result["mediainfo_providers"] = {
+        "primary": str(primary.get("provider") or "qui"),
+        "supplemental": str(supplemental.get("provider") or "local"),
+    }
+    result["supplemental_mediainfo_files"] = [dict(item) for item in supplemental_files]
+
+    supplemental_by_index = {
+        int(item.get("index") or 0): item
+        for item in supplemental_files
+    }
+    remaining_issues: List[Dict[str, Any]] = []
+    resolved_issues: List[Dict[str, Any]] = []
+    for issue in primary.get("issues", []) if isinstance(primary.get("issues"), list) else []:
+        if not isinstance(issue, Mapping):
+            continue
+        if _issue_confirmed_by_supplemental(issue, supplemental_by_index):
+            resolved = dict(issue)
+            resolved["resolved_by"] = supplemental_label
+            resolved_issues.append(resolved)
+            continue
+        remaining_issues.append(dict(issue))
+
+    remaining_issues.extend(_provider_disagreement_issues(primary, supplemental, supplemental_label))
+    if resolved_issues:
+        result["resolved_mediainfo_issues"] = resolved_issues
+    result["issues"] = remaining_issues
+    _refresh_media_result_status(result, primary)
+    return result
+
+
+def _issue_confirmed_by_supplemental(issue: Mapping[str, Any], supplemental_by_index: Mapping[int, Mapping[str, Any]]) -> bool:
+    if str(issue.get("key") or "") != "audio_object_missing":
+        return False
+    issue_file = str(issue.get("file") or "")
+    supplemental_file = None
+    for candidate in supplemental_by_index.values():
+        if not issue_file or str(candidate.get("name") or "") == issue_file:
+            supplemental_file = candidate
+            break
+    traits = supplemental_file.get("traits") if isinstance(supplemental_file, Mapping) else {}
+    objects = set(traits.get("audio_objects") or []) if isinstance(traits, Mapping) else set()
+    message = str(issue.get("message") or "")
+    return any(audio_object in objects and audio_object in message for audio_object in objects)
+
+
+def _provider_disagreement_issues(
+    primary: Mapping[str, Any],
+    supplemental: Mapping[str, Any],
+    supplemental_label: str,
+) -> List[Dict[str, Any]]:
+    primary_files = {
+        int(item.get("index") or 0): item
+        for item in primary.get("mediainfo_files", [])
+        if isinstance(item, Mapping)
+    } if isinstance(primary.get("mediainfo_files"), list) else {}
+    supplemental_files = {
+        int(item.get("index") or 0): item
+        for item in supplemental.get("mediainfo_files", [])
+        if isinstance(item, Mapping)
+    } if isinstance(supplemental.get("mediainfo_files"), list) else {}
+    issues: List[Dict[str, Any]] = []
+    for index, primary_file in primary_files.items():
+        supplemental_file = supplemental_files.get(index)
+        if not supplemental_file:
+            continue
+        primary_traits = primary_file.get("traits") if isinstance(primary_file.get("traits"), Mapping) else {}
+        supplemental_traits = supplemental_file.get("traits") if isinstance(supplemental_file.get("traits"), Mapping) else {}
+        disagreements = []
+        for field, label in (
+            ("resolution", "resolution"),
+            ("codec", "video codec"),
+            ("audio_channels", "audio channels"),
+        ):
+            left = primary_traits.get(field)
+            right = supplemental_traits.get(field)
+            if left and right and left != right:
+                disagreements.append(f"{label}: QUI={left}, {supplemental_label}={right}")
+        left_audio = str(primary_traits.get("audio_format") or "")
+        right_audio = str(supplemental_traits.get("audio_format") or "")
+        if left_audio and right_audio and _audio_provider_family(left_audio) != _audio_provider_family(right_audio):
+            disagreements.append(f"audio format: QUI={left_audio}, {supplemental_label}={right_audio}")
+        if disagreements:
+            issues.append(
+                {
+                    "severity": "ERROR",
+                    "key": "mediainfo_provider_disagreement",
+                    "message": "MediaInfo providers disagree on " + "; ".join(disagreements) + ".",
+                    "file": str(primary_file.get("name") or supplemental_file.get("name") or ""),
+                    "index": index,
+                    "tags": [],
+                }
+            )
+    return issues
+
+
+def _audio_provider_family(value: str) -> str:
+    return str(value or "").replace(" Atmos", "").strip()
+
+
+def _refresh_media_result_status(result: Dict[str, Any], primary: Mapping[str, Any]) -> None:
+    severities = {str(issue.get("severity") or "") for issue in result.get("issues", []) if isinstance(issue, Mapping)}
+    result["status"] = "manual_review" if "ERROR" in severities else "passed"
+    result["media_status"] = "error" if "ERROR" in severities else ("warning" if "WARNING" in severities else "confirmed")
+    result["verdict"] = "media_error" if result["status"] != "passed" else (
+        "media_warning" if "WARNING" in severities else "mediainfo_passed"
+    )
+    if result["status"] == "passed":
+        result["reason"] = "MediaInfo providers match the torrent release traits."
+    elif result.get("issues"):
+        first = result["issues"][0]
+        result["reason"] = str(first.get("message") or primary.get("reason") or "MediaInfo identity check failed.")
+    result["flags"] = [
+        {
+            "key": str(issue.get("key") or "media_issue"),
+            "label": "MediaInfo Error" if str(issue.get("severity") or "") == "ERROR" else "MediaInfo Warning",
+            "severity": "blocker" if str(issue.get("severity") or "") == "ERROR" else "warning",
+            "detail": str(issue.get("message") or ""),
+        }
+        for issue in result.get("issues", [])
+        if isinstance(issue, Mapping) and str(issue.get("severity") or "") in {"ERROR", "WARNING"}
+    ]
+
+
 def apply_release_group_policy(
     *,
     tracker_results: Mapping[str, Sequence[str]],

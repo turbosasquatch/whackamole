@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
 from typing import Any, AsyncIterator, Dict, List, Optional
 from urllib.parse import quote
 
@@ -127,11 +130,49 @@ class QuiClient:
         return {"X-API-Key": self.api_key or ""}
 
 
+class LocalMediaInfoClient:
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+
+    async def file_mediainfo(self, path: str) -> Dict[str, Any]:
+        binary = str(getattr(self.config.mediainfo, "binary_path", "") or "mediainfo")
+        timeout_seconds = _mediainfo_timeout_seconds(self.config)
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            "--Output=JSON",
+            path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.communicate()
+            raise TimeoutError(f"Local MediaInfo timed out after {timeout_seconds} seconds")
+        if process.returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip() or f"exit code {process.returncode}"
+            raise RuntimeError(f"Local MediaInfo failed: {detail[:180]}")
+        try:
+            data = json.loads(stdout.decode("utf-8", errors="replace") or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Local MediaInfo returned invalid JSON") from exc
+        return data if isinstance(data, dict) else {}
+
+
 def _max_qui_poll_pages(config: AppConfig) -> int:
     try:
         return max(1, int(config.safety.max_qui_poll_pages or 100))
     except (AttributeError, TypeError, ValueError):
         return 100
+
+
+def _mediainfo_timeout_seconds(config: AppConfig) -> int:
+    try:
+        return max(1, int(config.mediainfo.timeout_seconds or 60))
+    except (AttributeError, TypeError, ValueError):
+        return 60
 
 
 class UploadAssistantClient:

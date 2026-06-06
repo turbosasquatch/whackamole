@@ -239,6 +239,28 @@ class MediaQuiClient:
         return str(self.nfo_content).encode("utf-8")[:max_bytes]
 
 
+class MediaInfoCliClient:
+    payload = {}
+    calls = []
+    error = None
+
+    def __init__(self, _cfg):
+        pass
+
+    async def file_mediainfo(self, path):
+        type(self).calls.append(path)
+        if self.error:
+            raise self.error
+        return self.payload or {
+            "media": {
+                "track": [
+                    {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+                ]
+            }
+        }
+
+
 class PassingUploadAssistantClient:
     calls = 0
 
@@ -843,6 +865,74 @@ def test_mediainfo_requests_are_limited_for_large_packs(tmp_path, monkeypatch):
     assert checks["media"]["mediainfo_truncated"] is True
     assert len(checks["media"]["raw_mediainfo_payloads"]) == 3
     assert any(issue["key"] == "mediainfo_truncated" for issue in checks["media"]["issues"])
+
+
+def test_local_mediainfo_payloads_are_stored_and_can_clear_qui_atmos_miss(tmp_path, monkeypatch):
+    release_title = "Example.Movie.2024.2160p.NF.WEB-DL.DDP5.1.Atmos.H.265-GRP"
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_title}/{release_title}.mkv", "size": 1000}
+    ]
+    MediaQuiClient.mediainfo = {
+        "streams": [
+            {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.mediainfo_calls = []
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = None
+    MediaInfoCliClient.payload = {
+        "media": {
+            "track": [
+                {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                {
+                    "@type": "Audio",
+                    "Format": "E-AC-3",
+                    "Format_Commercial_IfAny": "Dolby Digital Plus with Dolby Atmos",
+                    "Format_AdditionalFeatures": "JOC",
+                    "Channels": "6",
+                },
+            ]
+        }
+    }
+    MediaInfoCliClient.calls = []
+    MediaInfoCliClient.error = None
+    PassingUploadAssistantClient.calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.LocalMediaInfoClient", MediaInfoCliClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert row["status"] == "candidate"
+    assert MediaInfoCliClient.calls == [f"/data/torrents/tv/{release_title}/{release_title}.mkv"]
+    assert len(checks["media"]["raw_local_mediainfo_payloads"]) == 1
+    assert not any(issue["key"] == "audio_object_missing" for issue in checks["media"]["issues"])
+    assert checks["media"]["resolved_mediainfo_issues"][0]["key"] == "audio_object_missing"
 
 
 def test_mediainfo_failure_runs_ua_and_arr_before_review_when_candidate(tmp_path, monkeypatch):

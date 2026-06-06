@@ -1,4 +1,10 @@
-from app.media_policy import analyze_mediainfo, apply_release_group_policy, build_media_manual_result, video_file_payloads
+from app.media_policy import (
+    analyze_mediainfo,
+    apply_release_group_policy,
+    build_media_manual_result,
+    merge_mediainfo_provider_results,
+    video_file_payloads,
+)
 
 
 def test_mediainfo_analysis_accepts_single_file():
@@ -39,6 +45,91 @@ def test_mediainfo_analysis_rejects_trait_mismatch():
 
     assert result["status"] == "manual_review"
     assert result["verdict"] == "media_error"
+
+
+def test_local_mediainfo_confirms_atmos_missing_from_qui():
+    release = "Movie.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "media": {
+                    "track": [
+                        {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                        {
+                            "@type": "Audio",
+                            "Format": "E-AC-3",
+                            "Format_Commercial_IfAny": "Dolby Digital Plus with Dolby Atmos",
+                            "Format_AdditionalFeatures": "JOC",
+                            "Channels": "6",
+                        },
+                    ]
+                },
+            }
+        ],
+    )
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert merged["status"] == "passed"
+    assert not any(issue["key"] == "audio_object_missing" for issue in merged["issues"])
+    assert merged["resolved_mediainfo_issues"][0]["key"] == "audio_object_missing"
+
+
+def test_mediainfo_provider_disagreement_requires_review():
+    release = "Movie.2024.1080p.WEB-DL.DDP2.0.H.264-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "HEVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+                ],
+            }
+        ],
+    )
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert merged["status"] == "manual_review"
+    assert any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
 
 
 def test_video_file_payloads_ignore_nfo_files():
