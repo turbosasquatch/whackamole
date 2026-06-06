@@ -20,7 +20,7 @@ from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
-from app.media_identity import ReleaseTraits, traits_from_payload
+from app.media_identity import ReleaseTraits, parse_release_traits, traits_from_payload
 from app.media_policy import (
     analyze_mediainfo,
     apply_release_group_policy,
@@ -48,6 +48,10 @@ SOURCE_PROVIDER_FIELD_RE = re.compile(
 
 def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> ReleaseTraits:
     local = traits_from_payload(media_result.get("local_traits") if isinstance(media_result.get("local_traits"), Mapping) else {})
+    if not local.is_comparable:
+        fallback_title = str(media_result.get("release_title") or media_result.get("torrent_root") or "")
+        if fallback_title:
+            local = parse_release_traits(fallback_title)
     files = media_result.get("mediainfo_files") if isinstance(media_result.get("mediainfo_files"), list) else []
     for file_info in files:
         if not isinstance(file_info, Mapping):
@@ -90,6 +94,27 @@ def _folder_name_review_warning(mapped_path: str, media_result: Mapping[str, Any
         "root_name": root_name,
         "normalized": normalized,
     }
+
+
+def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    review_keys = {
+        "source_missing",
+        "mediainfo_unavailable",
+        "mediainfo_missing",
+        "media_error",
+        "no_video_files",
+    }
+    for flag in flags:
+        if not isinstance(flag, Mapping):
+            continue
+        key = str(flag.get("key") or "")
+        if key in review_keys:
+            return dict(flag)
+    return {}
+
+
+def _review_reason_from_flag(flag: Mapping[str, Any]) -> str:
+    return str(flag.get("detail") or flag.get("message") or flag.get("label") or "Review before upload.")
 
 
 def _is_web_media_result(item_name: str, media_result: Mapping[str, Any]) -> bool:
@@ -794,6 +819,10 @@ class WhackamoleService:
                 f"Whackamole could not read QUI MediaInfo: {str(exc)[:180]}",
                 torrent_files,
             )
+            fallback_title = str(item["name"] or "")
+            media_result["release_title"] = fallback_title
+            media_result["torrent_root"] = fallback_title
+            media_result["release_group"] = parse_release_traits(fallback_title).release_group
             check_results = merge_check_results(
                 check_results,
                 media=media_result,
@@ -808,18 +837,7 @@ class WhackamoleService:
                 error=exc,
                 extra={"verdict": media_result["verdict"]},
             )
-            self.db.update_status(
-                item_id,
-                "manual_review",
-                media_result["verdict"],
-                media_result["reason"],
-                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
-                arr_results={},
-                check_stage="done",
-                check_results=check_results,
-                increment_attempt=True,
-            )
-            return media_result, check_results, True
+            return media_result, check_results, False
 
         check_results = merge_check_results(
             check_results,
@@ -835,18 +853,7 @@ class WhackamoleService:
                 started_at=started_at,
                 extra={"verdict": str(media_result.get("verdict") or "media_error")},
             )
-            self.db.update_status(
-                item_id,
-                "manual_review",
-                str(media_result.get("verdict") or "media_error"),
-                str(media_result.get("reason") or "MediaInfo identity check failed."),
-                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
-                arr_results={},
-                check_stage="done",
-                check_results=check_results,
-                increment_attempt=True,
-            )
-            return media_result, check_results, True
+            return media_result, check_results, False
 
         check_results = add_stage_diagnostic(
             check_results,
@@ -885,20 +892,8 @@ class WhackamoleService:
                         "detail": "WEB-DL/WEBRip source provider was not found in the title, MediaInfo, or NFO.",
                     }
                 )
-                reason = "WEB-DL/WEBRip source provider is missing; review before upload."
                 check_results = merge_check_results(check_results, flags=flags)
-                self.db.update_status(
-                    item_id,
-                    "manual_review",
-                    "source_missing",
-                    reason,
-                    tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
-                    arr_results={},
-                    check_stage="done",
-                    check_results=check_results,
-                    increment_attempt=True,
-                )
-                return media_result, check_results, True
+                return media_result, check_results, False
         return media_result, check_results, False
 
     def _run_path_stage(
@@ -1171,6 +1166,18 @@ class WhackamoleService:
                         "root_name": str(folder_name_warning.get("root_name") or ""),
                         "normalized": str(folder_name_warning.get("normalized") or ""),
                     },
+                )
+            candidate_review_flag = _candidate_review_flag(flags)
+            if status == "candidate" and candidate_review_flag:
+                status = "manual_review"
+                verdict = str(candidate_review_flag.get("key") or "manual_review")
+                reason = _review_reason_from_flag(candidate_review_flag)
+                check_results = add_stage_diagnostic(
+                    check_results,
+                    stage="review_gate",
+                    status="warning",
+                    reason=reason,
+                    extra={"flag": verdict},
                 )
             check_results = merge_check_results(
                 check_results,

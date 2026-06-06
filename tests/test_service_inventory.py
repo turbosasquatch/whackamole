@@ -250,6 +250,17 @@ class PassingUploadAssistantClient:
         return "Trackers passed all checks: DP"
 
 
+class BlockedUploadAssistantClient:
+    calls = 0
+
+    def __init__(self, _cfg, _bearer_token):
+        pass
+
+    async def execute_site_check(self, _path, _args, _session_id):
+        type(self).calls += 1
+        return "No trackers remain after checking."
+
+
 class FakeSrrdbClient:
     payload = {}
     calls = []
@@ -618,7 +629,7 @@ def test_title_source_skips_nfo_when_mediainfo_passes_and_continues_to_ua(tmp_pa
     assert checks["diagnostics"]["stages"][0]["status"] == "passed"
 
 
-def test_web_source_missing_tries_nfo_before_ua_and_stops_when_unknown(tmp_path, monkeypatch):
+def test_web_source_missing_runs_ua_and_arr_before_review_when_candidate(tmp_path, monkeypatch):
     release_title = "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"
     MediaQuiClient.files = [
         {"index": 0, "name": f"{release_title}/{release_title}.nfo", "size": 100},
@@ -635,8 +646,20 @@ def test_web_source_missing_tries_nfo_before_ua_and_stops_when_unknown(tmp_path,
     MediaQuiClient.download_calls = 0
     MediaQuiClient.nfo_content = "No provider details here."
     PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {}
     monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
     manager = ConfigManager(str(tmp_path))
     cfg = manager.load()
     cfg.upload_assistant.url = "http://ua.test"
@@ -656,9 +679,62 @@ def test_web_source_missing_tries_nfo_before_ua_and_stops_when_unknown(tmp_path,
     assert row["status"] == "manual_review"
     assert row["verdict"] == "source_missing"
     assert MediaQuiClient.download_calls == 1
-    assert PassingUploadAssistantClient.calls == 0
+    assert PassingUploadAssistantClient.calls == 1
     assert checks["nfo"]["content"] == "No provider details here."
-    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media", "nfo"]
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == [
+        "media",
+        "nfo",
+        "path",
+        "ua",
+        "arr",
+        "policy",
+        "srrdb",
+        "review_gate",
+    ]
+
+
+def test_web_source_missing_stays_blocked_when_ua_has_no_tracker(tmp_path, monkeypatch):
+    release_title = "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_title}/{release_title}.nfo", "size": 100},
+        {"index": 1, "name": f"{release_title}/{release_title}.mkv", "size": 1000},
+    ]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 1,
+        "streams": [
+            {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = "No provider details here."
+    BlockedUploadAssistantClient.calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", BlockedUploadAssistantClient)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert row["status"] == "blocked"
+    assert row["verdict"] == "no_tracker_passed"
+    assert MediaQuiClient.download_calls == 1
+    assert BlockedUploadAssistantClient.calls == 1
+    assert "source_missing" in {flag["key"] for flag in checks["flags"]}
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media", "nfo", "path", "ua", "arr"]
 
 
 def test_web_source_missing_uses_nfo_provider_and_continues_to_ua(tmp_path, monkeypatch):
@@ -769,7 +845,7 @@ def test_mediainfo_requests_are_limited_for_large_packs(tmp_path, monkeypatch):
     assert any(issue["key"] == "mediainfo_truncated" for issue in checks["media"]["issues"])
 
 
-def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
+def test_mediainfo_failure_runs_ua_and_arr_before_review_when_candidate(tmp_path, monkeypatch):
     MediaQuiClient.files = [
         {"index": 0, "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP/episode.mkv", "size": 1000}
     ]
@@ -780,6 +856,15 @@ def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
     PassingUploadAssistantClient.calls = 0
     monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
     monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
     manager = ConfigManager(str(tmp_path))
     cfg = manager.load()
     cfg.upload_assistant.url = "http://ua.test"
@@ -797,9 +882,10 @@ def test_mediainfo_failure_stops_before_ua(tmp_path, monkeypatch):
     row = db.get_item(item_id)
     assert row["status"] == "manual_review"
     assert row["verdict"] == "mediainfo_unavailable"
-    assert PassingUploadAssistantClient.calls == 0
+    assert PassingUploadAssistantClient.calls == 1
     checks = json.loads(row["check_results"])
     assert checks["diagnostics"]["last_error"]["stage"] == "media"
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media", "path", "ua", "arr", "policy", "srrdb", "review_gate"]
     assert checks["diagnostics"]["stages"][0]["status"] == "error"
 
 
