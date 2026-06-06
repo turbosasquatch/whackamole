@@ -4,7 +4,7 @@ import time
 
 from app.config import ConfigManager, SecretStore
 from app.database import Database
-from app.service import WhackamoleService, _arr_local_traits_from_media_result
+from app.service import WhackamoleService, _arr_local_traits_from_media_result, _local_torrent_file_path
 
 
 def test_arr_local_traits_promotes_confirmed_mediainfo_file_traits():
@@ -40,6 +40,31 @@ def test_arr_local_traits_promotes_confirmed_mediainfo_file_traits():
     assert traits.hdr_rank == 2
     assert traits.hdr_formats == ("HDR10+", "HDR10")
     assert traits.audio_format == "DD+ Atmos"
+
+
+def test_local_mediainfo_path_uses_file_content_path_without_duplication(tmp_path):
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    path = _local_torrent_file_path(
+        cfg,
+        {
+            "content_path": (
+                "/media/torrents/movies/Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R/"
+                "Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R.mkv"
+            )
+        },
+        {
+            "name": (
+                "Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R/"
+                "Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R.mkv"
+            )
+        },
+    )
+
+    assert path == (
+        "/data/torrents/movies/Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R/"
+        "Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R.mkv"
+    )
 
 
 class FakeQuiClient:
@@ -933,6 +958,70 @@ def test_local_mediainfo_payloads_are_stored_and_can_clear_qui_atmos_miss(tmp_pa
     assert len(checks["media"]["raw_local_mediainfo_payloads"]) == 1
     assert not any(issue["key"] == "audio_object_missing" for issue in checks["media"]["issues"])
     assert checks["media"]["resolved_mediainfo_issues"][0]["key"] == "audio_object_missing"
+
+
+def test_media_error_sends_candidate_to_review(tmp_path, monkeypatch):
+    release_title = "Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R"
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_title}/{release_title}.mkv", "size": 1000}
+    ]
+    MediaQuiClient.mediainfo = {
+        "streams": [
+            {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "1608", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "MLP FBA", "Channels": "8"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.mediainfo_calls = []
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = None
+    PassingUploadAssistantClient.calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    async def fake_verify_srrdb_release(**_kwargs):
+        return {"status": "skipped", "reason": "skipped"}
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    monkeypatch.setattr("app.service.verify_srrdb_release", fake_verify_srrdb_release)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.mediainfo.enabled = False
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert row["status"] == "manual_review"
+    assert row["verdict"] == "audio_object_missing"
+    assert "object/JOC metadata" in row["reason"]
+    assert any(flag["key"] == "audio_object_missing" for flag in checks["flags"])
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == [
+        "media",
+        "path",
+        "ua",
+        "arr",
+        "policy",
+        "srrdb",
+        "review_gate",
+    ]
 
 
 def test_mediainfo_failure_runs_ua_and_arr_before_review_when_candidate(tmp_path, monkeypatch):

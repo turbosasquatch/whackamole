@@ -109,7 +109,9 @@ def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]
         if not isinstance(flag, Mapping):
             continue
         key = str(flag.get("key") or "")
-        if key in review_keys:
+        label = str(flag.get("label") or "")
+        severity = str(flag.get("severity") or "")
+        if key in review_keys or (label == "MediaInfo Error" and severity == "blocker"):
             return dict(flag)
     return {}
 
@@ -268,6 +270,9 @@ def _local_torrent_file_path(cfg: Any, item: Mapping[str, Any], video_file: Mapp
     content_path = _mapping_text(item, "content_path")
     mapped_root = map_path(content_path, cfg.path_mappings)
     relative = PurePosixPath(str(video_file.get("name") or ""))
+    mapped_root_path = PurePosixPath(mapped_root)
+    if mapped_root_path.suffix.lower() in VIDEO_EXTENSIONS and relative.name == mapped_root_path.name:
+        return mapped_root
     parts = list(relative.parts)
     root_name = PurePosixPath(content_path).name
     if parts and parts[0] == root_name:
