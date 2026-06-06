@@ -120,10 +120,7 @@
           <col data-column-key="flags">
           <col data-column-key="status">
           {% if problem_view %}
-          <col data-column-key="decision">
           <col data-column-key="notice">
-          {% else %}
-          <col data-column-key="valid-for">
           {% endif %}
           <col data-column-key="coverage">
           <col data-column-key="source">
@@ -138,10 +135,7 @@
             <th data-column-key="flags">Flags</th>
             <th data-column-key="status">Status</th>
             {% if problem_view %}
-            <th data-column-key="decision">Decision</th>
             <th data-column-key="notice">Decision Notice</th>
-            {% else %}
-            <th data-column-key="valid-for">Valid For</th>
             {% endif %}
             <th data-column-key="coverage">Coverage</th>
             <th data-column-key="source">Source</th>
@@ -168,20 +162,7 @@
               </td>
               <td><span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span></td>
               {% if problem_view %}
-              <td>
-                <strong>{{ item.decision_label }}</strong>
-              </td>
               <td><span class="muted clamp">{{ item.decision_notice or "-" }}</span></td>
-              {% else %}
-              <td>
-                <div class="tracker-chip-list">
-                  {% for tracker in item.valid_for_trackers %}
-                    <span class="tracker-chip valid">{{ tracker }}</span>
-                  {% else %}
-                    <span class="muted">-</span>
-                  {% endfor %}
-                </div>
-              </td>
               {% endif %}
               <td>
                 <div class="coverage-badges">

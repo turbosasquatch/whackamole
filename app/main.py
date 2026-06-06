@@ -749,6 +749,10 @@ def _ua_summary_state(item: Dict[str, Any], groups: Dict[str, Any]) -> tuple[str
 
 
 def _arr_summary_state(arr_result: Dict[str, Any]) -> tuple[str, str]:
+    status_value = str(arr_result.get("status") or "").lower()
+    reason = str(arr_result.get("reason") or "").lower()
+    if "unavailable" in status_value or "unavailable" in reason or "no matching" in reason:
+        return "Fail", "error"
     decisions = arr_result.get("decisions") if isinstance(arr_result.get("decisions"), list) else []
     same_lane = sum(int(decision.get("same_lane_count") or 0) for decision in decisions if isinstance(decision, dict))
     candidates = [decision for decision in decisions if isinstance(decision, dict) and str(decision.get("status") or "").lower() == "candidate"]

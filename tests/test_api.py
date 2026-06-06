@@ -39,6 +39,17 @@ def test_raw_payloads_include_local_mediainfo_json():
     assert payloads["local-mediainfo"]["content"] == [{"source": "local"}]
 
 
+def test_discovarr_unavailable_summary_is_fail():
+    state, group = main_module._arr_summary_state(
+        {
+            "status": "manual_review",
+            "reason": "Arr comparison unavailable: No matching Sonarr series found",
+        }
+    )
+
+    assert (state, group) == ("Fail", "error")
+
+
 def _seed_item(client: TestClient) -> int:
     db = client.app.state.db
     torrent = {
@@ -369,6 +380,7 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert 'name="view" value="candidates"' in page.text
         assert "Missing tracker coverage" in page.text
         assert "Decision valid for" in page.text
+        assert '<th data-column-key="valid-for">Valid For</th>' not in page.text
         assert "Blocked reason" in page.text
         assert "Review reason" in page.text
         assert "/items/recheck-filtered" in page.text
@@ -722,7 +734,7 @@ def test_dashboard_reason_filter_and_table_shape(tmp_path, monkeypatch):
         assert page.status_code == 200
         assert "Blocked.Show" in page.text
         assert "Title" in page.text
-        assert "Decision" in page.text
+        assert '<th data-column-key="decision">Decision</th>' not in page.text
         assert "Decision Notice" in page.text
         assert "/media/torrents/tv/Blocked.Show" not in page.text
         assert "coverage-badge missing-default" in page.text
