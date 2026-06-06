@@ -642,6 +642,59 @@ def test_real_shape_item_2720_detects_pgs_subtitles_and_dts_hd_ma():
     assert not any(issue["key"] in {"no_subtitles", "audio_codec_mismatch"} for issue in result["issues"])
 
 
+def test_mediainfo_audio_track_title_does_not_promote_lossy_dts():
+    release = "True.Story.2015.BluRay.1080p.DTS.x264-iFT"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "3"},
+            {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1040", "BitDepth": "8"},
+            {
+                "@type": "Audio",
+                "Format": "DTS",
+                "Channels": "6",
+                "Title": "English DTSHD-MA Core",
+                "Language": "en",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "PGS", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert traits["audio_format"] == "DTS"
+    assert not any(issue["key"] == "audio_codec_mismatch" for issue in result["issues"])
+
+
+def test_mediainfo_seven_channel_lfe_layout_is_6_1():
+    release = "Movie.2024.1080p.BluRay.DTS-HD.MA.6.1.x264-GRP"
+    payload = _payload(
+        release,
+        [
+            {"@type": "General", "TextCount": "3"},
+            {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1040", "BitDepth": "8"},
+            {
+                "@type": "Audio",
+                "Format": "DTS XLL",
+                "Format_Commercial_IfAny": "DTS-HD Master Audio",
+                "Channels": "7",
+                "ChannelLayout": "C L R Ls Rs LFE Cs",
+                "Language": "en",
+                "Default": "Yes",
+            },
+            {"@type": "Text", "Format": "PGS", "Language": "en"},
+        ],
+    )
+
+    result = _analyze_sample(release, payload)
+    traits = result["mediainfo_files"][0]["traits"]
+
+    assert traits["audio_channels"] == 6.1
+    assert not any(issue["key"] == "audio_channels_mismatch" for issue in result["issues"])
+
+
 def test_real_shape_item_85_detects_truehd_atmos_from_title():
     release = "The.Rocky.Horror.Picture.Show.1975.Extended.2160p.BluRay.TrueHD.Atmos.7.1.DV.HDR10.x265-Softboat"
     payload = _payload(

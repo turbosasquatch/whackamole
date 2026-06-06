@@ -738,11 +738,58 @@ def _validate_media_file(title_traits: ReleaseTraits, file_result: Mapping[str, 
             )
 
     issues.extend(_validate_hdr(title_traits, traits, file_result))
+    issues.extend(_policy_blocking_issues(title_traits, default_audio, file_result))
     issues.extend(_bitrate_warnings(title_traits, video, default_audio, file_result))
     issues.extend(_track_sanity_warnings(title_traits, audios, texts, subtitle_count, default_audio, traits, file_result))
 
     if not issues:
         issues.append(_issue("INFO", "media_confirmed", "MediaInfo traits match the release name.", file_result))
+    return issues
+
+
+def _policy_blocking_issues(
+    title_traits: ReleaseTraits,
+    default_audio: Mapping[str, Any],
+    file_result: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
+    if (
+        title_traits.resolution == "1080p"
+        and title_traits.source == "bluray_encode"
+        and title_traits.rip_type != "remux"
+        and title_traits.audio_format == "DTS-HD MA"
+    ):
+        issues.append(
+            _issue(
+                "ERROR",
+                "bloated_audio",
+                "1080p BluRay encodes with DTS-HD MA audio are considered bloated.",
+                file_result,
+            )
+    )
+
+    default_language = _language_name(default_audio) if isinstance(default_audio, Mapping) else ""
+    audio_tracks = file_result.get("audio") if isinstance(file_result.get("audio"), list) else []
+    audio_languages = {_language_name(track) for track in audio_tracks if isinstance(track, Mapping) and _language_name(track)}
+    declared_languages = {str(language or "").lower() for language in title_traits.languages}
+    if default_language and default_language != "english" and "english" in audio_languages:
+        issues.append(
+            _issue(
+                "ERROR",
+                "primary_language",
+                f"Primary audio language is {default_language.title()}, but English audio is available.",
+                file_result,
+            )
+        )
+    elif default_language and default_language != "english" and default_language not in declared_languages:
+        issues.append(
+            _issue(
+                "ERROR",
+                "primary_language",
+                f"Primary audio language is {default_language.title()}, but the release name does not declare it.",
+                file_result,
+            )
+        )
     return issues
 
 
@@ -1239,13 +1286,20 @@ def _audio_format_from_mediainfo(audio: Mapping[str, Any], fallback: str) -> str
         "Format_Profile",
         "Format_AdditionalFeatures",
         "CodecID",
-        "Title",
-        "title",
     ).lower()
     parsed, _rank = _parse_audio_format(text)
     if parsed == "Atmos" and fallback:
         return fallback
-    return parsed or fallback
+    if parsed:
+        title_text = _joined_track_text(audio, "Title", "title").lower()
+        if "atmos" in title_text and parsed in {"TrueHD", "DD+"}:
+            return f"{parsed} Atmos"
+        return parsed
+    title_text = _joined_track_text(audio, "Title", "title").lower()
+    title_parsed, _title_rank = _parse_audio_format(title_text)
+    if title_parsed == "Atmos" and fallback:
+        return fallback
+    return title_parsed or fallback
 
 
 def _audio_objects_from_mediainfo(audio: Mapping[str, Any], fallback: Sequence[str]) -> List[str]:
@@ -1263,24 +1317,41 @@ def _audio_objects_from_tracks(audios: Sequence[Mapping[str, Any]]) -> List[str]
 
 def _mediainfo_channels(audio: Mapping[str, Any]) -> float:
     value = _track_text(audio, "Channels", "channels", "Channel(s)")
+    layout = _joined_track_text(audio, "ChannelLayout", "ChannelLayout_Original").lower()
     match = re.search(r"\d+(?:\.\d+)?", value)
     if not match:
-        layout = _joined_track_text(audio, "ChannelLayout", "ChannelLayout_Original").lower()
-        if "l r c lfe ls rs lb rb" in layout:
-            return 7.1
-        if "l r c lfe ls rs" in layout:
-            return 5.1
+        layout_channels = _channels_from_layout(layout)
+        if layout_channels:
+            return layout_channels
         return 0.0
     channels = float(match.group(0))
     if channels == 1:
         return 1.0
     if channels == 2:
         return 2.0
+    layout_channels = _channels_from_layout(layout, channels)
+    if layout_channels:
+        return layout_channels
     if channels == 6:
         return 5.1
     if channels == 8:
         return 7.1
     return channels
+
+
+def _channels_from_layout(layout: str, channels: float = 0.0) -> float:
+    if not layout:
+        return 0.0
+    tokens = re.findall(r"[a-z0-9]+", layout.lower())
+    if not tokens:
+        return 0.0
+    has_lfe = "lfe" in tokens
+    if channels and has_lfe and channels >= 2:
+        return round((channels - 1) + 0.1, 1)
+    token_count = len([token for token in tokens if token not in {"unknown"}])
+    if has_lfe and token_count >= 2:
+        return round((token_count - 1) + 0.1, 1)
+    return float(token_count) if token_count else 0.0
 
 
 def _resolution_from_dimensions(width: int, height: int, scan: str) -> str:

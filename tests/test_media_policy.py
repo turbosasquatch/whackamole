@@ -47,6 +47,75 @@ def test_mediainfo_analysis_rejects_trait_mismatch():
     assert result["verdict"] == "media_error"
 
 
+def test_mediainfo_analysis_blocks_bloated_1080p_bluray_audio():
+    release = "Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                {
+                    "@type": "Audio",
+                    "Format": "DTS",
+                    "Format_Commercial_IfAny": "DTS-HD Master Audio",
+                    "Channels": "6",
+                },
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert any(issue["key"] == "bloated_audio" for issue in result["issues"])
+    assert any(flag["key"] == "bloated_audio" for flag in result["flags"])
+
+
+def test_mediainfo_analysis_blocks_undeclared_primary_language():
+    release = "Movie.2024.2160p.WEB-DL.HDR.H.265-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "German", "Default": "Yes"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert any(issue["key"] == "primary_language" for issue in result["issues"])
+    assert any(flag["key"] == "primary_language" for flag in result["flags"])
+
+
+def test_mediainfo_analysis_blocks_non_english_default_when_english_audio_exists():
+    release = "Lee.Cronins.The.Mummy.2026.German.DL.HDR.2160p.WEB.h265-W4K"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "1600", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "German", "Default": "Yes"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "English", "Default": "No"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert any(issue["key"] == "primary_language" for issue in result["issues"])
+    assert any(flag["key"] == "primary_language" for flag in result["flags"])
+
+
 def test_local_mediainfo_confirms_atmos_missing_from_qui():
     release = "Movie.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP"
     files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]

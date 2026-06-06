@@ -519,6 +519,49 @@ def test_candidate_dashboard_suppresses_partial_release_group_ban_badge(tmp_path
         assert "Banned" not in {tag["label"] for tag in tags}
 
 
+def test_dashboard_deduplicates_source_missing_alerts(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "source_missing",
+            "WEB-DL/WEBRip source provider is missing; review before upload.",
+            check_results={
+                "flags": [
+                    {"key": "source_missing", "label": "Source Missing", "severity": "warning"},
+                    {"key": "web_source_missing", "label": "Web Source", "severity": "warning"},
+                ],
+            },
+        )
+
+        response = client.get("/api/items?status=manual_review", headers=_auth_headers())
+
+        labels = [tag["label"] for tag in response.json()["items"][0]["alert_tags"]]
+        assert labels.count("Source Missing") == 1
+        assert "Web Source" not in labels
+        assert "Manual Review" not in labels
+
+
+def test_dashboard_suppresses_generic_manual_review_alert(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "manual_review",
+            "Needs manual review.",
+            check_results={"flags": [{"key": "manual_review", "label": "Manual Review", "severity": "warning"}]},
+        )
+
+        response = client.get("/api/items?status=manual_review", headers=_auth_headers())
+
+        labels = {tag["label"] for tag in response.json()["items"][0]["alert_tags"]}
+        assert "Manual Review" not in labels
+
+
 def test_dashboard_list_does_not_build_detail_release_views(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         _seed_item(client)
@@ -1046,6 +1089,94 @@ def test_item_detail_includes_video_files_in_paths_section(tmp_path, monkeypatch
         assert "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv" in page.text
         assert "Behind.The.Scenes.mp4" in page.text
         assert "Sample.txt" not in page.text
+        assert f"/items/{item_id}/rename-video-file" in page.text
+
+
+def test_item_video_file_rename_requeues_item(tmp_path, monkeypatch):
+    media_dir = tmp_path / "media" / "Example.Movie.2026.1080p.WEB-DL-GRP"
+    media_dir.mkdir(parents=True)
+    old_file = media_dir / "3uz7j4imwRaC.mkv"
+    old_file.write_bytes(b"movie")
+    new_file = media_dir / "Example.Movie.2026.1080p.WEB-DL-GRP.mkv"
+
+    with _client(tmp_path / "config", monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "rename-file",
+                "name": "Example.Movie.2026.1080p.WEB-DL-GRP",
+                "category": "movies",
+                "tags": "",
+                "content_path": str(media_dir),
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+        db.update_status(
+            item_id,
+            "manual_review",
+            "possible_renamed_release",
+            "Needs filename correction",
+            mapped_path=str(media_dir),
+            tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+            arr_results={},
+            increment_attempt=True,
+        )
+
+        response = client.post(
+            f"/items/{item_id}/rename-video-file",
+            data={
+                "old_path": str(old_file),
+                "new_name": new_file.name,
+                "return_to": f"/items/{item_id}#overview",
+            },
+            follow_redirects=False,
+        )
+        row = db.get_item(item_id)
+
+        assert response.status_code == 303
+        assert not old_file.exists()
+        assert new_file.exists()
+        assert row["status"] == "queued"
+
+
+def test_item_video_file_rename_rejects_paths_outside_item(tmp_path, monkeypatch):
+    media_dir = tmp_path / "media" / "Example.Movie.2026.1080p.WEB-DL-GRP"
+    other_dir = tmp_path / "media" / "Other"
+    media_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    listed_file = media_dir / "Example.Movie.2026.1080p.WEB-DL-GRP.mkv"
+    other_file = other_dir / "Other.mkv"
+    listed_file.write_bytes(b"movie")
+    other_file.write_bytes(b"other")
+
+    with _client(tmp_path / "config", monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "reject-rename",
+                "name": "Example.Movie.2026.1080p.WEB-DL-GRP",
+                "category": "movies",
+                "tags": "",
+                "content_path": str(media_dir),
+                "progress": 1,
+            },
+            status="queued",
+            baseline=False,
+        )
+        item_id = int(db.list_items([], limit=1)[0]["id"])
+
+        response = client.post(
+            f"/items/{item_id}/rename-video-file",
+            data={"old_path": str(other_file), "new_name": "Renamed.mkv"},
+        )
+
+        assert response.status_code == 404
+        assert other_file.exists()
 
 
 def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatch):

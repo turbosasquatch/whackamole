@@ -126,6 +126,8 @@ WARNING_TAG_LABELS = {
 }
 CRITICAL_TAG_LABELS = {
     "media_error": "Media Info",
+    "bloated_audio": "Bloated Audio",
+    "primary_language": "Primary Lang",
     "arr_check": "Arr Check",
     "banned_release_group": "Banned",
     "dupe": "Dupe",
@@ -588,7 +590,9 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
     seen: set[str] = set()
 
     def add(key: str, label: str, severity: str) -> None:
-        norm = str(label or key or "").strip().lower()
+        if key == "manual_review":
+            return
+        norm = _alert_tag_family(key, label)
         if not norm or norm in seen:
             return
         seen.add(norm)
@@ -646,6 +650,17 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
         add("folder_name_warning", "Folder Name", "warning")
 
     return tags
+
+
+def _alert_tag_family(key: str, label: str) -> str:
+    key_value = str(key or "").strip().lower()
+    if key_value in {"source_missing", "web_source_missing"}:
+        return "source_missing"
+    if key_value in {"media_error", "media_warning"}:
+        return "media_info"
+    if key_value in {"covered", "coverage_resolved"}:
+        return "covered"
+    return str(label or key or "").strip().lower()
 
 
 def _policy_allows_any_tracker(check_results: Dict[str, Any]) -> bool:
@@ -803,13 +818,14 @@ def _policy_summary_state(policy: Dict[str, Any]) -> tuple[str, str]:
 
 def _bucket_summary_state(groups: Dict[str, Any]) -> tuple[str, str]:
     passed = groups.get("passed") or groups.get("covered") or []
-    errors = groups.get("error") or groups.get("skipped") or []
+    errors = groups.get("error") or []
+    skipped = groups.get("skipped") or []
     dupes = groups.get("dupe") or []
     if passed and not errors:
         return "Pass", "pass"
     if passed and errors:
         return "Warning", "warning"
-    if dupes or errors:
+    if dupes or skipped or errors:
         return "Fail", "error"
     return "Not Applicable", "neutral"
 
@@ -2283,6 +2299,39 @@ async def grab_item_nfo(request: Request, item_id: int, return_to: str = Form(""
     checks = _check_results(row["check_results"])
     request.app.state.db.update_check_results(item_id, merge_check_results(checks, nfo=nfo))
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#discovarr"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/items/{item_id}/rename-video-file")
+async def rename_item_video_file(
+    request: Request,
+    item_id: int,
+    old_path: str = Form(""),
+    new_name: str = Form(""),
+    return_to: str = Form(""),
+) -> RedirectResponse:
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    video_files = _video_files_for_item(item)
+    allowed = {str(file.get("path") or "") for file in video_files.get("files") or [] if isinstance(file, dict)}
+    source = Path(old_path)
+    if str(source) not in allowed or not source.is_file():
+        raise HTTPException(status_code=404, detail="Video file not found")
+    filename = Path(new_name.strip()).name
+    if not filename or filename != new_name.strip() or Path(filename).suffix.lower() not in VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="New name must be a video filename in the same folder")
+    target = source.with_name(filename)
+    if target == source:
+        return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#overview"), status_code=status.HTTP_303_SEE_OTHER)
+    if target.exists():
+        raise HTTPException(status_code=409, detail="A file with that name already exists")
+    try:
+        source.rename(target)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not rename video file: {exc}") from exc
+    request.app.state.db.requeue(item_id)
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#overview"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/items/{item_id}/reports")

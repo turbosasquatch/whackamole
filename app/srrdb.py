@@ -35,7 +35,8 @@ async def verify_srrdb_release(
     now: Optional[int] = None,
 ) -> Dict[str, Any]:
     timestamp = int(now or time.time())
-    local_files = _local_video_names(media_result)
+    local_entries = _local_video_entries(media_result)
+    local_files = [entry["name"] for entry in local_entries]
     queried_name = srrdb_lookup_name(str(media_result.get("torrent_root") or item_name))
     if not queried_name or not local_files:
         return _result("skipped", queried_name, local_files, [], "No local video filename is available for srrDB verification.", timestamp)
@@ -52,7 +53,8 @@ async def verify_srrdb_release(
         _cache_write(cache, cache_key, result, timestamp, ERROR_CACHE_SECONDS)
         return result
 
-    archived = archived_video_filenames(payload)
+    archived_entries = archived_video_entries(payload)
+    archived = [entry["name"] for entry in archived_entries]
     if not archived:
         result = _result("not_found", queried_name, local_files, [], "No srrDB archived video filename was found.", timestamp)
         _cache_write(cache, cache_key, result, timestamp, NOT_FOUND_CACHE_SECONDS)
@@ -62,6 +64,20 @@ async def verify_srrdb_release(
     missing = [name for name in archived if _filename_key(name) not in local_keys]
     if missing:
         reason = "srrDB archived filename mismatch. Proper filename should be: " + ", ".join(missing)
+        result = _result("mismatch", queried_name, local_files, archived, reason, timestamp, matched=False)
+        _cache_write(cache, cache_key, result, timestamp, FOUND_CACHE_SECONDS)
+        return result
+
+    local_by_key = {_filename_key(entry["name"]): entry for entry in local_entries}
+    size_mismatches = [
+        archived_entry["name"]
+        for archived_entry in archived_entries
+        if int(archived_entry.get("size") or 0) > 0
+        and int(local_by_key.get(_filename_key(archived_entry["name"]), {}).get("size") or 0) > 0
+        and int(archived_entry.get("size") or 0) != int(local_by_key.get(_filename_key(archived_entry["name"]), {}).get("size") or 0)
+    ]
+    if size_mismatches:
+        reason = "srrDB archived file size mismatch. File may have been modified: " + ", ".join(size_mismatches)
         result = _result("mismatch", queried_name, local_files, archived, reason, timestamp, matched=False)
         _cache_write(cache, cache_key, result, timestamp, FOUND_CACHE_SECONDS)
         return result
@@ -80,19 +96,26 @@ def srrdb_lookup_name(value: str) -> str:
 
 
 def archived_video_filenames(payload: Mapping[str, Any] | Sequence[Any]) -> List[str]:
+    return [entry["name"] for entry in archived_video_entries(payload)]
+
+
+def archived_video_entries(payload: Mapping[str, Any] | Sequence[Any]) -> List[Dict[str, Any]]:
     if not isinstance(payload, Mapping):
         return []
     entries = payload.get("archived-files")
     if not isinstance(entries, list):
         return []
-    names: List[str] = []
+    videos: List[Dict[str, Any]] = []
+    seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, Mapping):
             continue
         name = PurePosixPath(str(entry.get("name") or "")).name
-        if PurePosixPath(name).suffix.lower() in VIDEO_EXTENSIONS:
-            names.append(name)
-    return list(dict.fromkeys(names))
+        if PurePosixPath(name).suffix.lower() not in VIDEO_EXTENSIONS or name in seen:
+            continue
+        seen.add(name)
+        videos.append({"name": name, "size": int(entry.get("size") or 0)})
+    return videos
 
 
 def apply_srrdb_result(
@@ -129,11 +152,24 @@ def apply_srrdb_result(
 
 
 def _local_video_names(media_result: Mapping[str, Any]) -> List[str]:
+    return [entry["name"] for entry in _local_video_entries(media_result)]
+
+
+def _local_video_entries(media_result: Mapping[str, Any]) -> List[Dict[str, Any]]:
     names = [str(name) for name in media_result.get("complete_names", []) if str(name).strip()]
-    if names:
-        return names
     files = media_result.get("video_files") if isinstance(media_result.get("video_files"), list) else []
-    return [str(file_info.get("basename") or PurePosixPath(str(file_info.get("name") or "")).name) for file_info in files if isinstance(file_info, Mapping)]
+    by_name = {
+        str(file_info.get("basename") or PurePosixPath(str(file_info.get("name") or "")).name): int(file_info.get("size") or 0)
+        for file_info in files
+        if isinstance(file_info, Mapping)
+    }
+    if names:
+        return [{"name": name, "size": int(by_name.get(PurePosixPath(name).name) or 0)} for name in names]
+    return [
+        {"name": str(file_info.get("basename") or PurePosixPath(str(file_info.get("name") or "")).name), "size": int(file_info.get("size") or 0)}
+        for file_info in files
+        if isinstance(file_info, Mapping)
+    ]
 
 
 def _result(

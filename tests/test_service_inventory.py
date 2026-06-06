@@ -1038,6 +1038,57 @@ def test_mediainfo_pass_runs_ua_arr_and_applies_banned_group_policy(tmp_path, mo
     assert checks["media"]["raw_mediainfo_payloads"][0]["fileIndex"] == 1
 
 
+def test_bloated_audio_runs_ua_arr_then_blocks_candidate(tmp_path, monkeypatch):
+    release_title = "Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP"
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_title}/{release_title}.mkv", "size": 1000},
+    ]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 0,
+        "streams": [
+            {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "DTS", "Format_Commercial_IfAny": "DTS-HD Master Audio", "Channels": "6"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = None
+    PassingUploadAssistantClient.calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert row["status"] == "blocked"
+    assert row["verdict"] == "bloated_audio"
+    assert PassingUploadAssistantClient.calls == 1
+    assert "bloated_audio" in {flag["key"] for flag in checks["flags"]}
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media", "path", "ua", "arr", "policy", "media_policy"]
+
+
 def test_srrdb_filename_mismatch_sends_candidate_to_review(tmp_path, monkeypatch):
     release_root = "The Panic in Needle Park 1971 1080p BluRay X264-AMIABLE"
     local_file = f"{release_root}.mkv"

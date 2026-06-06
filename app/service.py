@@ -114,6 +114,17 @@ def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]
     return {}
 
 
+def _candidate_blocking_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    blocking_keys = {"bloated_audio", "primary_language"}
+    for flag in flags:
+        if not isinstance(flag, Mapping):
+            continue
+        key = str(flag.get("key") or "")
+        if key in blocking_keys:
+            return dict(flag)
+    return {}
+
+
 def _review_reason_from_flag(flag: Mapping[str, Any]) -> str:
     return str(flag.get("detail") or flag.get("message") or flag.get("label") or "Review before upload.")
 
@@ -1202,6 +1213,18 @@ class WhackamoleService:
                     "blocked_trackers": list(policy_result.get("blocked_trackers") or []),
                 },
             )
+            candidate_blocking_flag = _candidate_blocking_flag(flags)
+            if status == "candidate" and candidate_blocking_flag:
+                status = "blocked"
+                verdict = str(candidate_blocking_flag.get("key") or "blocked")
+                reason = _review_reason_from_flag(candidate_blocking_flag)
+                check_results = add_stage_diagnostic(
+                    check_results,
+                    stage="media_policy",
+                    status="blocked",
+                    reason=reason,
+                    extra={"flag": verdict},
+                )
             if status == "candidate":
                 self.db.update_check_stage(item_id, "srrdb", "Checking srrDB archived filename.", check_results)
                 srrdb_started_at = time.perf_counter()

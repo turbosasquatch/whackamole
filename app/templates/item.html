@@ -109,8 +109,16 @@
             <ul class="file-list">
               {% for file in item.video_files.files %}
                 <li>
-                  <span>{{ file.relative_path }}</span>
-                  <small>{{ file.size | bytes }}</small>
+                  <div>
+                    <span>{{ file.relative_path }}</span>
+                    <small>{{ file.size | bytes }}</small>
+                  </div>
+                  <form method="post" action="/items/{{ item.id }}/rename-video-file" class="inline-rename-form" data-submit-tick="Renamed and requeued">
+                    <input type="hidden" name="old_path" value="{{ file.path }}">
+                    <input type="hidden" name="return_to" value="/items/{{ item.id }}#overview">
+                    <input name="new_name" value="{{ file.name }}" aria-label="New video filename">
+                    <button class="button secondary small" type="submit" data-submit-tick-button>Rename</button>
+                  </form>
                 </li>
               {% endfor %}
             </ul>

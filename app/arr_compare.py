@@ -319,21 +319,25 @@ async def _sonarr_releases(
     series_id = int(series["id"])
     if identity.season is None:
         raise RuntimeError("No season number found for Sonarr comparison")
-    if local_traits.season_pack:
-        releases = await client.search_releases(series_id=series_id, season_number=identity.season)
-        return releases, indexers
-
     episodes = await _cached_arr_metadata(
         metadata_cache,
         (*cache_prefix, "episodes", str(series_id), str(identity.season)),
         cache_ttl,
         lambda: client.list_episodes(series_id, identity.season),
     )
+    if local_traits.season_pack:
+        if not _season_has_started(episodes):
+            raise RuntimeError("Sonarr season has not started airing yet; review pre-release uploads manually")
+        releases = await client.search_releases(series_id=series_id, season_number=identity.season)
+        return releases, indexers
+
     if _season_appears_fully_released(episodes, identity.season):
         raise RuntimeError("Sonarr season appears fully released; review for a season pack instead of an episode upload")
     episode = _match_episode(episodes, identity.episode)
     if not episode:
         raise RuntimeError("No matching Sonarr episode found")
+    if not _episode_has_released(episode):
+        raise RuntimeError("Sonarr episode has not aired yet; review pre-release uploads manually")
     releases = await client.search_releases(episode_id=int(episode["id"]))
     return releases, indexers
 
@@ -355,6 +359,8 @@ async def _radarr_releases(
     movie = _match_movie(movie_rows, identity)
     if not movie:
         raise RuntimeError("No matching Radarr movie found")
+    if not _movie_has_released(movie):
+        raise RuntimeError("Radarr movie has not released yet; review pre-release uploads manually")
     releases = await client.search_releases(int(movie["id"]))
     return releases, indexers
 
@@ -439,15 +445,49 @@ def _episode_has_released(episode: Mapping[str, Any]) -> bool:
     air_date = str(episode.get("airDateUtc") or episode.get("airDate") or "").strip()
     if not air_date:
         return False
-    if air_date.endswith("Z"):
-        air_date = air_date[:-1] + "+00:00"
-    try:
-        released_at = datetime.fromisoformat(air_date)
-    except ValueError:
+    released_at = _parse_arr_datetime(air_date)
+    if released_at is None:
         return False
-    if released_at.tzinfo is None:
-        released_at = released_at.replace(tzinfo=timezone.utc)
     return released_at <= datetime.now(timezone.utc)
+
+
+def _season_has_started(episodes: Sequence[Mapping[str, Any]]) -> bool:
+    return any(_episode_has_released(episode) for episode in episodes)
+
+
+def _movie_has_released(movie: Mapping[str, Any]) -> bool:
+    if movie.get("hasFile"):
+        return True
+    status_value = str(movie.get("status") or "").strip().lower()
+    if status_value == "released":
+        return True
+    date_fields = (
+        "digitalRelease",
+        "physicalRelease",
+        "inCinemas",
+        "premiereDate",
+        "releaseDate",
+    )
+    dates = [_parse_arr_datetime(str(movie.get(field) or "").strip()) for field in date_fields]
+    released_dates = [date for date in dates if date is not None]
+    return bool(released_dates) and min(released_dates) <= datetime.now(timezone.utc)
+
+
+def _parse_arr_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _extract_title_year(text: str, fallback: str) -> Tuple[str, Optional[int]]:

@@ -1958,10 +1958,11 @@ dd {
 }
 
 .file-list li {
-  align-items: baseline;
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: space-between;
 }
 
 .file-list span {
@@ -1971,6 +1972,19 @@ dd {
 
 .file-list small {
   color: var(--muted);
+}
+
+.inline-rename-form {
+  align-items: center;
+  display: flex;
+  flex: 1 1 280px;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.inline-rename-form input {
+  max-width: 420px;
+  min-width: 220px;
 }
 
 .modal-backdrop {
@@ -2394,6 +2408,14 @@ dd {
     left: max(8px, env(safe-area-inset-left));
     right: max(8px, env(safe-area-inset-right));
     top: calc(66px + env(safe-area-inset-top));
+  }
+
+  .inline-rename-form {
+    justify-content: stretch;
+  }
+
+  .inline-rename-form input {
+    min-width: 0;
   }
 
   .button,

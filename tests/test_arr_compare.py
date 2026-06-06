@@ -443,7 +443,7 @@ def test_compare_item_with_arr_caches_sonarr_metadata_lists(tmp_path, monkeypatc
                     "seasonNumber": season_number,
                     "episodeNumber": 1,
                     "monitored": True,
-                    "airDateUtc": "2099-01-01T00:00:00Z",
+                    "airDateUtc": "2026-01-01T00:00:00Z",
                 }
             ]
 
@@ -488,7 +488,16 @@ def test_compare_item_with_arr_caches_radarr_metadata_lists(tmp_path, monkeypatc
 
         async def list_movies(self):
             self.calls["movies"] += 1
-            return [{"id": 20, "title": "Movie Name", "sortTitle": "movie name", "year": 2026, "tmdbId": 123}]
+            return [
+                {
+                    "id": 20,
+                    "title": "Movie Name",
+                    "sortTitle": "movie name",
+                    "year": 2026,
+                    "tmdbId": 123,
+                    "status": "released",
+                }
+            ]
 
         async def search_releases(self, _movie_id):
             self.calls["search"] += 1
@@ -516,3 +525,103 @@ def test_compare_item_with_arr_caches_radarr_metadata_lists(tmp_path, monkeypatc
         assert result["status"] == "candidate"
 
     assert FakeRadarrClient.calls == {"indexers": 1, "movies": 1, "search": 2}
+
+
+def test_compare_item_with_arr_sends_future_sonarr_episode_to_manual_review(tmp_path, monkeypatch):
+    class FakeSonarrClient:
+        searched = False
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def list_indexers(self):
+            return [{"name": "Darkpeers (API) (Prowlarr)", "protocol": "torrent"}]
+
+        async def list_series(self):
+            return [{"id": 10, "title": "Show Name", "sortTitle": "show name", "year": 2026}]
+
+        async def list_episodes(self, series_id, season_number=None):
+            return [
+                {
+                    "id": 100,
+                    "seriesId": series_id,
+                    "seasonNumber": season_number,
+                    "episodeNumber": 1,
+                    "monitored": True,
+                    "airDateUtc": "2099-01-01T00:00:00Z",
+                }
+            ]
+
+        async def search_releases(self, **_kwargs):
+            self.searched = True
+            return []
+
+    monkeypatch.setattr("app.arr_compare.SonarrClient", FakeSonarrClient)
+    cfg = AppConfig()
+    cfg.sonarr.url = "http://sonarr.test"
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("sonarr_api_key", "token")
+
+    result = asyncio.run(
+        compare_item_with_arr(
+            item_name="Show.Name.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP",
+            ua_log="Title: Show Name\nCategory: TV",
+            passed_trackers=["DP"],
+            cfg=cfg,
+            secrets=secrets,
+        )
+    )
+
+    assert result["status"] == "manual_review"
+    assert "not aired yet" in result["reason"]
+    assert result["decisions"][0]["status"] == "manual_review"
+    assert not FakeSonarrClient.searched
+
+
+def test_compare_item_with_arr_sends_future_radarr_movie_to_manual_review(tmp_path, monkeypatch):
+    class FakeRadarrClient:
+        searched = False
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def list_indexers(self):
+            return [{"name": "upload.cx (API) (Prowlarr)", "protocol": "torrent"}]
+
+        async def list_movies(self):
+            return [
+                {
+                    "id": 20,
+                    "title": "Movie Name",
+                    "sortTitle": "movie name",
+                    "year": 2026,
+                    "tmdbId": 123,
+                    "status": "announced",
+                    "digitalRelease": "2099-01-01T00:00:00Z",
+                }
+            ]
+
+        async def search_releases(self, _movie_id):
+            self.searched = True
+            return []
+
+    monkeypatch.setattr("app.arr_compare.RadarrClient", FakeRadarrClient)
+    cfg = AppConfig()
+    cfg.radarr.url = "http://radarr.test"
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("radarr_api_key", "token")
+
+    result = asyncio.run(
+        compare_item_with_arr(
+            item_name="Movie.Name.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
+            ua_log="Title: Movie Name (2026)\nCategory: Movie\nTMDB: https://www.themoviedb.org/movie/123",
+            passed_trackers=["ULCX"],
+            cfg=cfg,
+            secrets=secrets,
+        )
+    )
+
+    assert result["status"] == "manual_review"
+    assert "not released yet" in result["reason"]
+    assert result["decisions"][0]["status"] == "manual_review"
+    assert not FakeRadarrClient.searched

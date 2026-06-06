@@ -89,6 +89,28 @@ def test_srrdb_verifier_marks_archived_filename_mismatch_with_proper_filename():
     assert "Proper filename should be" in result["reason"]
 
 
+def test_srrdb_verifier_marks_archived_size_mismatch_as_modified():
+    client = FakeSrrdbClient({"archived-files": [{"name": "Movie.2024.1080p.BluRay-GRP.mkv", "size": 2000}]})
+
+    result = asyncio.run(
+        verify_srrdb_release(
+            item_name="Movie.2024.1080p.BluRay-GRP",
+            media_result={
+                "torrent_root": "Movie.2024.1080p.BluRay-GRP",
+                "complete_names": ["Movie.2024.1080p.BluRay-GRP.mkv"],
+                "video_files": [{"basename": "Movie.2024.1080p.BluRay-GRP.mkv", "size": 1000}],
+            },
+            client=client,
+            cache=MemoryCache(),
+            now=1000,
+        )
+    )
+
+    assert result["status"] == "mismatch"
+    assert result["matched"] is False
+    assert "file size mismatch" in result["reason"]
+
+
 def test_srrdb_verifier_caches_not_found_without_status_change():
     cache = MemoryCache()
     client = FakeSrrdbClient([])

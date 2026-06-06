@@ -31,6 +31,7 @@ def test_tracker_summary_labels_covered_trackers():
 
 def test_bucket_summary_passes_when_any_tracker_passes_despite_dupes():
     assert _bucket_summary_state({"passed": ["IHD"], "dupe": ["DP", "ULCX"], "skipped": [], "error": []}) == ("Pass", "pass")
+    assert _bucket_summary_state({"passed": ["DP"], "dupe": [], "skipped": ["IHD"], "error": []}) == ("Pass", "pass")
     assert _bucket_summary_state({"passed": ["IHD"], "dupe": [], "skipped": [], "error": ["UA"]}) == ("Warning", "warning")
 
 
