@@ -82,6 +82,53 @@ def test_dashboard_check_results_strip_raw_mediainfo_payloads():
     assert media["mediainfo_files"] == [{"traits": {"source_provider": "Netflix", "audio_format": "DD+"}, "name": "movie.mkv"}]
 
 
+def test_dashboard_check_results_does_not_scan_raw_mediainfo_payloads(monkeypatch):
+    def fail_raw_scan(*args, **kwargs):
+        raise AssertionError("dashboard check parsing should not recursively scan raw MediaInfo")
+
+    monkeypatch.setattr(main_module, "_collect_source_provider_fields", fail_raw_scan)
+    payload = {
+        "media": {
+            "status": "passed",
+            "raw_mediainfo_payloads": [{"ServiceName": "Netflix", "nested": [{"value": "NF"}]}],
+            "raw_local_mediainfo_payloads": [{"ServiceName": "Netflix"}],
+            "mediainfo_files": [{"name": "movie.mkv", "traits": {}}],
+        }
+    }
+
+    slim = main_module._dashboard_check_results(json.dumps(payload))
+
+    assert "dashboard_source_provider" not in slim["media"]
+    assert "raw_mediainfo_payloads" not in slim["media"]
+    assert "raw_local_mediainfo_payloads" not in slim["media"]
+
+
+def test_dashboard_database_query_strips_raw_mediainfo_payloads(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        client.app.state.db.update_check_results(
+            item_id,
+            {
+                "media": {
+                    "status": "passed",
+                    "raw_mediainfo_payloads": [{"large": "qui"}],
+                    "raw_local_mediainfo_payloads": [{"large": "local"}],
+                    "supplemental_mediainfo_files": [{"large": "supplemental"}],
+                    "mediainfo_files": [{"name": "movie.mkv", "traits": {"source_provider": "Netflix"}}],
+                }
+            },
+        )
+
+        row = client.app.state.db.list_dashboard_items_filtered(["candidate"], limit=1)[0]
+        checks = json.loads(row["check_results"])
+        media = checks["media"]
+
+        assert "raw_mediainfo_payloads" not in media
+        assert "raw_local_mediainfo_payloads" not in media
+        assert "supplemental_mediainfo_files" not in media
+        assert media["mediainfo_files"][0]["traits"]["source_provider"] == "Netflix"
+
+
 def _seed_item(client: TestClient) -> int:
     db = client.app.state.db
     torrent = {

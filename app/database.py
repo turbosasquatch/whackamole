@@ -22,7 +22,13 @@ _DASHBOARD_COLUMNS = """
     i.arr_results, i.inventory_meta, i.ignored_reason, i.baseline, i.inventory_group_key,
     i.inventory_media_type, i.inventory_tracker_key, i.inventory_tracker_label,
     i.inventory_tracker_primary, i.inventory_is_cross_seed, i.inventory_is_upload,
-    i.inventory_is_support, i.check_stage, i.check_results
+    i.inventory_is_support, i.check_stage,
+    json_remove(
+        i.check_results,
+        '$.media.raw_mediainfo_payloads',
+        '$.media.raw_local_mediainfo_payloads',
+        '$.media.supplemental_mediainfo_files'
+    ) AS check_results
 """
 
 

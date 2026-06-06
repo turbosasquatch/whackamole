@@ -252,16 +252,21 @@ def _check_results(value: Any) -> Dict[str, Any]:
 
 
 def _dashboard_check_results(value: Any) -> Dict[str, Any]:
-    check_results = _check_results(value)
+    parsed = _json_object(value)
+    media_payload = parsed.get("media") if isinstance(parsed.get("media"), dict) else {}
+    if media_payload:
+        media_payload = dict(media_payload)
+        for key in ("raw_mediainfo_payloads", "raw_local_mediainfo_payloads", "supplemental_mediainfo_files"):
+            media_payload.pop(key, None)
+        parsed["media"] = media_payload
+    check_results = CheckResults.from_any(parsed).to_dict()
     media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
     if not media:
         return check_results
     media = dict(media)
-    provider = _source_provider_from_mediainfo(media)
+    provider = _dashboard_source_provider_from_mediainfo(media)
     if provider:
         media["dashboard_source_provider"] = provider
-    for key in ("raw_mediainfo_payloads", "raw_local_mediainfo_payloads", "supplemental_mediainfo_files"):
-        media.pop(key, None)
     slim_files = []
     for file_info in media.get("mediainfo_files") if isinstance(media.get("mediainfo_files"), list) else []:
         if not isinstance(file_info, dict):
@@ -275,6 +280,20 @@ def _dashboard_check_results(value: Any) -> Dict[str, Any]:
         media["mediainfo_files"] = slim_files
     check_results["media"] = media
     return check_results
+
+
+def _dashboard_source_provider_from_mediainfo(media: Mapping[str, Any]) -> str:
+    files = media.get("mediainfo_files") if isinstance(media.get("mediainfo_files"), list) else []
+    for file_info in files:
+        if not isinstance(file_info, Mapping):
+            continue
+        traits = file_info.get("traits") if isinstance(file_info.get("traits"), Mapping) else {}
+        provider = provider_abbreviation_for_label(str(traits.get("source_provider") or ""))
+        if provider:
+            return provider
+    local_traits = media.get("local_traits") if isinstance(media.get("local_traits"), Mapping) else {}
+    provider = provider_abbreviation_for_label(str(local_traits.get("source_provider") or ""))
+    return provider
 
 
 def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
