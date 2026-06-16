@@ -321,49 +321,55 @@ def test_reapply_release_group_policy_blocks_candidate_when_all_trackers_banned(
     assert row["reason"] == "GRP is banned on every otherwise valid tracker."
 
 
-def test_active_filter_only_includes_due_errors(tmp_path):
+def test_active_filter_only_includes_due_retries(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     now = int(time.time())
     _insert(db, "queued", "Queued.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
     _insert(db, "checking", "Checking.Show.S01E01.1080p.WEB-DL-GRP", status="checking")
-    _insert(db, "due-error", "Due.Error.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
-    _insert(db, "future-error", "Future.Error.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
+    _insert(db, "due-retry", "Due.Retry.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
+    _insert(db, "future-retry", "Future.Retry.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
+    _insert(db, "terminal-error", "Terminal.Error.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
     rows = {row["hash"]: row for row in db.list_items([], limit=20)}
-    db.update_status(int(rows["due-error"]["id"]), "error", "ua_error", "due", next_check_at=now - 1)
-    db.update_status(int(rows["future-error"]["id"]), "error", "ua_error", "future", next_check_at=now + 3600)
+    db.update_status(int(rows["due-retry"]["id"]), "retry", "ua_error", "due", next_check_at=now - 1)
+    db.update_status(int(rows["future-retry"]["id"]), "retry", "ua_error", "future", next_check_at=now + 3600)
+    db.update_status(int(rows["terminal-error"]["id"]), "error", "path_mapping", "terminal")
 
-    active = db.list_items_filtered(["queued", "deferred", "checking", "error"], due_errors_only=True)
+    active = db.list_items_filtered(["queued", "deferred", "checking", "retry"], due_errors_only=True)
+    all_retries = db.list_items_filtered(["retry"])
     all_errors = db.list_items_filtered(["error"])
-    active_error_count = db.count_items_filtered(["queued", "deferred", "checking", "error"], due_errors_only=True)
+    active_retry_count = db.count_items_filtered(["queued", "deferred", "checking", "retry"], due_errors_only=True)
 
-    assert {row["hash"] for row in active} == {"queued", "checking", "due-error"}
-    assert {row["hash"] for row in all_errors} == {"due-error", "future-error"}
-    assert active_error_count == 3
+    assert {row["hash"] for row in active} == {"queued", "checking", "due-retry"}
+    assert {row["hash"] for row in all_retries} == {"due-retry", "future-retry"}
+    assert {row["hash"] for row in all_errors} == {"terminal-error"}
+    assert active_retry_count == 3
 
 
-def test_queue_counts_split_due_and_waiting_errors(tmp_path):
+def test_queue_counts_split_due_and_waiting_retries(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     now = int(time.time())
     _insert(db, "queued", "Queued.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
     _insert(db, "deferred", "Deferred.Show.S01E01.1080p.WEB-DL-GRP", status="deferred")
     _insert(db, "checking", "Checking.Show.S01E01.1080p.WEB-DL-GRP", status="checking")
-    _insert(db, "due-error", "Due.Error.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
-    _insert(db, "future-error", "Future.Error.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
+    _insert(db, "due-retry", "Due.Retry.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
+    _insert(db, "future-retry", "Future.Retry.Show.S01E01.1080p.WEB-DL-GRP", status="queued")
     rows = {row["hash"]: row for row in db.list_items([], limit=20)}
-    db.update_status(int(rows["due-error"]["id"]), "error", "ua_error", "due", next_check_at=now - 1)
-    db.update_status(int(rows["future-error"]["id"]), "error", "ua_error", "future", next_check_at=now + 3600)
+    db.update_status(int(rows["due-retry"]["id"]), "retry", "ua_error", "due", next_check_at=now - 1)
+    db.update_status(int(rows["future-retry"]["id"]), "retry", "ua_error", "future", next_check_at=now + 3600)
 
     counts = db.queue_counts()
 
     assert counts["queued"] == 1
     assert counts["deferred"] == 1
     assert counts["checking"] == 1
+    assert counts["due_retries"] == 1
+    assert counts["waiting_retries"] == 1
     assert counts["due_errors"] == 1
     assert counts["waiting_errors"] == 1
     assert counts["active"] == 4
 
 
-def test_recover_stale_checking_moves_rows_to_retryable_error(tmp_path):
+def test_recover_stale_checking_moves_rows_to_retry(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     next_check_at = int(time.time()) + 900
     _insert(db, "checking", "Checking.Show.S01E01.1080p.WEB-DL-GRP", status="checking")
@@ -373,7 +379,7 @@ def test_recover_stale_checking_moves_rows_to_retryable_error(tmp_path):
     rows = {row["hash"]: row for row in db.list_items([], limit=20)}
 
     assert recovered == 1
-    assert rows["checking"]["status"] == "error"
+    assert rows["checking"]["status"] == "retry"
     assert rows["checking"]["verdict"] == "interrupted_check"
     assert rows["checking"]["reason"] == "Whackamole restarted while this check was running. It will retry after backoff."
     assert rows["checking"]["next_check_at"] == next_check_at

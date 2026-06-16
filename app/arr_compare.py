@@ -276,7 +276,7 @@ def summarize_decisions(decisions: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
         return "candidate", f"Valid upload candidate on: {', '.join(candidates)}"
     if manual:
         return "manual_review", f"Arr comparison needs manual review for: {', '.join(manual)}"
-    return "blocked", "UA passed, but Arr found equal-or-better torrent results."
+    return "skipped", "UA passed, but Arr found equal-or-better torrent results."
 
 
 def release_is_equal_or_better(local: ReleaseTraits, remote: ReleaseTraits) -> bool:

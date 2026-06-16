@@ -663,6 +663,7 @@
           candidates: counts.candidate || 0,
           covered: counts.covered || 0,
           blocked: counts.blocked || 0,
+          skipped: counts.skipped || 0,
           manual: counts.manual_review || 0,
           errors: counts.error || 0,
           baseline: counts.baseline || 0,

@@ -614,18 +614,20 @@ class Database:
         values = list(statuses)
         if values:
             now = int(time.time())
-            non_error_values = [value for value in values if value != "error"]
+            non_error_values = [value for value in values if value not in {"error", "retry"}]
             status_clauses: List[str] = []
             if non_error_values:
                 placeholders = ",".join("?" for _ in non_error_values)
                 status_clauses.append(f"i.status IN ({placeholders})")
                 params.extend(non_error_values)
-            if "error" in values:
+            if "retry" in values:
                 if due_errors_only:
-                    status_clauses.append("i.status = 'error' AND (i.next_check_at IS NULL OR i.next_check_at <= ?)")
+                    status_clauses.append("i.status = 'retry' AND (i.next_check_at IS NULL OR i.next_check_at <= ?)")
                     params.append(now)
                 else:
-                    status_clauses.append("i.status = 'error'")
+                    status_clauses.append("i.status = 'retry'")
+            if "error" in values:
+                status_clauses.append("i.status = 'error'")
             clauses.append(f"({' OR '.join(status_clauses)})")
         selected_media = _selected_media_values(media)
         if selected_media:
@@ -688,9 +690,16 @@ class Database:
         return where_sql, params
 
     def count_active_queue(self) -> int:
+        now = int(time.time())
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS count FROM items WHERE status IN ('queued', 'deferred', 'checking')"
+                """
+                SELECT COUNT(*) AS count
+                FROM items
+                WHERE status IN ('queued', 'deferred', 'checking')
+                   OR (status = 'retry' AND (next_check_at IS NULL OR next_check_at <= ?))
+                """,
+                (now,),
             ).fetchone()
             return int(row["count"])
 
@@ -703,8 +712,8 @@ class Database:
                     SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
                     SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END) AS deferred,
                     SUM(CASE WHEN status = 'checking' THEN 1 ELSE 0 END) AS checking,
-                    SUM(CASE WHEN status = 'error' AND (next_check_at IS NULL OR next_check_at <= ?) THEN 1 ELSE 0 END) AS due_errors,
-                    SUM(CASE WHEN status = 'error' AND next_check_at > ? THEN 1 ELSE 0 END) AS waiting_errors
+                    SUM(CASE WHEN status = 'retry' AND (next_check_at IS NULL OR next_check_at <= ?) THEN 1 ELSE 0 END) AS due_retries,
+                    SUM(CASE WHEN status = 'retry' AND next_check_at > ? THEN 1 ELSE 0 END) AS waiting_retries
                 FROM items
                 """,
                 (now, now),
@@ -713,10 +722,12 @@ class Database:
             "queued": int(rows["queued"] or 0),
             "deferred": int(rows["deferred"] or 0),
             "checking": int(rows["checking"] or 0),
-            "due_errors": int(rows["due_errors"] or 0),
-            "waiting_errors": int(rows["waiting_errors"] or 0),
+            "due_errors": int(rows["due_retries"] or 0),
+            "waiting_errors": int(rows["waiting_retries"] or 0),
+            "due_retries": int(rows["due_retries"] or 0),
+            "waiting_retries": int(rows["waiting_retries"] or 0),
         }
-        counts["active"] = counts["queued"] + counts["deferred"] + counts["checking"] + counts["due_errors"]
+        counts["active"] = counts["queued"] + counts["deferred"] + counts["checking"] + counts["due_retries"]
         return counts
 
     def whacked_stats(self) -> Dict[str, int]:
@@ -916,7 +927,7 @@ class Database:
             cursor = conn.execute(
                 """
                 UPDATE items
-                SET status = 'error',
+                SET status = 'retry',
                     verdict = 'interrupted_check',
                     reason = ?,
                     check_stage = 'interrupted',
@@ -935,7 +946,7 @@ class Database:
             return conn.execute(
                 """
                 SELECT * FROM items
-                WHERE status IN ('queued', 'deferred', 'error')
+                WHERE status IN ('queued', 'deferred', 'retry')
                   AND (next_check_at IS NULL OR next_check_at <= ?)
                 ORDER BY discovered_at ASC
                 LIMIT ?
@@ -1182,7 +1193,7 @@ class Database:
                     media_payloads["supplemental_mediainfo_files"],
                     next_check_at,
                     now,
-                    1 if status in {"candidate", "blocked", "manual_review", "error"} else 0,
+                    1 if status in {"candidate", "blocked", "manual_review", "skipped", "retry", "error"} else 0,
                     now,
                     1 if increment_attempt else 0,
                     item_id,

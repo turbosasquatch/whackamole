@@ -23,7 +23,7 @@
   {% set ua_busy = ua_owner.busy %}
   {% set ua_busy_this_item = ua_busy and ua_owner.kind == "upload" and ua_owner.item_id == item.id %}
   {% set ua_check_busy = ua_busy and ua_owner.kind == "check" %}
-  {% set ua_execute_disabled = (not upload_console_configured) or (not ua_console.path) or (ua_busy and not ua_busy_this_item) %}
+  {% set ua_execute_disabled = (not item.can_upload) or (not upload_console_configured) or (not ua_console.path) or (ua_busy and not ua_busy_this_item) %}
   {% set active_import = item.active_import or {} %}
 
   <section class="item-hero">
@@ -44,7 +44,7 @@
       </form>
       <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-submit-error-label="Retry" data-queue-upload-form data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue" data-queued-import-id="{{ active_import.id or '' }}">
         <input type="hidden" name="return_to" value="/items/{{ item.id }}">
-        <button class="button success" type="submit" data-submit-tick-button {% if active_import %}disabled{% endif %}>
+        <button class="button success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
           {% if active_import %}Queued{% else %}Queue Upload{% endif %}
         </button>
       </form>
@@ -207,8 +207,8 @@
         data-input-url="/api/items/{{ item.id }}/upload-assistant/input"
         data-kill-url="/api/items/{{ item.id }}/upload-assistant/kill"
         data-active-session="{% if ua_busy_this_item %}{{ ua_owner.session_id or ua_session.session_id }}{% endif %}"
-        data-can-execute="{% if upload_console_configured and ua_console.path and not (ua_busy and not ua_busy_this_item) %}true{% else %}false{% endif %}"
-        data-can-queue="{% if upload_console_configured and ua_console.path %}true{% else %}false{% endif %}"
+        data-can-execute="{% if item.can_upload and upload_console_configured and ua_console.path and not (ua_busy and not ua_busy_this_item) %}true{% else %}false{% endif %}"
+        data-can-queue="{% if item.can_upload and upload_console_configured and ua_console.path %}true{% else %}false{% endif %}"
       >
         <div class="panel-heading">
           <div>
@@ -251,7 +251,7 @@
           <button class="button secondary" type="button" data-upload-autorun {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
             Autorun
           </button>
-          <button class="button secondary" type="button" data-upload-queue {% if not upload_console_configured or not ua_console.path %}disabled{% endif %}>
+          <button class="button secondary" type="button" data-upload-queue {% if not item.can_upload or not upload_console_configured or not ua_console.path %}disabled{% endif %}>
             Queue
           </button>
           <button class="button secondary" type="button" data-upload-clear {% if ua_busy_this_item %}hidden{% endif %}>Clear</button>

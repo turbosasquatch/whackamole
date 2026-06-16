@@ -18,6 +18,9 @@ class CheckResults:
     srrdb: Dict[str, Any] = field(default_factory=dict)
     release_group_policy: Dict[str, Any] = field(default_factory=dict)
     coverage_resolution: Dict[str, Any] = field(default_factory=dict)
+    decision: Dict[str, Any] = field(default_factory=dict)
+    rules: List[Dict[str, Any]] = field(default_factory=list)
+    ruleset_version: int = 0
     flags: List[Dict[str, Any]] = field(default_factory=list)
     diagnostics: Dict[str, Any] = field(default_factory=lambda: {"stages": [], "last_error": {}})
 
@@ -36,6 +39,9 @@ class CheckResults:
             srrdb=_dict_value(payload.get("srrdb")),
             release_group_policy=_dict_value(payload.get("release_group_policy")),
             coverage_resolution=_dict_value(payload.get("coverage_resolution")),
+            decision=_dict_value(payload.get("decision")),
+            rules=_flag_list(payload.get("rules")),
+            ruleset_version=_int_value(payload.get("ruleset_version"), 0),
             flags=_flag_list(payload.get("flags")),
             diagnostics={
                 "stages": [dict(stage) for stage in stages if isinstance(stage, Mapping)],
@@ -53,6 +59,9 @@ class CheckResults:
             "srrdb": self.srrdb,
             "release_group_policy": self.release_group_policy,
             "coverage_resolution": self.coverage_resolution,
+            "decision": self.decision,
+            "rules": self.rules,
+            "ruleset_version": self.ruleset_version,
             "flags": self.flags,
             "diagnostics": self.diagnostics,
         }

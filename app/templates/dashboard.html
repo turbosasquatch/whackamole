@@ -191,7 +191,7 @@
                   data-queued-import-id="{{ active_import.id or '' }}"
                 >
                   <input type="hidden" name="return_to" value="{{ current_url }}">
-                  <button class="button small success" type="submit" data-submit-tick-button {% if active_import %}disabled{% endif %}>
+                  <button class="button small success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
                     {% if active_import %}Queued{% else %}Upload{% endif %}
                   </button>
                 </form>
@@ -241,7 +241,7 @@
               data-queued-import-id="{{ active_import.id or '' }}"
             >
                 <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small success" type="submit" data-submit-tick-button {% if active_import %}disabled{% endif %}>
+                <button class="button small success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
                   {% if active_import %}Queued{% else %}Upload{% endif %}
                 </button>
             </form>

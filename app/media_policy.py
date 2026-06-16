@@ -447,6 +447,8 @@ def _verdict_for_status(status: str) -> str:
         return "not_upgrade"
     if status == "manual_review":
         return "manual_review"
+    if status == "skipped":
+        return "no_remaining_valid_targets"
     return status or "unknown"
 
 

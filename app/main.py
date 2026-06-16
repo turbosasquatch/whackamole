@@ -51,10 +51,11 @@ MAX_VIDEO_FILES = 200
 MAX_NFO_BYTES = 262144
 SOURCE_PROVIDER_FIELD_RE = re.compile(r"(?:site|network|source|service|provider|streaming)", re.IGNORECASE)
 DASHBOARD_VIEWS = {
-    "active": ["queued", "deferred", "checking", "error"],
+    "active": ["queued", "deferred", "checking", "retry"],
     "candidates": ["candidate"],
     "covered": ["covered"],
     "blocked": ["blocked"],
+    "skipped": ["skipped"],
     "manual": ["manual_review"],
     "errors": ["error"],
     "baseline": ["baseline"],
@@ -62,12 +63,13 @@ DASHBOARD_VIEWS = {
     "ignored": ["ignored"],
     "all": [],
 }
-FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "blocked", "manual"}
+FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "blocked", "skipped", "manual"}
 DASHBOARD_TABS = [
-    ("active", "Active", ["queued", "deferred", "checking", "error"]),
+    ("active", "Active", ["queued", "deferred", "checking", "retry"]),
     ("candidates", "Candidates", ["candidate"]),
     ("covered", "Covered", ["covered"]),
     ("blocked", "Blocked", ["blocked"]),
+    ("skipped", "Skipped", ["skipped"]),
     ("manual", "Review", ["manual_review"]),
     ("errors", "Errors", ["error"]),
     ("baseline", "Baseline", ["baseline"]),
@@ -83,7 +85,7 @@ MEDIA_FILTERS = [
 REASON_FILTERS = [
     {"key": "media_warning", "label": "MediaInfo warning", "applies_to": ["blocked", "manual"]},
     {"key": "media_error", "label": "MediaInfo error", "applies_to": ["manual", "errors"]},
-    {"key": "arr_equal_or_better", "label": "Arr equal/better", "applies_to": ["blocked"]},
+    {"key": "arr_equal_or_better", "label": "Arr equal/better", "applies_to": ["skipped"]},
     {"key": "banned_release_group", "label": "Banned release group", "applies_to": ["blocked"]},
     {"key": "srrdb_filename_mismatch", "label": "srrDB filename mismatch", "applies_to": ["manual"]},
     {"key": "no_video", "label": "No video files", "applies_to": ["manual", "errors"]},
@@ -166,6 +168,7 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["stage_flow"] = _stage_flow(item, check_results, arr_result)
     item["display_status"] = _display_status(item)
     item["next_action"] = _next_action(item)
+    item["can_upload"] = _can_upload(item)
     item["decision_notice"] = _decision_notice(item, check_results)
     item["decision_label"] = _decision_label(item)
     item["reason_categories"] = _reason_categories(item, check_results, arr_result)
@@ -199,6 +202,7 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     item["effective_status"] = _effective_status(item)
     item["display_status"] = _display_status(item)
     item["next_action"] = _next_action(item)
+    item["can_upload"] = _can_upload(item)
     item["decision_notice"] = _decision_notice(item, check_results)
     item["decision_label"] = _decision_label(item)
     item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
@@ -222,6 +226,7 @@ def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]
     item["stage_flow"] = _stage_flow(item, item["check_results"], item["arr_result"])
     item["display_status"] = _display_status(item)
     item["next_action"] = _next_action(item)
+    item["can_upload"] = _can_upload(item)
     item["decision_notice"] = _decision_notice(item, item["check_results"])
     item["decision_label"] = _decision_label(item)
     item["overview_checks"] = _overview_checks(item, item["check_results"], item["arr_result"])
@@ -315,6 +320,11 @@ def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _effective_status(item: Mapping[str, Any]) -> str:
     value = str(item.get("status") or "")
+    checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
+    decision = checks.get("decision") if isinstance(checks.get("decision"), dict) else {}
+    decision_status = str(decision.get("status") or "")
+    if decision_status in {"candidate", "manual_review", "blocked", "skipped", "retry", "error"}:
+        return decision_status
     folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
     if value == "candidate" and folder_check.get("group") == "warning":
         return "manual_review"
@@ -324,6 +334,11 @@ def _effective_status(item: Mapping[str, Any]) -> str:
 def _effective_status_for_row(row: Any) -> str:
     item = dict(row)
     value = str(item.get("status") or "")
+    checks = _json_object(item.get("check_results"))
+    decision = checks.get("decision") if isinstance(checks.get("decision"), dict) else {}
+    decision_status = str(decision.get("status") or "")
+    if decision_status in {"candidate", "manual_review", "blocked", "skipped", "retry", "error"}:
+        return decision_status
     if value == "candidate" and _folder_name_check(item).get("group") == "warning":
         return "manual_review"
     return value
@@ -332,8 +347,6 @@ def _effective_status_for_row(row: Any) -> str:
 def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
     value = _effective_status(item)
     stage = str(item.get("check_stage") or "")
-    next_check_at = item.get("next_check_at")
-    now = int(time.time())
     stage_labels = {
         "media": "Checking MediaInfo",
         "path": "Mapping path",
@@ -354,18 +367,14 @@ def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
         return {"label": "Covered", "group": "covered", "detail": "Coverage resolved in QUI"}
     if value == "blocked":
         return {"label": "Blocked", "group": "covered", "detail": "No upload needed"}
+    if value == "skipped":
+        return {"label": "Skipped", "group": "neutral", "detail": "No upload action remains"}
     if value == "manual_review":
         return {"label": "Needs Review", "group": "attention", "detail": "Manual decision needed"}
+    if value == "retry":
+        return {"label": "Retry Scheduled", "group": "queued", "detail": "Waiting for retry window"}
     if value == "error":
-        try:
-            retry_waiting = bool(next_check_at and int(next_check_at) > now)
-        except (TypeError, ValueError):
-            retry_waiting = False
-        return {
-            "label": "Retry Scheduled" if retry_waiting else "Error",
-            "group": "error",
-            "detail": "Waiting for retry window" if retry_waiting else "Retry due or failed",
-        }
+        return {"label": "Error", "group": "error", "detail": "Investigation needed"}
     if value == "baseline":
         return {"label": "Baseline", "group": "neutral", "detail": "Inventory backlog"}
     if value == "inventory":
@@ -383,15 +392,14 @@ def _next_action(item: Dict[str, Any]) -> str:
         return "Coverage resolved"
     if status_value == "blocked":
         return "Review coverage"
+    if status_value == "skipped":
+        return "No action"
     if status_value == "manual_review":
         return "Inspect issue"
+    if status_value == "retry":
+        return "Waiting for retry"
     if status_value == "error":
-        try:
-            if item.get("next_check_at") and int(item["next_check_at"]) > int(time.time()):
-                return "Waiting for retry"
-        except (TypeError, ValueError):
-            pass
-        return "Retry check"
+        return "Investigate"
     if status_value in {"baseline", "queued", "deferred"}:
         return "Run check"
     if status_value == "checking":
@@ -401,6 +409,10 @@ def _next_action(item: Dict[str, Any]) -> str:
     if status_value == "ignored":
         return "Ignored"
     return "Open"
+
+
+def _can_upload(item: Mapping[str, Any]) -> bool:
+    return _effective_status(item) in {"candidate", "manual_review"}
 
 
 def _valid_for_trackers(
@@ -477,6 +489,8 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
         categories.append("ua_error")
     if status_value == "manual_review" or "manual_review" in verdict:
         categories.append("manual_review")
+    if status_value == "skipped":
+        categories.append("skipped")
     return list(dict.fromkeys(categories))
 
 
@@ -1141,6 +1155,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "check_stage": item.get("check_stage", ""),
         "display_status": item["display_status"],
         "next_action": item["next_action"],
+        "can_upload": bool(item.get("can_upload")),
         "flags": item["check_flags"],
         "alert_tags": item.get("alert_tags") or [],
         "stage_flow": item["stage_flow"],
@@ -1155,6 +1170,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "valid_for_trackers": item["valid_for_trackers"],
         "decision_notice": item["decision_notice"],
         "decision_label": item.get("decision_label") or _decision_label(item),
+        "decision": item.get("check_results", {}).get("decision", {}) if isinstance(item.get("check_results"), dict) else {},
         "reason_categories": item["reason_categories"],
         "coverage_status": item["coverage_status"],
         "tracker_coverage": item.get("tracker_coverage") or [],
@@ -1186,6 +1202,9 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         "srrdb": stored_checks.get("srrdb") or {},
         "release_group_policy": stored_checks.get("release_group_policy") or {},
         "coverage_resolution": stored_checks.get("coverage_resolution") or {},
+        "decision": stored_checks.get("decision") or {},
+        "rules": stored_checks.get("rules") or [],
+        "ruleset_version": stored_checks.get("ruleset_version") or 0,
         "flags": item["check_flags"],
         "diagnostics": stored_checks.get("diagnostics") or {"stages": [], "last_error": {}},
     }
@@ -1335,6 +1354,9 @@ def _upload_console_context(item: Dict[str, Any]) -> Dict[str, Any]:
     path_info = _upload_console_path(item)
     args = _upload_console_args(item)
     warnings = list(path_info.get("warnings") or [])
+    blocked = not bool(item.get("can_upload", _can_upload(item)))
+    if blocked:
+        warnings.append("This item is not uploadable in its current status.")
     if _is_web_release(item) and not _source_provider_for_item(item):
         warnings.append("Source Missing: detected WEB-DL/WEBRip but no streaming service provider is known yet.")
     if any(str(flag.get("key") or "").lower() == "possible_renamed_release" for flag in item.get("check_flags") or [] if isinstance(flag, dict)):
@@ -1345,7 +1367,7 @@ def _upload_console_context(item: Dict[str, Any]) -> Dict[str, Any]:
         "path_kind": path_info["kind"],
         "args": args,
         "warnings": list(dict.fromkeys(warnings)),
-        "blocked": False,
+        "blocked": blocked,
     }
 
 
@@ -1617,7 +1639,7 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
 def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
     status_value = _effective_status(item)
     stage = str(item.get("check_stage") or "")
-    final_statuses = {"candidate", "covered", "blocked", "manual_review", "error", "ignored", "inventory", "baseline"}
+    final_statuses = {"candidate", "covered", "blocked", "skipped", "manual_review", "retry", "error", "ignored", "inventory", "baseline"}
     media_done = bool(check_results.get("media"))
     ua_done = bool(check_results.get("ua"))
     arr_done = bool(check_results.get("arr") or arr_result)
@@ -1650,7 +1672,9 @@ def _status_label(value: str) -> str:
         "candidate": "Ready",
         "covered": "Covered",
         "blocked": "Blocked",
+        "skipped": "Skipped",
         "manual_review": "Review",
+        "retry": "Retry",
         "error": "Error",
         "ignored": "Ignored",
         "inventory": "Inventory",
@@ -1792,7 +1816,7 @@ def _home_context(request: Request) -> Dict[str, Any]:
         "request": request,
         "summary_cards": [
             {"label": "Service", "value": "Running" if service["running"] else "Stopped", "detail": f"{service['running_jobs']} UA active"},
-            {"label": "Queue", "value": service["queue"]["active"], "detail": f"{service['queue']['waiting_errors']} waiting errors"},
+            {"label": "Queue", "value": service["queue"]["active"], "detail": f"{service['queue']['waiting_retries']} waiting retries"},
             {"label": "Baseline", "value": "Complete" if service["baseline_done"] else "Pending", "detail": f"{total} stored items"},
             {"label": "Maintenance", "value": str(service["maintenance"]["state"]).replace("_", " ").title(), "detail": service["maintenance"]["dependency"]},
             {
@@ -2173,6 +2197,7 @@ async def dashboard(
                 "candidates": "candidate",
                 "covered": "covered",
                 "blocked": "blocked",
+                "skipped": "skipped",
                 "manual": "manual review",
             }.get(selected, selected.replace("_", " ")),
         },
@@ -2398,6 +2423,8 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
         return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
     cfg = request.app.state.config_manager.load()
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    if not item.get("can_upload"):
+        return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
     console = item["upload_console"]
     path = str(console.get("path") or "").strip()
     if cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token") and path:
@@ -2420,6 +2447,8 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
         return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
 
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    if not item.get("can_upload"):
+        return JSONResponse({"error": "This item is not uploadable in its current status.", "success": False}, status_code=400)
     console = item["upload_console"]
     path = str(console.get("path") or "").strip()
     if not path:
@@ -2471,6 +2500,8 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
         )
 
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    if not item.get("can_upload"):
+        return JSONResponse({"error": "This item is not uploadable in its current status.", "success": False}, status_code=400)
     console = item["upload_console"]
     path = str(console.get("path") or "").strip()
     if not path:

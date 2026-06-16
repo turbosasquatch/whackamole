@@ -33,6 +33,7 @@ from app.media_policy import (
 )
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
+from app.rules import apply_decision_payload, evaluate_decision
 from app.srrdb import apply_srrdb_result, srrdb_lookup_name, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
@@ -1009,11 +1010,21 @@ class WhackamoleService:
                 started_at=started_at,
                 error=exc,
             )
+            decision = evaluate_decision(
+                item_name=str(item["name"] or ""),
+                current_status="error",
+                current_verdict="path_mapping",
+                current_reason=str(exc),
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["Path mapping"]},
+                arr_results={},
+                check_results=check_results,
+            )
+            check_results = apply_decision_payload(check_results, decision)
             self.db.update_status(
                 item_id,
-                "error",
-                "path_mapping",
-                str(exc),
+                decision.status,
+                decision.verdict,
+                decision.reason,
                 tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["Path mapping"]},
                 arr_results={},
                 check_stage="done",
@@ -1069,11 +1080,21 @@ class WhackamoleService:
                 started_at=started_at,
                 error=exc,
             )
+            decision = evaluate_decision(
+                item_name=str(item["name"] or ""),
+                current_status="retry",
+                current_verdict="http_error",
+                current_reason=f"UA HTTP error {exc.response.status_code}",
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
+                arr_results={},
+                check_results=check_results,
+            )
+            check_results = apply_decision_payload(check_results, decision)
             self.db.update_status(
                 item_id,
-                "error",
-                "http_error",
-                f"UA HTTP error {exc.response.status_code}",
+                decision.status,
+                decision.verdict,
+                decision.reason,
                 mapped_path=mapped_path,
                 ua_args=ua_args,
                 ua_log=str(exc),
@@ -1100,11 +1121,21 @@ class WhackamoleService:
                 started_at=started_at,
                 error=exc,
             )
+            decision = evaluate_decision(
+                item_name=str(item["name"] or ""),
+                current_status="retry",
+                current_verdict="ua_error",
+                current_reason=str(exc),
+                tracker_results={"passed": [], "dupe": [], "skipped": [], "error": ["UA"]},
+                arr_results={},
+                check_results=check_results,
+            )
+            check_results = apply_decision_payload(check_results, decision)
             self.db.update_status(
                 item_id,
-                "error",
-                "ua_error",
-                str(exc),
+                decision.status,
+                decision.verdict,
+                decision.reason,
                 mapped_path=mapped_path,
                 ua_args=ua_args,
                 ua_log=str(exc),
@@ -1293,7 +1324,7 @@ class WhackamoleService:
                 flags=flags,
             )
         elif reduction.status == "error":
-            next_check_at = self._next_error_check(item["attempt_count"], None)
+            pass
         else:
             check_results = add_stage_diagnostic(
                 check_results,
@@ -1302,11 +1333,26 @@ class WhackamoleService:
                 reason="UA did not produce any passed trackers for Arr comparison.",
             )
 
+        decision = evaluate_decision(
+            item_name=str(item["name"] or ""),
+            current_status=status,
+            current_verdict=verdict,
+            current_reason=reason,
+            tracker_results=reduction.tracker_results,
+            arr_results=arr_results,
+            check_results=check_results,
+        )
+        check_results = apply_decision_payload(check_results, decision)
+        if decision.retryable:
+            next_check_at = self._next_error_check(item["attempt_count"], None)
+        else:
+            next_check_at = None
+
         self.db.update_status(
             item_id,
-            status,
-            verdict,
-            reason,
+            decision.status,
+            decision.verdict,
+            decision.reason,
             mapped_path=mapped_path,
             ua_args=ua_args,
             ua_log=log,

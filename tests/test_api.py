@@ -1561,13 +1561,14 @@ def test_mediainfo_hdr_max_luminance_does_not_become_max_source(tmp_path, monkey
         assert "Source: MAX" not in page.text
 
 
-def test_dashboard_active_view_hides_waiting_errors_but_errors_view_keeps_them(tmp_path, monkeypatch):
+def test_dashboard_active_view_hides_waiting_retries_and_errors_are_terminal(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         db = client.app.state.db
         now = int(time.time())
         for torrent_hash, name in [
-            ("due-error", "Due.Error.Show.S01E01.1080p.WEB-DL-GRP"),
-            ("future-error", "Future.Error.Show.S01E01.1080p.WEB-DL-GRP"),
+            ("due-retry", "Due.Retry.Show.S01E01.1080p.WEB-DL-GRP"),
+            ("future-retry", "Future.Retry.Show.S01E01.1080p.WEB-DL-GRP"),
+            ("terminal-error", "Terminal.Error.Show.S01E01.1080p.WEB-DL-GRP"),
         ]:
             db.insert_discovered(
                 1,
@@ -1583,15 +1584,17 @@ def test_dashboard_active_view_hides_waiting_errors_but_errors_view_keeps_them(t
                 baseline=False,
             )
         rows = {row["hash"]: row for row in db.list_items([], limit=20)}
-        db.update_status(int(rows["due-error"]["id"]), "error", "ua_error", "Due now", next_check_at=now - 1)
-        db.update_status(int(rows["future-error"]["id"]), "error", "ua_error", "Waiting", next_check_at=now + 3600)
+        db.update_status(int(rows["due-retry"]["id"]), "retry", "ua_error", "Due now", next_check_at=now - 1)
+        db.update_status(int(rows["future-retry"]["id"]), "retry", "ua_error", "Waiting", next_check_at=now + 3600)
+        db.update_status(int(rows["terminal-error"]["id"]), "error", "path_mapping", "Investigate")
 
         active = client.get("/dashboard?view=active")
         errors = client.get("/dashboard?view=errors")
 
         assert active.status_code == 200
-        assert "Due.Error.Show" in active.text
-        assert "Future.Error.Show" not in active.text
+        assert "Due.Retry.Show" in active.text
+        assert "Future.Retry.Show" not in active.text
+        assert "Terminal.Error.Show" not in active.text
         assert errors.status_code == 200
-        assert "Due.Error.Show" in errors.text
-        assert "Future.Error.Show" in errors.text
+        assert "Terminal.Error.Show" in errors.text
+        assert "Due.Retry.Show" not in errors.text
