@@ -237,7 +237,7 @@ def evaluate_decision(
             rule_id, skip_verdict, skip_reason, evidence = skipped
             return _decision(rule_id, "skipped", "info", "skip", skip_verdict, skip_reason, rules, evidence)
 
-    review_flag = _first_flag(
+    review_flag = _first_review_flag(
         flags,
         {
             "source_missing",
@@ -479,6 +479,18 @@ def _first_flag(flags: Sequence[Mapping[str, Any]], keys: set[str]) -> Dict[str,
         if not isinstance(flag, Mapping):
             continue
         if str(flag.get("key") or "") in keys:
+            return dict(flag)
+    return {}
+
+
+def _first_review_flag(flags: Sequence[Mapping[str, Any]], keys: set[str]) -> Dict[str, Any]:
+    for flag in flags:
+        if not isinstance(flag, Mapping):
+            continue
+        key = str(flag.get("key") or "")
+        label = str(flag.get("label") or "")
+        severity = str(flag.get("severity") or "")
+        if key in keys or (label == "MediaInfo Error" and severity == "blocker"):
             return dict(flag)
     return {}
 

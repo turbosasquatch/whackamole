@@ -284,6 +284,30 @@ def test_config_save_reapplies_release_group_policy_to_candidates(tmp_path, monk
         assert row["verdict"] == "banned_release_group"
 
 
+def test_rules_page_lists_checks_and_replays_stored_metadata(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+
+        page = client.get("/config/rules")
+        preview = client.post("/config/rules/replay", data={"mode": "preview"})
+        row_after_preview = client.app.state.db.get_item(item_id)
+        apply = client.post("/config/rules/replay", data={"mode": "apply"})
+        row_after_apply = client.app.state.db.get_item(item_id)
+        checks = json.loads(row_after_apply["check_results"])
+
+        assert page.status_code == 200
+        assert "Stored Evidence Replay" in page.text
+        assert "arr.equal_or_better_no_targets" in page.text
+        assert "Terminal failure; investigate rather than retry automatically." in page.text
+        assert preview.status_code == 200
+        assert "Preview found 1 stored decision update" in preview.text
+        assert json.loads(row_after_preview["check_results"]) == {}
+        assert apply.status_code == 200
+        assert "Applied 1 stored decision update" in apply.text
+        assert row_after_apply["status"] == "candidate"
+        assert checks["decision"]["winning_rule_id"] == "final.candidate"
+
+
 def test_items_api_returns_paginated_summaries_without_logs(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

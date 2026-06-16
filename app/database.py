@@ -10,6 +10,13 @@ from app.inventory import build_inventory_meta, item_inventory_meta, sort_covera
 from app.media_identity import extract_release_group
 from app.media_policy import apply_release_group_policy
 from app.reducer import TRACKER_BUCKETS
+from app.rules import (
+    PROTECTED_REPLAY_STATUSES,
+    RULESET_VERSION,
+    TERMINAL_REPLAY_STATUSES,
+    add_replay_audit,
+    evaluate_decision,
+)
 
 
 REPORT_STATES = {"active", "attempted", "resolved", "deleted"}
@@ -919,6 +926,136 @@ class Database:
                 )
 
         return {"items": len(updates), "blocked_items": blocked_items, "blocked_trackers": blocked_trackers}
+
+    def reevaluate_stored_decisions(self, *, apply: bool = False, sample_limit: int = 25) -> Dict[str, Any]:
+        replay_statuses = sorted(TERMINAL_REPLAY_STATUSES)
+        protected_statuses = sorted(PROTECTED_REPLAY_STATUSES)
+        replay_placeholders = ",".join("?" for _ in replay_statuses)
+        protected_placeholders = ",".join("?" for _ in protected_statuses)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM items WHERE status IN ({replay_placeholders}) ORDER BY updated_at DESC",
+                replay_statuses,
+            ).fetchall()
+            protected_count = conn.execute(
+                f"SELECT COUNT(*) AS count FROM items WHERE status IN ({protected_placeholders})",
+                protected_statuses,
+            ).fetchone()
+
+        now = int(time.time())
+        updates: List[Tuple[str, str, str, str, int, int]] = []
+        changes: List[Dict[str, Any]] = []
+        movements: Dict[str, int] = {}
+        not_replayable = 0
+        metadata_only = 0
+        status_changes = 0
+
+        for raw_row in rows:
+            row = dict(raw_row)
+            tracker_results = _tracker_result_groups(row.get("tracker_results"), row.get("verdict"))
+            arr_results = _json_dict(row.get("arr_results"))
+            check_results = _json_dict(row.get("check_results"))
+            decision = evaluate_decision(
+                item_name=str(row.get("name") or ""),
+                current_status=str(row.get("status") or ""),
+                current_verdict=str(row.get("verdict") or ""),
+                current_reason=str(row.get("reason") or ""),
+                tracker_results=tracker_results,
+                arr_results=arr_results,
+                check_results=check_results,
+            )
+            if not decision.replayable:
+                not_replayable += 1
+                continue
+
+            previous = {
+                "status": str(row.get("status") or ""),
+                "verdict": str(row.get("verdict") or ""),
+                "reason": str(row.get("reason") or ""),
+            }
+            decision_payload = decision.to_dict()
+            stored_decision = check_results.get("decision") if isinstance(check_results.get("decision"), dict) else {}
+            rules_payload = decision.rules_payload()
+            top_level_changed = (
+                previous["status"] != decision.status
+                or previous["verdict"] != decision.verdict
+                or previous["reason"] != decision.reason
+            )
+            payload_changed = (
+                stored_decision != decision_payload
+                or check_results.get("rules") != rules_payload
+                or check_results.get("ruleset_version") != RULESET_VERSION
+            )
+            if not top_level_changed and not payload_changed:
+                continue
+
+            if top_level_changed and previous["status"] != decision.status:
+                status_changes += 1
+                movement_key = f"{previous['status']} -> {decision.status}"
+                movements[movement_key] = movements.get(movement_key, 0) + 1
+            else:
+                metadata_only += 1
+
+            if len(changes) < sample_limit:
+                changes.append(
+                    {
+                        "id": int(row["id"]),
+                        "name": str(row.get("name") or ""),
+                        "from_status": previous["status"],
+                        "to_status": decision.status,
+                        "from_verdict": previous["verdict"],
+                        "to_verdict": decision.verdict,
+                        "reason": decision.reason,
+                        "rule": decision.winning_rule_id,
+                        "metadata_only": not top_level_changed,
+                    }
+                )
+
+            if apply:
+                updated_check_results = add_replay_audit(check_results, previous=previous, decision=decision, applied_at=now)
+                updates.append(
+                    (
+                        decision.status,
+                        decision.verdict,
+                        decision.reason,
+                        json.dumps(updated_check_results),
+                        now,
+                        int(row["id"]),
+                    )
+                )
+
+        if apply and updates:
+            with self.connect() as conn:
+                conn.executemany(
+                    """
+                    UPDATE items
+                    SET status = ?,
+                        verdict = ?,
+                        reason = ?,
+                        check_results = ?,
+                        check_stage = 'done',
+                        next_check_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    updates,
+                )
+
+        changed_count = status_changes + metadata_only
+        return {
+            "applied": bool(apply),
+            "checked": len(rows),
+            "changed": changed_count,
+            "status_changes": status_changes,
+            "metadata_only": metadata_only,
+            "not_replayable": not_replayable,
+            "protected": int(protected_count["count"] or 0),
+            "protected_statuses": protected_statuses,
+            "replay_statuses": replay_statuses,
+            "movements": movements,
+            "changes": changes,
+            "sample_limit": sample_limit,
+        }
 
     def recover_stale_checking(self, next_check_at: int) -> int:
         now = int(time.time())

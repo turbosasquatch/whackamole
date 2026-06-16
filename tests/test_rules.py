@@ -1,4 +1,24 @@
+import json
+
+from app.database import Database
 from app.rules import evaluate_decision, rule_catalogue, ruleset_changelog
+
+
+def _insert(db, torrent_hash, name, status="queued"):
+    db.insert_discovered(
+        1,
+        {
+            "hash": torrent_hash,
+            "name": name,
+            "category": "tv",
+            "tags": "",
+            "content_path": f"/media/torrents/tv/{name}",
+            "progress": 1,
+        },
+        status=status,
+        baseline=False,
+    )
+    return int(db.list_items([], limit=1)[0]["id"])
 
 
 def test_rule_catalogue_has_unique_valid_entries():
@@ -104,6 +124,29 @@ def test_evaluator_reviews_source_missing_candidate():
     assert decision.winning_rule_id == "review.source_missing"
 
 
+def test_evaluator_reviews_generic_mediainfo_error_candidate():
+    decision = evaluate_decision(
+        current_status="candidate",
+        current_verdict="candidate",
+        tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+        check_results={
+            "ua": {"status": "candidate"},
+            "flags": [
+                {
+                    "key": "audio_object_missing",
+                    "label": "MediaInfo Error",
+                    "severity": "blocker",
+                    "detail": "Dolby Atmos should include object/JOC metadata.",
+                }
+            ],
+        },
+    )
+
+    assert decision.status == "manual_review"
+    assert decision.effect == "review"
+    assert decision.winning_rule_id == "review.evidence_warning"
+
+
 def test_evaluator_retries_transient_ua_failure():
     decision = evaluate_decision(
         current_status="retry",
@@ -137,3 +180,43 @@ def test_evaluator_marks_empty_legacy_rows_not_replayable():
 
     assert decision.replayable is False
     assert decision.winning_rule_id == "system.not_replayable"
+
+
+def test_stored_decision_replay_previews_then_applies_status_change(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert(db, "blocked", "Blocked.Show.S01E01.1080p.WEB-DL-GRP")
+    db.update_status(
+        item_id,
+        "blocked",
+        "no_tracker_passed",
+        "No tracker passed UA checks.",
+        tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+        check_results={"ua": {"status": "blocked", "verdict": "no_tracker_passed", "reason": "No tracker passed UA checks."}},
+    )
+
+    preview = db.reevaluate_stored_decisions(apply=False)
+    row_after_preview = db.get_item(item_id)
+    applied = db.reevaluate_stored_decisions(apply=True)
+    row_after_apply = db.get_item(item_id)
+    checks = json.loads(row_after_apply["check_results"])
+
+    assert preview["checked"] == 1
+    assert preview["changed"] == 1
+    assert preview["movements"] == {"blocked -> skipped": 1}
+    assert row_after_preview["status"] == "blocked"
+    assert applied["changed"] == 1
+    assert row_after_apply["status"] == "skipped"
+    assert checks["decision"]["winning_rule_id"] == "ua.no_uploadable_trackers"
+    assert checks["diagnostics"]["stages"][-1]["stage"] == "rules_replay"
+
+
+def test_stored_decision_replay_protects_terminal_errors(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert(db, "error", "Error.Show.S01E01.1080p.WEB-DL-GRP")
+    db.update_status(item_id, "error", "path_mapping", "Path mapping failed.")
+
+    preview = db.reevaluate_stored_decisions(apply=False)
+
+    assert preview["checked"] == 0
+    assert preview["protected"] == 1
+    assert db.get_item(item_id)["status"] == "error"

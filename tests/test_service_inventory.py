@@ -555,7 +555,7 @@ def test_full_reconcile_removes_deleted_inventory_and_requeues_lost_coverage(tmp
     assert "DP" in row["reason"]
 
 
-def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):
+def test_interrupted_ua_log_uses_retry_backoff(tmp_path, monkeypatch):
     release_title = "Interrupted.Movie.2026.1080p.NF.WEB-DL-GRP"
     MediaQuiClient.files = [
         {"index": 0, "name": f"{release_title}/{release_title}.nfo", "size": 100},
@@ -595,7 +595,7 @@ def test_interrupted_ua_log_uses_error_backoff(tmp_path, monkeypatch):
     asyncio.run(run_check())
 
     row = db.get_item(item_id)
-    assert row["status"] == "error"
+    assert row["status"] == "retry"
     assert row["verdict"] == "ua_interrupted"
     assert row["next_check_at"] is not None
 
@@ -627,7 +627,7 @@ def test_service_start_recovers_stale_checking_rows(tmp_path):
     asyncio.run(start_and_stop())
 
     row = db.get_item(item_id)
-    assert row["status"] == "error"
+    assert row["status"] == "retry"
     assert row["verdict"] == "interrupted_check"
     assert row["next_check_at"] is not None
     assert db.get_kv("last_startup_recovered_checks") == "1"
@@ -740,7 +740,7 @@ def test_web_source_missing_runs_ua_and_arr_before_review_when_candidate(tmp_pat
     ]
 
 
-def test_web_source_missing_stays_blocked_when_ua_has_no_tracker(tmp_path, monkeypatch):
+def test_web_source_missing_is_skipped_when_ua_has_no_tracker(tmp_path, monkeypatch):
     release_title = "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"
     MediaQuiClient.files = [
         {"index": 0, "name": f"{release_title}/{release_title}.nfo", "size": 100},
@@ -776,8 +776,8 @@ def test_web_source_missing_stays_blocked_when_ua_has_no_tracker(tmp_path, monke
     row = db.get_item(item_id)
     checks = json.loads(row["check_results"])
 
-    assert row["status"] == "blocked"
-    assert row["verdict"] == "no_tracker_passed"
+    assert row["status"] == "skipped"
+    assert row["verdict"] == "no_uploadable_trackers"
     assert MediaQuiClient.download_calls == 1
     assert BlockedUploadAssistantClient.calls == 1
     assert "source_missing" in {flag["key"] for flag in checks["flags"]}

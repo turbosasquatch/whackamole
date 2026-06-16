@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Rules - Whackamole{% endblock %}
+{% block page_label %}Settings{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Rules</h1>
+    <p class="muted">Ruleset {{ changelog[0].version if changelog else 1 }}</p>
+  </div>
+  <div class="button-row">
+    <a class="button secondary" href="/config">Settings</a>
+    <a class="button secondary" href="/">Dashboard</a>
+  </div>
+</section>
+
+<nav class="settings-tabs" aria-label="Settings sections">
+  <a href="/config">Settings</a>
+  <a class="active" href="/config/rules">Rules</a>
+</nav>
+
+{% if message %}
+  <p class="notice">{{ message }}</p>
+{% endif %}
+
+<section class="rules-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Stored Evidence Replay</h2>
+      <p>Candidate, review, blocked, and skipped rows only.</p>
+    </div>
+    <div class="button-row">
+      <form method="post" action="/config/rules/replay">
+        <input type="hidden" name="mode" value="preview">
+        <button class="button secondary" type="submit">Preview</button>
+      </form>
+      <form method="post" action="/config/rules/replay">
+        <input type="hidden" name="mode" value="apply">
+        <button class="button" type="submit">Apply</button>
+      </form>
+    </div>
+  </div>
+  {% if replay_result %}
+    <div class="rules-summary">
+      <span><strong>{{ replay_result.checked }}</strong> checked</span>
+      <span><strong>{{ replay_result.changed }}</strong> changed</span>
+      <span><strong>{{ replay_result.status_changes }}</strong> status changes</span>
+      <span><strong>{{ replay_result.metadata_only }}</strong> metadata only</span>
+      <span><strong>{{ replay_result.not_replayable }}</strong> not replayable</span>
+      <span><strong>{{ replay_result.protected }}</strong> protected</span>
+    </div>
+    {% if replay_result.movements %}
+      <div class="rules-movements">
+        {% for movement, count in replay_result.movements.items() %}
+          <span class="pill neutral">{{ movement }} - {{ count }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if replay_result.changes %}
+      <div class="table-wrap rules-table-wrap">
+        <table class="responsive-table rules-changes-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Status</th>
+              <th>Rule</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for change in replay_result.changes %}
+              <tr>
+                <td>
+                  <a href="/items/{{ change.id }}">{{ change.name }}</a>
+                  {% if change.metadata_only %}<span class="pill neutral">metadata</span>{% endif %}
+                </td>
+                <td>{{ change.from_status }} -&gt; {{ change.to_status }}</td>
+                <td><code>{{ change.rule }}</code></td>
+                <td>{{ change.reason }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  {% endif %}
+</section>
+
+<section class="rules-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Vocabulary</h2>
+      <p>Severity records evidence. Effect records the decision.</p>
+    </div>
+  </div>
+  <div class="rules-vocabulary">
+    <div>
+      <h3>Severity</h3>
+      {% for term in severity_terms %}
+        <span class="severity-pill {{ term.key }}">{{ term.label }}</span>
+        <p>{{ term.detail }}</p>
+      {% endfor %}
+    </div>
+    <div>
+      <h3>Effect</h3>
+      {% for term in effect_terms %}
+        <span class="pill neutral">{{ term.label }}</span>
+        <p>{{ term.detail }}</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="rules-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Checks</h2>
+      <p>{{ rules | length }} active rule definitions</p>
+    </div>
+  </div>
+  <div class="table-wrap rules-table-wrap">
+    <table class="responsive-table rules-table">
+      <thead>
+        <tr>
+          <th>Rule</th>
+          <th>Type</th>
+          <th>Stage</th>
+          <th>Severity</th>
+          <th>Effect</th>
+          <th>Evidence</th>
+          <th>Config</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rule in rules | sort(attribute="order") %}
+          <tr>
+            <td>
+              <strong>{{ rule.label }}</strong>
+              <code>{{ rule.id }}</code>
+            </td>
+            <td>{{ rule.kind }}</td>
+            <td>{{ rule.stage }}</td>
+            <td><span class="severity-pill {{ rule.severity }}">{{ rule.severity }}</span></td>
+            <td><span class="pill neutral">{{ rule.effect }}</span></td>
+            <td><code>{{ rule.evidence }}</code></td>
+            <td>{{ rule.configurable }}</td>
+            <td>{{ rule.notes }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="rules-panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Changelog</h2>
+      <p>Machine-readable entries are rendered from the ruleset payload.</p>
+    </div>
+  </div>
+  <div class="table-wrap rules-table-wrap">
+    <table class="responsive-table rules-changelog-table">
+      <thead>
+        <tr>
+          <th>Version</th>
+          <th>Summary</th>
+          <th>Replay</th>
+          <th>Changed Rules</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in changelog %}
+          <tr>
+            <td>{{ entry.version }}</td>
+            <td>{{ entry.summary }}</td>
+            <td>{{ "Yes" if entry.replay_recommended else "No" }}</td>
+            <td>
+              {% for rule_id in entry.changed_rules %}
+                <code>{{ rule_id }}</code>{% if not loop.last %} {% endif %}
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

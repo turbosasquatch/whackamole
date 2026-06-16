@@ -616,6 +616,7 @@ a:focus-visible {
 .details-panel,
 .info-grid > section,
 .settings section,
+.rules-panel,
 .probe-grid,
 .empty-state {
   background: var(--surface);
@@ -2054,8 +2055,100 @@ dd {
 }
 
 .settings section,
+.rules-panel,
 .probe-grid {
   padding: 16px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 12px;
+}
+
+.settings-tabs a {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 8px 12px;
+}
+
+.settings-tabs a.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.rules-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.rules-summary,
+.rules-movements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rules-summary span {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.rules-summary strong {
+  color: var(--ink);
+  display: block;
+  font-size: 18px;
+}
+
+.rules-vocabulary {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rules-vocabulary > div {
+  padding: 0;
+}
+
+.rules-vocabulary p {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0 10px;
+}
+
+.rules-table-wrap {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.rules-table th:nth-child(1),
+.rules-table td:nth-child(1) {
+  width: 18%;
+}
+
+.rules-table th:nth-child(8),
+.rules-table td:nth-child(8) {
+  width: 24%;
+}
+
+.rules-table code,
+.rules-changes-table code,
+.rules-changelog-table code {
+  display: inline-block;
+  margin-top: 3px;
+  white-space: normal;
 }
 
 .form-grid,
@@ -2282,8 +2375,13 @@ dd {
   .overview-summary-grid,
   .form-grid,
   .policy-grid,
-  .probe-grid {
+  .probe-grid,
+  .rules-vocabulary {
     grid-template-columns: 1fr;
+  }
+
+  .settings-tabs {
+    flex-wrap: wrap;
   }
 
   .check-summary-row {

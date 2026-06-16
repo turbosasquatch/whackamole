@@ -38,6 +38,7 @@ from app.inventory import (
     missing_primary_trackers,
 )
 from app.reducer import TRACKER_BUCKETS
+from app.rules import rule_catalogue, ruleset_changelog
 from app.service import WhackamoleService
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.srrdb import srrdb_lookup_name
@@ -1775,6 +1776,37 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
     }
 
 
+def _rules_context(
+    request: Request,
+    *,
+    message: str = "",
+    replay_result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    return {
+        **_shell_context(request, section="settings"),
+        "request": request,
+        "rules": rule_catalogue(),
+        "changelog": ruleset_changelog(),
+        "severity_terms": [
+            {"key": "pass", "label": "Pass", "detail": "Full pass with no issue."},
+            {"key": "info", "label": "Info", "detail": "Likely pass or clean no-op with minor flags."},
+            {"key": "warning", "label": "Warning", "detail": "Something may be wrong but can be reviewed."},
+            {"key": "error", "label": "Error", "detail": "System or evidence failure needing investigation."},
+        ],
+        "effect_terms": [
+            {"key": "candidate", "label": "Candidate", "detail": "Eligible to upload."},
+            {"key": "review", "label": "Review", "detail": "Minor rule broken; manual decision needed."},
+            {"key": "block", "label": "Block", "detail": "Clear rule broken; do not upload."},
+            {"key": "skip", "label": "Skip", "detail": "Clean no-op; no valid target remains."},
+            {"key": "retry", "label": "Retry", "detail": "Temporary failure; wait for retry window."},
+            {"key": "error", "label": "Error", "detail": "Terminal failure; investigate rather than retry automatically."},
+            {"key": "none", "label": "None", "detail": "Informational evidence only."},
+        ],
+        "message": message,
+        "replay_result": replay_result,
+    }
+
+
 def _shell_context(
     request: Request,
     section: str = "",
@@ -2660,6 +2692,27 @@ async def resume_maintenance(return_to: str = Form("/")) -> RedirectResponse:
 @app.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "config.html", _config_context(request))
+
+
+@app.get("/config/rules", response_class=HTMLResponse)
+async def rules_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "rules.html", _rules_context(request))
+
+
+@app.post("/config/rules/replay", response_class=HTMLResponse)
+async def replay_rules(request: Request, mode: str = Form("preview")) -> HTMLResponse:
+    apply_changes = mode == "apply"
+    replay_result = request.app.state.db.reevaluate_stored_decisions(apply=apply_changes)
+    changed = int(replay_result.get("changed") or 0)
+    if apply_changes:
+        message = f"Applied {changed} stored decision update{'' if changed == 1 else 's'}."
+    else:
+        message = f"Preview found {changed} stored decision update{'' if changed == 1 else 's'}."
+    return templates.TemplateResponse(
+        request,
+        "rules.html",
+        _rules_context(request, message=message, replay_result=replay_result),
+    )
 
 
 @app.post("/config", response_class=HTMLResponse)
