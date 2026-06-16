@@ -1335,19 +1335,17 @@ def _upload_console_context(item: Dict[str, Any]) -> Dict[str, Any]:
     path_info = _upload_console_path(item)
     args = _upload_console_args(item)
     warnings = list(path_info.get("warnings") or [])
-    blocked = bool(path_info.get("blocked"))
     if _is_web_release(item) and not _source_provider_for_item(item):
         warnings.append("Source Missing: detected WEB-DL/WEBRip but no streaming service provider is known yet.")
     if any(str(flag.get("key") or "").lower() == "possible_renamed_release" for flag in item.get("check_flags") or [] if isinstance(flag, dict)):
         warnings.append("Possible renamed release: review the tracker title before uploading.")
-        blocked = True
     return {
         "path": path_info["path"],
         "path_label": path_info["label"],
         "path_kind": path_info["kind"],
         "args": args,
         "warnings": list(dict.fromkeys(warnings)),
-        "blocked": blocked,
+        "blocked": False,
     }
 
 
@@ -1375,8 +1373,7 @@ def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
                 warnings.append("Path is not visible inside the Whackamole container; Upload Assistant may still see it if mappings differ.")
         except OSError as exc:
             warnings.append(f"Could not inspect path visibility: {str(exc)[:160]}")
-    blocked = any("review before uploading" in warning.lower() for warning in warnings)
-    return {"path": selected, "label": label, "kind": kind, "warnings": warnings, "blocked": blocked}
+    return {"path": selected, "label": label, "kind": kind, "warnings": warnings, "blocked": False}
 
 
 def _upload_console_args(item: Dict[str, Any]) -> str:
@@ -2427,10 +2424,6 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
     path = str(console.get("path") or "").strip()
     if not path:
         return JSONResponse({"error": "No Upload Assistant path is available for this item.", "success": False}, status_code=400)
-    if console.get("blocked"):
-        message = "; ".join(str(warning) for warning in console.get("warnings") or [] if str(warning).strip())
-        return JSONResponse({"error": message or "Upload requires manual review.", "success": False}, status_code=400)
-
     try:
         payload = await request.json()
     except Exception:
@@ -2482,9 +2475,6 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
     path = str(console.get("path") or "").strip()
     if not path:
         return JSONResponse({"error": "No Upload Assistant path is available for this item.", "success": False}, status_code=400)
-    if console.get("blocked"):
-        message = "; ".join(str(warning) for warning in console.get("warnings") or [] if str(warning).strip())
-        return JSONResponse({"error": message or "Upload requires manual review.", "success": False}, status_code=400)
     try:
         payload = await request.json()
     except Exception:

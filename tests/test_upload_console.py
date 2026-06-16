@@ -206,7 +206,7 @@ def test_upload_console_blocks_folder_name_that_would_be_normalized(tmp_path, mo
         assert response.json()["args"] == "--trackers dp --unattended"
 
 
-def test_upload_console_blocks_possible_renamed_release_flag(tmp_path, monkeypatch):
+def test_upload_console_allows_possible_renamed_release_flag(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         cfg = client.app.state.config_manager.load()
         cfg.upload_assistant.url = "http://ua"
@@ -238,9 +238,10 @@ def test_upload_console_blocks_possible_renamed_release_flag(tmp_path, monkeypat
 
         assert page.status_code == 200
         assert "Possible renamed release: review the tracker title before uploading." in page.text
-        assert 'data-can-execute="false"' in page.text
-        assert response.status_code == 400
-        assert "Possible renamed release" in response.json()["error"]
+        assert 'data-can-execute="true"' in page.text
+        assert 'data-can-queue="true"' in page.text
+        assert response.status_code == 200
+        assert response.json()["args"] == "--trackers dp --unattended"
 
 
 def test_item_queue_upload_form_stays_on_item_page(tmp_path, monkeypatch):
