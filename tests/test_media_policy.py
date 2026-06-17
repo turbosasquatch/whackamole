@@ -161,6 +161,8 @@ def test_local_mediainfo_confirms_atmos_missing_from_qui():
     assert merged["status"] == "passed"
     assert not any(issue["key"] == "audio_object_missing" for issue in merged["issues"])
     assert merged["resolved_mediainfo_issues"][0]["key"] == "audio_object_missing"
+    assert "Atmos" in merged["media_tags"]
+    assert {tag["label"]: tag["state"] for tag in merged["title_tag_matches"]}["Atmos"] == "match"
 
 
 def test_mediainfo_provider_disagreement_requires_review():
@@ -199,6 +201,9 @@ def test_mediainfo_provider_disagreement_requires_review():
 
     assert merged["status"] == "manual_review"
     assert any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
+    assert "AVC" not in merged["media_tags"]
+    assert "HEVC" not in merged["media_tags"]
+    assert {tag["label"]: tag["state"] for tag in merged["title_tag_matches"]}["AVC"] == "mismatch"
 
 
 def test_video_file_payloads_ignore_nfo_files():

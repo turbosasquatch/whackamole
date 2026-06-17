@@ -275,6 +275,55 @@ def traits_from_payload(value: Mapping[str, Any]) -> ReleaseTraits:
     )
 
 
+def media_display_fields_from_files(
+    release_title: str,
+    media_files: Sequence[Mapping[str, Any]],
+    *,
+    suppressed_labels: Sequence[str] = (),
+) -> Dict[str, Any]:
+    title_traits = parse_release_traits(release_title)
+    suppressed = {str(label) for label in suppressed_labels if str(label)}
+    confirmed_tags = _media_file_labels(media_files, key="tags", suppressed=suppressed)
+    custom_formats = _media_file_labels(media_files, key="custom_formats", suppressed=suppressed)
+    media_tags = _dedupe([*confirmed_tags, *custom_formats])
+    title_tags = _title_display_tags(title_traits)
+    return {
+        "title_tags": title_tags,
+        "media_tags": media_tags,
+        "title_tag_matches": _title_tag_matches(title_traits, title_tags, media_tags),
+        "confirmed_tags": confirmed_tags,
+        "custom_formats": custom_formats,
+    }
+
+
+def ensure_media_display_fields(media: Mapping[str, Any], release_title: str = "") -> Dict[str, Any]:
+    result = dict(media) if isinstance(media, Mapping) else {}
+    if not result:
+        return result
+    if result.get("title_tags") and result.get("media_tags") and result.get("title_tag_matches"):
+        return result
+    title = str(
+        result.get("release_title")
+        or result.get("torrent_root")
+        or (result.get("local_traits") if isinstance(result.get("local_traits"), Mapping) else {}).get("title")
+        or release_title
+        or ""
+    )
+    files = list(result.get("mediainfo_files") if isinstance(result.get("mediainfo_files"), list) else [])
+    supplemental = result.get("supplemental_mediainfo_files")
+    if isinstance(supplemental, list):
+        files.extend(item for item in supplemental if isinstance(item, Mapping))
+    display = media_display_fields_from_files(
+        title,
+        [item for item in files if isinstance(item, Mapping)],
+        suppressed_labels=_suppressed_display_labels_from_issues(
+            result.get("issues") if isinstance(result.get("issues"), list) else []
+        ),
+    )
+    result.update(display)
+    return result
+
+
 def analyze_media_payloads(
     *,
     release_title: str,
@@ -309,10 +358,7 @@ def analyze_media_payloads(
     status = "manual_review" if "ERROR" in severities else "passed"
     verdict = "media_error" if status == "manual_review" else ("media_warning" if "WARNING" in severities else "media_confirmed")
     reason = _media_reason(issues)
-    confirmed_tags = _dedupe(list(title_traits.tags) + [tag for item in analyzed_files for tag in item.get("tags", [])])
-    confirmed_formats = _dedupe(
-        list(title_traits.custom_formats) + [tag for item in analyzed_files for tag in item.get("custom_formats", [])]
-    )
+    display_fields = media_display_fields_from_files(release_title, analyzed_files)
     return {
         "version": 1,
         "source": "mediainfo",
@@ -323,8 +369,7 @@ def analyze_media_payloads(
         "release_title": release_title,
         "release_group": title_traits.release_group,
         "local_traits": traits_payload(title_traits),
-        "confirmed_tags": confirmed_tags,
-        "custom_formats": confirmed_formats,
+        **display_fields,
         "issues": issues,
         "mediainfo_files": analyzed_files,
         "video_files": [
@@ -1179,6 +1224,143 @@ def _custom_formats_from_tags(
     values.extend(hdr_formats)
     values.extend(movie_versions)
     return _dedupe(values)
+
+
+def _media_file_labels(
+    files: Sequence[Mapping[str, Any]],
+    *,
+    key: str,
+    suppressed: set[str],
+) -> List[str]:
+    labels: List[str] = []
+    for file_info in files:
+        if not isinstance(file_info, Mapping):
+            continue
+        values = file_info.get(key)
+        if not isinstance(values, (list, tuple)):
+            continue
+        for value in values:
+            label = str(value or "")
+            if not label or _label_is_suppressed(label, suppressed):
+                continue
+            labels.append(label)
+    return _dedupe(labels)
+
+
+def _title_display_tags(title_traits: ReleaseTraits) -> List[str]:
+    return _dedupe([*title_traits.tags, *title_traits.custom_formats])
+
+
+def _title_tag_matches(title_traits: ReleaseTraits, title_tags: Sequence[str], media_tags: Sequence[str]) -> List[Dict[str, str]]:
+    return [
+        {
+            "label": tag,
+            "state": state,
+            "reason": _title_tag_reason(state),
+        }
+        for tag in title_tags
+        for state in [_title_tag_state(tag, title_traits, media_tags)]
+    ]
+
+
+def _title_tag_reason(state: str) -> str:
+    if state == "match":
+        return "Confirmed by MediaInfo."
+    if state == "mismatch":
+        return "Not confirmed by MediaInfo."
+    return "Not directly verified by MediaInfo."
+
+
+def _title_tag_state(tag: str, title_traits: ReleaseTraits, media_tags: Sequence[str]) -> str:
+    category = _title_tag_category(tag, title_traits)
+    if category == "neutral":
+        return "neutral"
+    return "match" if _title_tag_confirmed(tag, category, media_tags) else "mismatch"
+
+
+def _title_tag_category(tag: str, title_traits: ReleaseTraits) -> str:
+    if tag == title_traits.resolution:
+        return "resolution"
+    if tag == title_traits.scan_type:
+        return "scan_type"
+    if tag == title_traits.codec or tag in _codec_display_aliases(title_traits.codec):
+        return "codec"
+    if tag == title_traits.audio_format:
+        return "audio_format"
+    if tag == _format_channels(title_traits.audio_channels):
+        return "audio_channels"
+    if tag in title_traits.audio_objects:
+        return "audio_object"
+    if tag in title_traits.hdr_formats:
+        return "hdr_format"
+    if tag == title_traits.dv_profile:
+        return "dv_profile"
+    if tag == title_traits.bit_depth:
+        return "bit_depth"
+    if tag == title_traits.chroma:
+        return "chroma"
+    if tag in title_traits.languages:
+        return "language"
+    if tag in title_traits.subtitle_tags:
+        return "subtitle"
+    return "neutral"
+
+
+def _title_tag_confirmed(tag: str, category: str, media_tags: Sequence[str]) -> bool:
+    media = {str(value) for value in media_tags if str(value)}
+    lowered = {value.lower() for value in media}
+    if category == "codec":
+        return bool(media.intersection(_codec_confirmation_labels(tag)))
+    if category == "audio_format":
+        if "Atmos" in tag or tag == "DTS:X":
+            return tag in media
+        return any(_audio_family(value) == _audio_family(tag) for value in media)
+    if category == "hdr_format" and tag == "HDR10":
+        return "HDR10" in media or "HDR10+" in media
+    if category == "subtitle":
+        return tag in media or (tag in {"Subbed", "Softsubs", "External Subs"} and "Subtitles" in media)
+    if category == "language":
+        return tag.lower() in lowered
+    return tag in media
+
+
+def _codec_confirmation_labels(tag: str) -> set[str]:
+    codec = tag
+    if tag == "HEVC/x265":
+        codec = "HEVC"
+    elif tag == "AVC/x264":
+        codec = "AVC"
+    labels = {codec}
+    labels.update(_codec_display_aliases(codec))
+    return labels
+
+
+def _codec_display_aliases(codec: str) -> set[str]:
+    if codec == "HEVC":
+        return {"HEVC/x265"}
+    if codec == "AVC":
+        return {"AVC/x264"}
+    return set()
+
+
+def _label_is_suppressed(label: str, suppressed: set[str]) -> bool:
+    if label in suppressed:
+        return True
+    aliases = set()
+    for value in suppressed:
+        aliases.update(_codec_display_aliases(value))
+        aliases.update(_codec_confirmation_labels(value) if value in {"HEVC/x265", "AVC/x264"} else set())
+    return label in aliases
+
+
+def _suppressed_display_labels_from_issues(issues: Sequence[Any]) -> List[str]:
+    labels: List[str] = []
+    for issue in issues:
+        if not isinstance(issue, Mapping) or str(issue.get("key") or "") != "mediainfo_provider_disagreement":
+            continue
+        message = str(issue.get("message") or "")
+        labels.extend(value.strip() for value in re.findall(r"(?:QUI|Local MediaInfo)=([^,;.]+)", message) if value.strip())
+    return _dedupe(labels)
 
 
 def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tuple[int, List[str], str]:

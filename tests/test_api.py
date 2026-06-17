@@ -217,6 +217,59 @@ def _seed_item(client: TestClient) -> int:
     return item_id
 
 
+def test_item_page_separates_title_and_confirmed_mediainfo_tags(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        release = "Movie.2024.2160p.BluRay.TrueHD.Atmos.7.1.HDR10.x265-GRP"
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "media_error",
+            "Name says 7.1, but MediaInfo reports 5.1.",
+            check_results={
+                "media": {
+                    "status": "manual_review",
+                    "media_status": "error",
+                    "release_title": release,
+                    "confirmed_tags": ["2160p", "BluRay", "7.1"],
+                    "custom_formats": ["HEVC/x265"],
+                    "issues": [
+                        {
+                            "severity": "ERROR",
+                            "key": "audio_channels_mismatch",
+                            "message": "Name says 7.1, but MediaInfo reports 5.1.",
+                        }
+                    ],
+                    "mediainfo_files": [
+                        {
+                            "name": f"{release}/{release}.mkv",
+                            "tags": ["2160p", "progressive", "HEVC", "TrueHD", "5.1", "HDR10", "Subtitles"],
+                            "custom_formats": ["HEVC/x265", "TrueHD", "HDR10"],
+                            "traits": {
+                                "resolution": "2160p",
+                                "codec": "HEVC",
+                                "audio_format": "TrueHD",
+                                "audio_channels": 5.1,
+                                "hdr_formats": ["HDR10"],
+                                "subtitle_tags": ["Subtitles"],
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert '<span class="tag-row-label">Title</span>' in page.text
+        assert '<span class="tag-row-label">MediaInfo</span>' in page.text
+        assert '<span class="title-tag mismatch" title="Not confirmed by MediaInfo.">7.1</span>' in page.text
+        assert '<span class="title-tag neutral" title="Not directly verified by MediaInfo.">BluRay</span>' in page.text
+        assert '<span class="media-confirmed-tag">5.1</span>' in page.text
+        assert '<span class="media-confirmed-tag">7.1</span>' not in page.text
+
+
 def test_detailed_api_requires_bearer_token(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

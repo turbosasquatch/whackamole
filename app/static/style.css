@@ -1016,6 +1016,31 @@ tr:last-child td {
   margin-bottom: 10px;
 }
 
+.media-tag-block {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.media-tag-row {
+  align-items: flex-start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.media-tag-row .tag-list {
+  margin-bottom: 0;
+}
+
+.tag-row-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 20px;
+  text-transform: uppercase;
+}
+
 .media-table .coverage-badges,
 .media-table .tracker-chip-list {
   flex-wrap: nowrap;
@@ -1318,6 +1343,25 @@ tr:last-child td {
   background: var(--amber-bg);
   border-color: #fde68a;
   color: var(--amber);
+}
+
+.tag-list span.title-tag.match,
+.tag-list span.media-confirmed-tag {
+  background: var(--green-bg);
+  border-color: #bbf7d0;
+  color: var(--green);
+}
+
+.tag-list span.title-tag.mismatch {
+  background: var(--red-bg);
+  border-color: #fecaca;
+  color: var(--red);
+}
+
+.tag-list span.title-tag.neutral {
+  background: var(--surface-strong);
+  border-color: var(--line-strong);
+  color: #475569;
 }
 
 .discovarr-attributes {

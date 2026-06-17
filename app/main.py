@@ -37,6 +37,7 @@ from app.inventory import (
     item_inventory_meta,
     missing_primary_trackers,
 )
+from app.media_identity import ensure_media_display_fields
 from app.reducer import TRACKER_BUCKETS
 from app.rules import rule_catalogue, ruleset_changelog
 from app.service import WhackamoleService
@@ -151,6 +152,7 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
     arr_result = _arr_result(item.get("arr_results"))
     check_results = _check_results(item.get("check_results"))
+    check_results = _check_results_with_media_display(check_results, str(item.get("name") or ""))
     inventory_meta = item_inventory_meta(item)
     item_coverage = coverage_for_item(item, coverage or {})
     item["tracker_results"] = tracker_groups
@@ -182,6 +184,15 @@ def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = No
     item["discovarr_local_traits"] = _discovarr_local_traits(item, check_results, arr_result)
     item["arr_release_views"] = _arr_release_views(arr_result, item["discovarr_local_traits"])
     return item
+
+
+def _check_results_with_media_display(check_results: Dict[str, Any], item_name: str = "") -> Dict[str, Any]:
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    if not media:
+        return check_results
+    result = dict(check_results)
+    result["media"] = ensure_media_display_fields(media, item_name)
+    return result
 
 
 def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:

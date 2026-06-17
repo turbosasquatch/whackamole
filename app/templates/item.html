@@ -155,20 +155,23 @@
           </div>
         </div>
         {% if media.reason %}<p>{{ media.reason }}</p>{% endif %}
-        <div class="tag-list">
-          {% set seen_media_tags = namespace(values=[]) %}
-          {% for tag in media.confirmed_tags or [] %}
-            {% if tag not in seen_media_tags.values %}
-              {% set seen_media_tags.values = seen_media_tags.values + [tag] %}
-              <span>{{ tag }}</span>
-            {% endif %}
-          {% endfor %}
-          {% for tag in media.custom_formats or [] %}
-            {% if tag not in seen_media_tags.values %}
-              {% set seen_media_tags.values = seen_media_tags.values + [tag] %}
-              <span>{{ tag }}</span>
-            {% endif %}
-          {% endfor %}
+        <div class="media-tag-block">
+          <div class="media-tag-row">
+            <span class="tag-row-label">Title</span>
+            <div class="tag-list title-tag-list">
+              {% for tag in media.title_tag_matches or [] %}
+                <span class="title-tag {{ tag.state or 'neutral' }}" title="{{ tag.reason or '' }}">{{ tag.label }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="media-tag-row">
+            <span class="tag-row-label">MediaInfo</span>
+            <div class="tag-list mediainfo-tag-list">
+              {% for tag in media.media_tags or [] %}
+                <span class="media-confirmed-tag">{{ tag }}</span>
+              {% endfor %}
+            </div>
+          </div>
         </div>
         <table class="mini-table responsive-table">
           <thead>

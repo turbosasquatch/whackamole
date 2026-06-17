@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from app.check_results import empty_check_results, merge_check_results
-from app.media_identity import analyze_media_payloads, extract_release_group
+from app.media_identity import analyze_media_payloads, extract_release_group, media_display_fields_from_files
 
 
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
@@ -40,6 +40,9 @@ def build_media_manual_result(verdict: str, reason: str, files: Sequence[Mapping
         "release_group": "",
         "confirmed_tags": [],
         "custom_formats": [],
+        "title_tags": [],
+        "media_tags": [],
+        "title_tag_matches": [],
         "issues": [
             {
                 "severity": "ERROR",
@@ -154,6 +157,19 @@ def merge_mediainfo_provider_results(
         result["resolved_mediainfo_issues"] = resolved_issues
     result["issues"] = remaining_issues
     _refresh_media_result_status(result, primary)
+    result.update(
+        media_display_fields_from_files(
+            str(result.get("release_title") or primary.get("release_title") or supplemental.get("release_title") or ""),
+            [
+                *[
+                    item for item in primary.get("mediainfo_files", [])
+                    if isinstance(item, Mapping)
+                ],
+                *supplemental_files,
+            ],
+            suppressed_labels=_provider_disagreement_labels(primary, supplemental),
+        )
+    )
     return result
 
 
@@ -220,6 +236,57 @@ def _provider_disagreement_issues(
                 }
             )
     return issues
+
+
+def _provider_disagreement_labels(primary: Mapping[str, Any], supplemental: Mapping[str, Any]) -> List[str]:
+    primary_files = {
+        int(item.get("index") or 0): item
+        for item in primary.get("mediainfo_files", [])
+        if isinstance(item, Mapping)
+    } if isinstance(primary.get("mediainfo_files"), list) else {}
+    supplemental_files = {
+        int(item.get("index") or 0): item
+        for item in supplemental.get("mediainfo_files", [])
+        if isinstance(item, Mapping)
+    } if isinstance(supplemental.get("mediainfo_files"), list) else {}
+    labels: List[str] = []
+    for index, primary_file in primary_files.items():
+        supplemental_file = supplemental_files.get(index)
+        if not supplemental_file:
+            continue
+        primary_traits = primary_file.get("traits") if isinstance(primary_file.get("traits"), Mapping) else {}
+        supplemental_traits = supplemental_file.get("traits") if isinstance(supplemental_file.get("traits"), Mapping) else {}
+        for field in ("resolution", "codec", "audio_channels"):
+            left = primary_traits.get(field)
+            right = supplemental_traits.get(field)
+            if left and right and left != right:
+                labels.extend([_provider_display_label(field, left), _provider_display_label(field, right)])
+        left_audio = str(primary_traits.get("audio_format") or "")
+        right_audio = str(supplemental_traits.get("audio_format") or "")
+        if left_audio and right_audio and _audio_provider_family(left_audio) != _audio_provider_family(right_audio):
+            labels.extend([left_audio, right_audio])
+    return _dedupe_labels(labels)
+
+
+def _provider_display_label(field: str, value: Any) -> str:
+    if field == "audio_channels":
+        try:
+            return f"{float(value):.1f}"
+        except (TypeError, ValueError):
+            return str(value or "")
+    return str(value or "")
+
+
+def _dedupe_labels(values: Sequence[str]) -> List[str]:
+    seen = set()
+    labels: List[str] = []
+    for value in values:
+        label = str(value or "")
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return labels
 
 
 def _audio_provider_family(value: str) -> str:

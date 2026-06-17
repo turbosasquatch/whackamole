@@ -123,6 +123,44 @@ def test_media_analysis_blocks_missing_claimed_atmos_metadata():
     assert any(issue["key"] == "audio_object_missing" and issue["severity"] == "ERROR" for issue in result["issues"])
 
 
+def test_media_display_tags_are_only_confirmed_from_mediainfo():
+    release = "Movie.2024.2160p.BluRay.TrueHD.Atmos.7.1.HDR10.x265-GRP"
+    result = analyze_media_payloads(
+        release_title=release,
+        media_files=[{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}],
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {
+                        "@type": "Video",
+                        "Format": "HEVC",
+                        "Width": "3840",
+                        "Height": "2160",
+                        "ScanType": "Progressive",
+                        "BitDepth": "10",
+                        "HDR_Format": "HDR10",
+                    },
+                    {"@type": "Audio", "Format": "TrueHD", "Channels": "6"},
+                    {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+                ],
+            }
+        ],
+    )
+    title_states = {tag["label"]: tag["state"] for tag in result["title_tag_matches"]}
+
+    assert "5.1" in result["media_tags"]
+    assert "7.1" not in result["media_tags"]
+    assert "7.1" not in result["confirmed_tags"]
+    assert title_states["2160p"] == "match"
+    assert title_states["HEVC"] == "match"
+    assert title_states["HDR10"] == "match"
+    assert title_states["7.1"] == "mismatch"
+    assert title_states["Atmos"] == "mismatch"
+    assert title_states["BluRay"] == "neutral"
+
+
 def test_media_analysis_keeps_warnings_non_blocking():
     release = "Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GRP"
     result = analyze_media_payloads(
