@@ -65,6 +65,7 @@ PROVIDER_ALIASES = {
     "NF": "Netflix",
     "AMZN": "Amazon",
     "DSNP": "Disney+",
+    "ATV": "Apple TV+",
     "ATVP": "Apple TV+",
     "HMAX": "Max",
     "HULU": "Hulu",
@@ -595,7 +596,8 @@ _MEDIAINFO_FIELD_ALIASES = {
 def extract_release_group(value: str) -> str:
     name = PurePosixPath(str(value or "")).name
     name = re.sub(r"\.(?:mkv|mp4|m4v|avi|m2ts|ts|mov|wmv|nfo)$", "", name, flags=re.IGNORECASE)
-    match = re.search(r"-([A-Za-z0-9][A-Za-z0-9._&+]{1,})$", name)
+    name = re.sub(r"[\s.)\]}]+$", "", name)
+    match = re.search(r"-\s*([A-Za-z0-9][A-Za-z0-9._&+]{1,})$", name)
     if match and _looks_like_release_group(match.group(1)):
         return match.group(1)
     tail = re.split(r"[ ._\[\]()]+", name.strip())[-1]
@@ -800,18 +802,29 @@ def _policy_blocking_issues(
     issues: List[Dict[str, Any]] = []
     if (
         title_traits.resolution == "1080p"
-        and title_traits.source == "bluray_encode"
-        and title_traits.rip_type != "remux"
-        and title_traits.audio_format == "DTS-HD MA"
+        and title_traits.source in {"bluray_encode", "bluray_remux"}
+        and str((file_result.get("traits") if isinstance(file_result.get("traits"), Mapping) else {}).get("audio_format") or title_traits.audio_format)
+        == "DTS-HD MA"
     ):
         issues.append(
             _issue(
                 "ERROR",
                 "bloated_audio",
-                "1080p BluRay encodes with DTS-HD MA audio are considered bloated.",
+                "1080p BluRay releases with DTS-HD MA audio are considered bloated.",
                 file_result,
             )
-    )
+        )
+
+    media_traits = file_result.get("traits") if isinstance(file_result.get("traits"), Mapping) else {}
+    if str(media_traits.get("audio_format") or "") == "FLAC" and float(media_traits.get("audio_channels") or 0) > 2.0:
+        issues.append(
+            _issue(
+                "ERROR",
+                "bloated_audio",
+                "FLAC audio is only allowed for mono or stereo releases.",
+                file_result,
+            )
+        )
 
     default_language = _language_name(default_audio) if isinstance(default_audio, Mapping) else ""
     audio_tracks = file_result.get("audio") if isinstance(file_result.get("audio"), list) else []
@@ -1048,7 +1061,7 @@ def _parse_audio_format(text: str) -> Tuple[str, int]:
         ("TrueHD", r"\b(?:true[ ._-]?hd|truhd|mlp[ ._-]?fba)(?=[ ._-]?\d|\b)", None),
         (
             "DTS-HD MA",
-            r"\bdts[ ._-]?hd[ ._-]?ma(?=[ ._-]?\d|\b)|\bdts[ ._-]?ma(?=[ ._-]?\d|\b)|\bdts[ ._-]?hd[ ._-]?master\b",
+            r"\bdts[ ._-]?hd(?:[ ._-]?ma)?(?=[ ._-]?\d|\b)|\bdts[ ._-]?ma(?=[ ._-]?\d|\b)|\bdts[ ._-]?hd[ ._-]?master\b",
             None,
         ),
         ("FLAC", r"\bflac(?=[ ._-]?\d|\b)", None),
@@ -1386,7 +1399,19 @@ def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tu
         "TransferCharacteristics",
         "MatrixCoefficients",
     ).lower()
-    descriptive_text = _joined_track_text(video, "Title", "title", "Format_Profile", "Format_Commercial_IfAny").lower()
+    descriptive_text = _joined_track_text(
+        video,
+        "Title",
+        "title",
+        "Format",
+        "Format_Profile",
+        "Format_Commercial_IfAny",
+        "CodecID",
+        "CodecID_Info",
+        "CodecID/Info",
+        "CodecID_Compatible",
+        "Codec",
+    ).lower()
     text = " ".join(value for value in (hdr_format_text, color_text, descriptive_text) if value)
     bit_depth = _number_from_value(_track_value(video, "BitDepth", "bitDepth"))
     transfer = _track_text(video, "transfer_characteristics", "TransferCharacteristics").lower()
@@ -1403,7 +1428,8 @@ def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tu
     has_dv = bool(
         "dolby vision" in text
         or re.search(r"\bdv\b|dovi", text)
-        or re.search(r"\bdvhe[. ]?0?[578]\b", text)
+        or re.search(r"\b(?:dvhe|dvh1|dvav)[. ]?0?[578]\b", text)
+        or re.search(r"\bdvh1\b", text)
         or "bl+rpu" in text
     )
     has_hdr10plus = "hdr10+" in text or "smpte st 2094" in text or "dynamic metadata" in text
@@ -1421,7 +1447,7 @@ def _hdr_from_mediainfo(video: Mapping[str, Any], fallback: ReleaseTraits) -> Tu
     )
     has_hdr10 = explicit_hdr10 or inferred_hdr10
     has_hlg = "hlg" in text
-    profile_match = re.search(r"profile[^\d]*([578])|dvhe[. ]0?([578])", text)
+    profile_match = re.search(r"profile[^\d]*([578])|(?:dvhe|dvh1|dvav)[. ]0?([578])", text)
     dv_profile = f"DV P{profile_match.group(1) or profile_match.group(2)}" if profile_match else fallback.dv_profile
     formats = []
     if has_dv:

@@ -9,7 +9,11 @@ from app.media_identity import (
     traits_from_mediainfo,
     traits_payload,
 )
-from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title
+from app.source_providers import (
+    extract_provider_abbreviation,
+    extract_provider_from_release_title,
+    provider_abbreviation_for_label,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "mediainfo"
 
@@ -34,6 +38,14 @@ def test_source_provider_can_be_extracted_from_release_title_web_position():
     assert extract_provider_from_release_title("Amy_Bradley_Is_Missing_S01E03_2025_2160p_NF_WEB-DL_DDP5_1") == "NF"
     assert extract_provider_from_release_title("Squatters.S01E07.1080p.HULU.WEB-DL.AAC2.0") == "HULU"
     assert extract_provider_from_release_title("24.Hours.in.Police.Custody.S01.1080p.Amazon.WEB-DL.DD+.2.0.x264-TrollHD") == "AMZN"
+    assert extract_provider_from_release_title("She.Said.2022.2160p.MA.WEB-DL.DDP5.1.Atmos.H.265-HONE") == "MA"
+    assert extract_provider_from_release_title("Shrinking.S03.2160p.ATV.WEB-DL.DDP5.1.Atmos.H.265-HONE") == "ATVP"
+
+
+def test_source_provider_recognises_movies_anywhere_and_apple_tv_aliases():
+    assert provider_abbreviation_for_label("Movies Anywhere") == "MA"
+    assert provider_abbreviation_for_label("Apple TV") == "ATVP"
+    assert extract_provider_abbreviation("Source: MA") == "MA"
 
 
 def test_source_provider_title_extraction_avoids_short_title_words():
@@ -48,6 +60,8 @@ def test_release_identity_parses_symbol_release_group():
 
 def test_release_identity_parses_non_dash_tail_group_but_rejects_format_tail():
     assert extract_release_group("Convicting.A.Murderer.2023.S01.1080p.WebRip.X264.Will1869") == "Will1869"
+    assert extract_release_group("Tom Clancys Jack Ryan (2018) S03 (2160p AMZN WEB-DL H265 HDR10+ DDP Atmos 5.1 English - HONE)") == "HONE"
+    assert extract_release_group("1917.(2019).(2160p.MA.WEB-DL.Hybrid.H265.DV.HDR.DDP.Atmos.5.1.English.-.HONE)") == "HONE"
     assert extract_release_group("Odd.Release.7") == ""
     assert extract_release_group("Movie.2024.2160p.WEB-DL.H.265") == ""
     assert extract_release_group("Mile.22.2018.HYBRiD.2160p.WEB-DL.DoVi.HDR10Plus.HEVC.DTS-HD.MA.7") == ""

@@ -99,10 +99,11 @@ async def compare_item_with_arr(
         return result
 
     try:
+        matched_media: Optional[Dict[str, Any]] = None
         if identity.kind == "sonarr":
-            releases, indexers = await _sonarr_releases(identity, local_traits, cfg, secrets, metadata_cache)
+            releases, indexers, matched_media = await _sonarr_releases(identity, local_traits, cfg, secrets, metadata_cache)
         elif identity.kind == "radarr":
-            releases, indexers = await _radarr_releases(identity, cfg, secrets, metadata_cache)
+            releases, indexers, matched_media = await _radarr_releases(identity, cfg, secrets, metadata_cache)
         else:
             result["reason"] = "Whackamole could not determine whether this item belongs to Sonarr or Radarr."
             result["decisions"] = _manual_decisions(passed_trackers, result["reason"])
@@ -115,9 +116,13 @@ async def compare_item_with_arr(
     except Exception as exc:
         result["reason"] = f"Arr comparison unavailable: {str(exc)[:180]}"
         result["errors"].append(result["reason"])
+        if _is_pre_release_arr_error(str(exc)):
+            result["verdict"] = "pre_release"
         result["decisions"] = _manual_decisions(passed_trackers, result["reason"])
         return result
 
+    if matched_media:
+        result["media"].update(_arr_media_metadata(matched_media))
     decisions = evaluate_tracker_decisions(
         passed_trackers=passed_trackers,
         local_traits=local_traits,
@@ -304,7 +309,7 @@ async def _sonarr_releases(
     cfg: AppConfig,
     secrets: SecretStore,
     metadata_cache: Optional[ArrMetadataCache] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     api_key = secrets.get("sonarr_api_key")
     if not cfg.sonarr.url or not api_key:
         raise RuntimeError("Sonarr URL or API key is not configured")
@@ -329,7 +334,7 @@ async def _sonarr_releases(
         if not _season_has_started(episodes):
             raise RuntimeError("Sonarr season has not started airing yet; review pre-release uploads manually")
         releases = await client.search_releases(series_id=series_id, season_number=identity.season)
-        return releases, indexers
+        return releases, indexers, series
 
     if _season_appears_fully_released(episodes, identity.season):
         raise RuntimeError("Sonarr season appears fully released; review for a season pack instead of an episode upload")
@@ -339,7 +344,7 @@ async def _sonarr_releases(
     if not _episode_has_released(episode):
         raise RuntimeError("Sonarr episode has not aired yet; review pre-release uploads manually")
     releases = await client.search_releases(episode_id=int(episode["id"]))
-    return releases, indexers
+    return releases, indexers, series
 
 
 async def _radarr_releases(
@@ -347,7 +352,7 @@ async def _radarr_releases(
     cfg: AppConfig,
     secrets: SecretStore,
     metadata_cache: Optional[ArrMetadataCache] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     api_key = secrets.get("radarr_api_key")
     if not cfg.radarr.url or not api_key:
         raise RuntimeError("Radarr URL or API key is not configured")
@@ -362,7 +367,7 @@ async def _radarr_releases(
     if not _movie_has_released(movie):
         raise RuntimeError("Radarr movie has not released yet; review pre-release uploads manually")
     releases = await client.search_releases(int(movie["id"]))
-    return releases, indexers
+    return releases, indexers, movie
 
 
 def _arr_metadata_cache_ttl(cfg: AppConfig) -> int:
@@ -568,6 +573,45 @@ def _same_release_scope(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
 
 def _media_payload(identity: MediaIdentity) -> Dict[str, Any]:
     return asdict(identity)
+
+
+def _arr_media_metadata(media: Mapping[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    original_language = _language_label(
+        media.get("originalLanguage")
+        or media.get("original_language")
+        or media.get("language")
+    )
+    if original_language:
+        payload["original_language"] = original_language
+    original_title = str(media.get("originalTitle") or media.get("original_title") or "").strip()
+    if original_title:
+        payload["original_title"] = original_title
+    return payload
+
+
+def _language_label(value: Any) -> str:
+    if isinstance(value, Mapping):
+        for key in ("name", "title", "label", "language"):
+            label = _language_label(value.get(key))
+            if label:
+                return label
+        return ""
+    text = str(value or "").strip()
+    return text
+
+
+def _is_pre_release_arr_error(value: str) -> bool:
+    text = str(value or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "not released yet",
+            "has not aired",
+            "has not started airing",
+            "season has not started",
+        )
+    )
 
 
 def _compact(value: str) -> str:

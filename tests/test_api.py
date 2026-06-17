@@ -1457,7 +1457,7 @@ def test_item_video_file_rename_rejects_paths_outside_item(tmp_path, monkeypatch
         assert other_file.exists()
 
 
-def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatch):
+def test_no_video_error_item_renders_and_serializes(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         db = client.app.state.db
@@ -1478,7 +1478,7 @@ def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatc
         reason = "UA could not find video files at the mapped path. Check the torrent path/mount or rerun after mover maintenance."
         db.update_status(
             item_id,
-            "manual_review",
+            "error",
             "no_video_files",
             reason,
             ua_log="No Video files found",
@@ -1491,7 +1491,7 @@ def test_no_video_manual_review_item_renders_and_serializes(tmp_path, monkeypatc
         page_response = client.get(f"/items/{item_id}")
 
         assert api_response.status_code == 200
-        assert api_response.json()["status"] == "manual_review"
+        assert api_response.json()["status"] == "error"
         assert api_response.json()["verdict"] == "no_video_files"
         assert api_response.json()["reason"] == reason
         assert page_response.status_code == 200

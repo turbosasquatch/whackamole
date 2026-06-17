@@ -100,7 +100,6 @@ def _folder_name_review_warning(mapped_path: str, media_result: Mapping[str, Any
 
 def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     review_keys = {
-        "source_missing",
         "mediainfo_unavailable",
         "mediainfo_missing",
         "media_error",
@@ -126,6 +125,115 @@ def _candidate_blocking_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, An
         if key in blocking_keys:
             return dict(flag)
     return {}
+
+
+def _resolve_primary_language_with_arr(
+    media_result: Mapping[str, Any],
+    flags: Sequence[Mapping[str, Any]],
+    arr_results: Mapping[str, Any],
+) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+    original_language = _arr_original_language(arr_results)
+    default_language = _media_default_audio_language(media_result)
+    if not original_language or not default_language:
+        return dict(media_result), [dict(flag) for flag in flags if isinstance(flag, Mapping)]
+    if _normalise_language(original_language) != _normalise_language(default_language):
+        return dict(media_result), [dict(flag) for flag in flags if isinstance(flag, Mapping)]
+
+    resolved_flags = [
+        dict(flag)
+        for flag in flags
+        if isinstance(flag, Mapping) and str(flag.get("key") or "") != "primary_language"
+    ]
+    if len(resolved_flags) == len([flag for flag in flags if isinstance(flag, Mapping)]):
+        return dict(media_result), resolved_flags
+
+    media = dict(media_result)
+    issues = [
+        dict(issue)
+        for issue in media_result.get("issues", [])
+        if isinstance(issue, Mapping) and str(issue.get("key") or "") != "primary_language"
+    ]
+    media["issues"] = issues
+    media["flags"] = [
+        dict(flag)
+        for flag in media_result.get("flags", [])
+        if isinstance(flag, Mapping) and str(flag.get("key") or "") != "primary_language"
+    ]
+    media["primary_language_resolved_by_arr"] = {
+        "original_language": original_language,
+        "default_audio_language": default_language,
+    }
+    severities = {str(issue.get("severity") or "") for issue in issues if isinstance(issue, Mapping)}
+    if "ERROR" not in severities:
+        media["status"] = "passed"
+        media["media_status"] = "warning" if "WARNING" in severities else "confirmed"
+        media["verdict"] = "media_warning" if "WARNING" in severities else "mediainfo_passed"
+        media["reason"] = "Default audio language matches Arr original language."
+    return media, resolved_flags
+
+
+def _arr_original_language(arr_results: Mapping[str, Any]) -> str:
+    media = arr_results.get("media") if isinstance(arr_results.get("media"), Mapping) else {}
+    value = media.get("original_language") if isinstance(media, Mapping) else ""
+    if isinstance(value, Mapping):
+        for key in ("name", "title", "label", "language"):
+            nested = _arr_original_language({"media": {"original_language": value.get(key)}})
+            if nested:
+                return nested
+        return ""
+    return str(value or "").strip()
+
+
+def _media_default_audio_language(media_result: Mapping[str, Any]) -> str:
+    files = media_result.get("mediainfo_files")
+    if not isinstance(files, list):
+        return ""
+    for file_result in files:
+        if not isinstance(file_result, Mapping):
+            continue
+        default_audio = file_result.get("default_audio") if isinstance(file_result.get("default_audio"), Mapping) else {}
+        language = str(default_audio.get("language") or "").strip()
+        if language:
+            return language
+        audio_tracks = file_result.get("audio") if isinstance(file_result.get("audio"), list) else []
+        for track in audio_tracks:
+            if isinstance(track, Mapping) and str(track.get("language") or "").strip():
+                return str(track.get("language") or "").strip()
+    return ""
+
+
+def _normalise_language(value: str) -> str:
+    text = re.sub(r"\s*\([^)]*\)", "", str(value or "").strip().lower())
+    primary = text.split("-", 1)[0]
+    aliases = {
+        "en": "english",
+        "eng": "english",
+        "english": "english",
+        "de": "german",
+        "ger": "german",
+        "deu": "german",
+        "german": "german",
+        "fr": "french",
+        "fre": "french",
+        "fra": "french",
+        "french": "french",
+        "es": "spanish",
+        "spa": "spanish",
+        "spanish": "spanish",
+        "it": "italian",
+        "ita": "italian",
+        "italian": "italian",
+        "ja": "japanese",
+        "jpn": "japanese",
+        "japanese": "japanese",
+        "ko": "korean",
+        "kor": "korean",
+        "korean": "korean",
+        "ru": "russian",
+        "rus": "russian",
+        "russian": "russian",
+    }
+    return aliases.get(primary, aliases.get(text, text))
 
 
 def _review_reason_from_flag(flag: Mapping[str, Any]) -> str:
@@ -1204,12 +1312,19 @@ class WhackamoleService:
                     metadata_cache=self._arr_metadata_cache,
                 )
             status = str(arr_results.get("status") or "manual_review")
-            verdict = "candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review")
+            arr_verdict = str(arr_results.get("verdict") or "")
+            verdict = arr_verdict or ("candidate" if status == "candidate" else ("not_upgrade" if status == "blocked" else "manual_review"))
             reason = str(arr_results.get("reason") or reduction.reason)
+            media_result, flags = _resolve_primary_language_with_arr(
+                media_result,
+                check_results.get("flags", []),
+                arr_results,
+            )
             check_results = merge_check_results(
                 check_results,
+                media=media_result,
                 arr=arr_results,
-                flags=check_results.get("flags", []),
+                flags=flags,
             )
             check_results = add_stage_diagnostic(
                 check_results,
@@ -1230,6 +1345,8 @@ class WhackamoleService:
                 item_name=str(item["name"] or ""),
             )
             verdict = policy_verdict or verdict
+            if arr_verdict == "pre_release" and status == "manual_review" and verdict == "manual_review":
+                verdict = "pre_release"
             reason = policy_reason or reason
             srrdb_result: Dict[str, Any] = {}
             check_results = merge_check_results(

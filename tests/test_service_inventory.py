@@ -723,8 +723,8 @@ def test_web_source_missing_runs_ua_and_arr_before_review_when_candidate(tmp_pat
 
     row = db.get_item(item_id)
     checks = json.loads(row["check_results"])
-    assert row["status"] == "manual_review"
-    assert row["verdict"] == "source_missing"
+    assert row["status"] == "candidate"
+    assert row["verdict"] == "candidate"
     assert MediaQuiClient.download_calls == 1
     assert PassingUploadAssistantClient.calls == 1
     assert checks["nfo"]["content"] == "No provider details here."
@@ -736,8 +736,61 @@ def test_web_source_missing_runs_ua_and_arr_before_review_when_candidate(tmp_pat
         "arr",
         "policy",
         "srrdb",
-        "review_gate",
     ]
+
+
+def test_primary_language_matching_arr_original_language_does_not_block_candidate(tmp_path, monkeypatch):
+    release_title = "Example.Movie.2026.2160p.AMZN.WEB-DL.DDP5.1.H.265-GRP"
+    MediaQuiClient.files = [{"index": 1, "name": f"{release_title}/{release_title}.mkv", "size": 1000}]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 1,
+        "streams": [
+            {"@type": "Video", "Format": "HEVC", "Height": "2160", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "Japanese", "Default": "Yes"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "English", "Default": "No"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {}
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "media": {"original_language": "Japanese"},
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+    assert row["status"] == "candidate"
+    assert row["verdict"] == "candidate"
+    assert "primary_language" not in {flag["key"] for flag in checks["flags"]}
+    assert checks["media"]["primary_language_resolved_by_arr"] == {
+        "original_language": "Japanese",
+        "default_audio_language": "japanese",
+    }
 
 
 def test_web_source_missing_is_skipped_when_ua_has_no_tracker(tmp_path, monkeypatch):

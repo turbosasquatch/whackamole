@@ -99,10 +99,10 @@ def test_reducer_marks_error_logs():
     assert result.tracker_results["error"] == ["UA"]
 
 
-def test_reducer_marks_no_video_files_as_manual_review():
+def test_reducer_marks_no_video_files_as_error():
     result = reduce_ua_log(WILD_AT_HEART_NO_VIDEO_LOG)
 
-    assert result.status == "manual_review"
+    assert result.status == "error"
     assert result.verdict == "no_video_files"
     assert result.reason == (
         "UA could not find video files at the mapped path. Check the torrent path/mount or rerun after mover maintenance."

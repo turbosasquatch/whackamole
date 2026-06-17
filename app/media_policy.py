@@ -29,10 +29,11 @@ def video_file_payloads(files: Sequence[Mapping[str, Any]]) -> List[Dict[str, An
 
 
 def build_media_manual_result(verdict: str, reason: str, files: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    status = "error" if verdict == "no_video_files" else "manual_review"
     return {
         "version": 1,
         "source": "mediainfo",
-        "status": "manual_review",
+        "status": status,
         "media_status": "error",
         "verdict": verdict,
         "reason": reason,
@@ -84,6 +85,7 @@ def analyze_mediainfo(
     issue_keys = {str(issue.get("key") or "") for issue in media_result.get("issues", []) if isinstance(issue, Mapping)}
     if not video_files:
         verdict = "no_video_files"
+        status = "error"
     elif not mediainfo_payloads:
         verdict = "mediainfo_missing"
     elif status != "passed":
@@ -290,7 +292,10 @@ def _dedupe_labels(values: Sequence[str]) -> List[str]:
 
 
 def _audio_provider_family(value: str) -> str:
-    return str(value or "").replace(" Atmos", "").strip()
+    text = str(value or "").replace(" Atmos", "").strip()
+    if text == "HE-AAC":
+        return "AAC"
+    return text
 
 
 def _refresh_media_result_status(result: Dict[str, Any], primary: Mapping[str, Any]) -> None:

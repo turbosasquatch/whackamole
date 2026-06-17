@@ -108,7 +108,7 @@ def test_evaluator_blocks_hard_media_policy():
     assert decision.winning_rule_id == "media.hard_block"
 
 
-def test_evaluator_reviews_source_missing_candidate():
+def test_evaluator_keeps_source_missing_candidate_informational():
     decision = evaluate_decision(
         current_status="candidate",
         current_verdict="candidate",
@@ -119,9 +119,38 @@ def test_evaluator_reviews_source_missing_candidate():
         },
     )
 
+    assert decision.status == "candidate"
+    assert decision.effect == "candidate"
+    assert decision.winning_rule_id == "final.candidate"
+
+
+def test_evaluator_errors_no_video_files():
+    decision = evaluate_decision(
+        current_status="error",
+        current_verdict="no_video_files",
+        current_reason="UA could not find video files.",
+        tracker_results={"passed": [], "dupe": [], "skipped": [], "error": []},
+        check_results={"ua": {"status": "error", "verdict": "no_video_files"}},
+    )
+
+    assert decision.status == "error"
+    assert decision.effect == "error"
+    assert decision.winning_rule_id == "system.no_video_files"
+
+
+def test_evaluator_reviews_pre_release_arr_failure():
+    decision = evaluate_decision(
+        current_status="manual_review",
+        current_verdict="pre_release",
+        current_reason="Arr comparison unavailable: Radarr movie has not released yet.",
+        tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"status": "manual_review", "verdict": "pre_release", "reason": "Radarr movie has not released yet."},
+        check_results={"ua": {"status": "candidate"}, "arr": {"status": "manual_review", "verdict": "pre_release"}},
+    )
+
     assert decision.status == "manual_review"
-    assert decision.effect == "review"
-    assert decision.winning_rule_id == "review.source_missing"
+    assert decision.verdict == "pre_release"
+    assert decision.winning_rule_id == "arr.pre_release"
 
 
 def test_evaluator_reviews_generic_mediainfo_error_candidate():

@@ -496,6 +496,7 @@ def test_compare_item_with_arr_caches_radarr_metadata_lists(tmp_path, monkeypatc
                     "year": 2026,
                     "tmdbId": 123,
                     "status": "released",
+                    "originalLanguage": {"name": "Japanese"},
                 }
             ]
 
@@ -523,6 +524,7 @@ def test_compare_item_with_arr_caches_radarr_metadata_lists(tmp_path, monkeypatc
             )
         )
         assert result["status"] == "candidate"
+        assert result["media"]["original_language"] == "Japanese"
 
     assert FakeRadarrClient.calls == {"indexers": 1, "movies": 1, "search": 2}
 
@@ -622,6 +624,7 @@ def test_compare_item_with_arr_sends_future_radarr_movie_to_manual_review(tmp_pa
     )
 
     assert result["status"] == "manual_review"
+    assert result["verdict"] == "pre_release"
     assert "not released yet" in result["reason"]
     assert result["decisions"][0]["status"] == "manual_review"
     assert not FakeRadarrClient.searched

@@ -85,7 +85,7 @@ def reduce_ua_log(log: str) -> UAReduction:
 
     if "no video files found" in lowered:
         return UAReduction(
-            status="manual_review",
+            status="error",
             verdict="no_video_files",
             reason="UA could not find video files at the mapped path. Check the torrent path/mount or rerun after mover maintenance.",
             tracker_results=tracker_results,

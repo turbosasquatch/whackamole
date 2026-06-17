@@ -218,7 +218,7 @@ def _cache_write(cache: SrrdbCache, key: str, result: Mapping[str, Any], now: in
 
 
 def _filename_key(name: str) -> str:
-    return PurePosixPath(str(name or "")).name
+    return PurePosixPath(str(name or "")).name.casefold()
 
 
 def _dedupe_flags(flags: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:

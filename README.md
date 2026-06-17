@@ -111,6 +111,12 @@ Run tests:
 pytest
 ```
 
+Replay open reported misses (`active` plus `attempted`) against local rule code without changing live data:
+
+```bash
+WHACKAMOLE_API_TOKEN=... python tools/rule_replay.py --base-url http://100.72.6.46:9393
+```
+
 Build locally when Docker is available:
 
 ```bash

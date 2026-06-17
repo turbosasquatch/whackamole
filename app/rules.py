@@ -25,6 +25,8 @@ RULESET_CHANGELOG: List[Dict[str, Any]] = [
             "policy.all_trackers_banned",
             "media.hard_block",
             "review.source_missing",
+            "arr.pre_release",
+            "system.no_video_files",
             "review.folder_name_warning",
             "review.srrdb_mismatch",
             "system.retry_transient",
@@ -201,6 +203,19 @@ def evaluate_decision(
     if _arr_identity_error(arr):
         return _decision("arr.no_matching_media", "error", "error", "error", "arr_no_matching_media", arr_reason, rules)
 
+    no_video_flag = _first_flag(flags, {"no_video_files"})
+    if verdict == "no_video_files" or ua_verdict == "no_video_files" or no_video_flag:
+        return _decision(
+            "system.no_video_files",
+            "error",
+            "error",
+            "error",
+            "no_video_files",
+            reason or _flag_reason(no_video_flag) or "No video files were found.",
+            rules,
+            {"flag": no_video_flag} if no_video_flag else {},
+        )
+
     if verdict == "error" or ua_verdict == "error":
         return _decision("system.terminal_error", "error", "error", "error", "ua_error", reason or "UA returned an error.", rules)
 
@@ -230,6 +245,18 @@ def evaluate_decision(
             {"blocked_trackers": blocked},
         )
 
+    if status == "manual_review" and verdict == "pre_release":
+        return _decision(
+            "arr.pre_release",
+            "manual_review",
+            "warning",
+            "review",
+            "pre_release",
+            reason or arr_reason or "Arr says this media has not released yet.",
+            rules,
+            {"arr": arr},
+        )
+
     valid_trackers = _valid_trackers(groups, arr, policy, status)
     if not valid_trackers:
         skipped = _skipped_reason(groups, arr, policy, status, verdict, reason)
@@ -240,7 +267,6 @@ def evaluate_decision(
     review_flag = _first_review_flag(
         flags,
         {
-            "source_missing",
             "mediainfo_unavailable",
             "mediainfo_missing",
             "media_error",
@@ -263,7 +289,6 @@ def evaluate_decision(
         )
     if review_flag:
         rule_id = {
-            "source_missing": "review.source_missing",
             "folder_name_warning": "review.folder_name_warning",
             "missing_release_group": "review.missing_release_group",
         }.get(str(review_flag.get("key") or ""), "review.evidence_warning")
@@ -392,7 +417,7 @@ def _valid_trackers(
             and str(decision.get("tracker") or "").strip()
         )
 
-    if status == "candidate" or groups.get("passed"):
+    if status == "candidate":
         return _dedupe(str(tracker).upper() for tracker in groups.get("passed", []) if str(tracker).strip())
     return []
 
@@ -518,7 +543,9 @@ def _dedupe(values: Iterable[str]) -> List[str]:
 RULE_DEFINITIONS: List[RuleDefinition] = [
     RuleDefinition("media.identity", "MediaInfo identity", "Information", "MediaInfo", "pass", "none", "check_results.media", notes="Confirms release traits from QUI/local MediaInfo.", order=10),
     RuleDefinition("media.hard_block", "Hard media policy", "Decision", "MediaInfo", "error", "block", "check_results.flags", notes="Blocks clear media-policy failures such as bloated audio or primary language.", order=20),
-    RuleDefinition("review.source_missing", "WEB source missing", "Decision", "Source Detection", "warning", "review", "check_results.flags", notes="Reviews WEB releases without a provider in title, MediaInfo, or NFO.", order=30),
+    RuleDefinition("review.source_missing", "WEB source missing", "Information", "Source Detection", "info", "none", "check_results.flags", notes="Records WEB releases without a provider in title, MediaInfo, or NFO.", order=30),
+    RuleDefinition("arr.pre_release", "Pre-release media", "Decision", "Discovarr", "warning", "review", "check_results.arr", notes="Reviews Arr media that has not aired, released, or started its season.", order=35),
+    RuleDefinition("system.no_video_files", "No video files", "Decision", "MediaInfo", "error", "error", "check_results.flags", notes="Errors when QUI or UA cannot find any video files for the item.", order=38),
     RuleDefinition("system.terminal_error", "Terminal system error", "Decision", "System", "error", "error", "stage diagnostics", notes="Broken setup or impossible evidence that needs investigation.", order=40),
     RuleDefinition("system.retry_transient", "Transient retry", "Decision", "System", "warning", "retry", "UA/client errors", notes="Retries temporary UA/interruption/rate-limit style failures.", order=50),
     RuleDefinition("ua.no_uploadable_trackers", "No uploadable trackers", "Decision", "Upload Assistant", "info", "skip", "check_results.ua", notes="Skips clean no-op checks where no tracker accepted the release.", order=60),

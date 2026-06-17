@@ -47,6 +47,16 @@ def test_mediainfo_analysis_rejects_trait_mismatch():
     assert result["verdict"] == "media_error"
 
 
+def test_mediainfo_analysis_marks_no_video_files_as_error():
+    release = "Movie.2024.1080p.WEB-DL-GRP"
+
+    result = analyze_mediainfo(item_name=release, files=[{"index": 0, "name": f"{release}/notes.nfo"}], mediainfo_payloads=[])
+
+    assert result["status"] == "error"
+    assert result["verdict"] == "no_video_files"
+    assert any(flag["key"] == "no_video_files" for flag in result["flags"])
+
+
 def test_mediainfo_analysis_blocks_bloated_1080p_bluray_audio():
     release = "Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP"
     files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
@@ -71,6 +81,95 @@ def test_mediainfo_analysis_blocks_bloated_1080p_bluray_audio():
     assert result["status"] == "manual_review"
     assert any(issue["key"] == "bloated_audio" for issue in result["issues"])
     assert any(flag["key"] == "bloated_audio" for flag in result["flags"])
+
+
+def test_mediainfo_analysis_blocks_bloated_1080p_bluray_remux_audio():
+    release = "Movie.2024.1080p.BluRay.REMUX.DTS-HD.MA.5.1.AVC-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "DTS", "Format_Commercial_IfAny": "DTS-HD Master Audio", "Channels": "6"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert any(issue["key"] == "bloated_audio" for issue in result["issues"])
+
+
+def test_mediainfo_analysis_uses_confirmed_dts_hd_ma_for_bloated_audio():
+    release = "The.King.and.I.1956.1080p.BluRay.DTS-HD.x264-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "DTS", "Format_Commercial_IfAny": "DTS-HD Master Audio", "Channels": "6"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert any(issue["key"] == "bloated_audio" for issue in result["issues"])
+    assert not any(issue["key"] == "audio_codec_mismatch" for issue in result["issues"])
+
+
+def test_mediainfo_analysis_blocks_multichannel_flac():
+    release = "Father.of.the.Bride.1991.1080p.BluRay.FLAC.x264-O2STK"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "FLAC", "Channels": "6"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert any(issue["key"] == "bloated_audio" for issue in result["issues"])
+
+
+def test_mediainfo_analysis_accepts_mp4_dolby_vision_codec_id():
+    release = "It.Comes.at.Night.2017.2160p.WEB-DL.DD5.1.DV.MP4.x265-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mp4", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mp4",
+            "streams": [
+                {
+                    "@type": "Video",
+                    "Format": "HEVC",
+                    "CodecID": "dvh1",
+                    "CodecID_Info": "Dolby Vision",
+                    "Width": "3840",
+                    "Height": "2160",
+                    "ScanType": "Progressive",
+                    "BitDepth": "10",
+                },
+                {"@type": "Audio", "Format": "AC-3", "Channels": "6"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert "Dolby Vision" in result["mediainfo_files"][0]["traits"]["hdr_formats"]
+    assert not any(issue["key"] == "dolby_vision_missing" for issue in result["issues"])
 
 
 def test_mediainfo_analysis_blocks_undeclared_primary_language():
@@ -204,6 +303,43 @@ def test_mediainfo_provider_disagreement_requires_review():
     assert "AVC" not in merged["media_tags"]
     assert "HEVC" not in merged["media_tags"]
     assert {tag["label"]: tag["state"] for tag in merged["title_tag_matches"]}["AVC"] == "mismatch"
+
+
+def test_mediainfo_provider_disagreement_treats_aac_and_he_aac_as_same_family():
+    release = "Movie.2024.1080p.WEB-DL.AAC2.0.H.264-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "AAC", "Channels": "2"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "AAC", "Format_Profile": "HE-AAC", "Channels": "2"},
+                ],
+            }
+        ],
+    )
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert not any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
 
 
 def test_video_file_payloads_ignore_nfo_files():

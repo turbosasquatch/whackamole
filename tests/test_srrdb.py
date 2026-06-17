@@ -66,6 +66,24 @@ def test_srrdb_verifier_marks_exact_archived_filename_as_verified():
     assert client.calls == ["Movie.2024.1080p.BluRay-GRP"]
 
 
+def test_srrdb_verifier_compares_archived_filename_case_insensitively():
+    client = FakeSrrdbClient({"archived-files": [{"name": "movie.2024.1080p.bluray-grp.mkv"}]})
+
+    result = asyncio.run(
+        verify_srrdb_release(
+            item_name="Movie.2024.1080p.BluRay-GRP",
+            media_result={"torrent_root": "Movie.2024.1080p.BluRay-GRP", "complete_names": ["Movie.2024.1080p.BluRay-GRP.mkv"]},
+            client=client,
+            cache=MemoryCache(),
+            now=1000,
+        )
+    )
+
+    assert result["status"] == "verified"
+    assert result["local_video_files"] == ["Movie.2024.1080p.BluRay-GRP.mkv"]
+    assert result["proper_filenames"] == ["movie.2024.1080p.bluray-grp.mkv"]
+
+
 def test_srrdb_verifier_marks_archived_filename_mismatch_with_proper_filename():
     client = FakeSrrdbClient(
         {"archived-files": [{"name": "The.Panic.in.Needle.Park.1971.1080p.BluRay.X264-AMIABLE.mkv"}]}
