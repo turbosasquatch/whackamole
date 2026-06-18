@@ -56,6 +56,7 @@ DASHBOARD_VIEWS = {
     "active": ["queued", "deferred", "checking", "retry"],
     "candidates": ["candidate"],
     "covered": ["covered"],
+    "rejected": ["rejected"],
     "blocked": ["blocked"],
     "skipped": ["skipped"],
     "manual": ["manual_review"],
@@ -65,11 +66,12 @@ DASHBOARD_VIEWS = {
     "ignored": ["ignored"],
     "all": [],
 }
-FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "blocked", "skipped", "manual"}
+FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "rejected", "blocked", "skipped", "manual"}
 DASHBOARD_TABS = [
     ("active", "Active", ["queued", "deferred", "checking", "retry"]),
     ("candidates", "Candidates", ["candidate"]),
     ("covered", "Covered", ["covered"]),
+    ("rejected", "Rejected", ["rejected"]),
     ("blocked", "Blocked", ["blocked"]),
     ("skipped", "Skipped", ["skipped"]),
     ("manual", "Review", ["manual_review"]),
@@ -90,6 +92,7 @@ REASON_FILTERS = [
     {"key": "arr_equal_or_better", "label": "Arr equal/better", "applies_to": ["skipped"]},
     {"key": "banned_release_group", "label": "Banned release group", "applies_to": ["blocked"]},
     {"key": "srrdb_filename_mismatch", "label": "srrDB filename mismatch", "applies_to": ["manual"]},
+    {"key": "renamed_release_warning", "label": "Rename Check", "applies_to": ["manual", "rejected"]},
     {"key": "no_video", "label": "No video files", "applies_to": ["manual", "errors"]},
     {"key": "path_error", "label": "Path or mount error", "applies_to": ["manual", "errors"]},
     {"key": "ua_error", "label": "UA error", "applies_to": ["manual", "errors"]},
@@ -99,6 +102,8 @@ REPORTING_STAGES = [
     "MediaInfo",
     "Release Group",
     "srrDB",
+    "Rename Check",
+    "Tracker Moderation",
     "Source Detection",
     "Discovarr",
     "Upload Assistant",
@@ -332,6 +337,8 @@ def _check_flags(check_results: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _effective_status(item: Mapping[str, Any]) -> str:
     value = str(item.get("status") or "")
+    if value == "rejected":
+        return value
     checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
     decision = checks.get("decision") if isinstance(checks.get("decision"), dict) else {}
     decision_status = str(decision.get("status") or "")
@@ -346,6 +353,8 @@ def _effective_status(item: Mapping[str, Any]) -> str:
 def _effective_status_for_row(row: Any) -> str:
     item = dict(row)
     value = str(item.get("status") or "")
+    if value == "rejected":
+        return value
     checks = _json_object(item.get("check_results"))
     decision = checks.get("decision") if isinstance(checks.get("decision"), dict) else {}
     decision_status = str(decision.get("status") or "")
@@ -377,6 +386,8 @@ def _display_status(item: Dict[str, Any]) -> Dict[str, str]:
         return {"label": "Ready", "group": "ready", "detail": "Upload candidate"}
     if value == "covered":
         return {"label": "Covered", "group": "covered", "detail": "Coverage resolved in QUI"}
+    if value == "rejected":
+        return {"label": "Rejected", "group": "error", "detail": "Moderator rejection recorded"}
     if value == "blocked":
         return {"label": "Blocked", "group": "covered", "detail": "No upload needed"}
     if value == "skipped":
@@ -402,6 +413,8 @@ def _next_action(item: Dict[str, Any]) -> str:
         return "Review candidate"
     if status_value == "covered":
         return "Coverage resolved"
+    if status_value == "rejected":
+        return "Review rejection"
     if status_value == "blocked":
         return "Review coverage"
     if status_value == "skipped":
@@ -456,6 +469,8 @@ def _valid_for_trackers(
 
 
 def _decision_notice(item: Dict[str, Any], check_results: Dict[str, Any]) -> str:
+    if str(item.get("status") or "") == "rejected":
+        return str(item.get("reason") or "Moderator rejection recorded.").strip()
     folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
     if str(item.get("status") or "") == "candidate" and folder_check.get("group") == "warning":
         return str(folder_check.get("notes") or "").strip()
@@ -493,6 +508,8 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
         categories.append("banned_release_group")
     if "srrdb_filename_mismatch" in verdict or "srrdb_filename_mismatch" in flag_keys:
         categories.append("srrdb_filename_mismatch")
+    if "renamed_release_warning" in verdict or "renamed_release_warning" in flag_keys:
+        categories.append("renamed_release_warning")
     if "no_video" in verdict or "video files" in reason:
         categories.append("no_video")
     if "path" in verdict or "path" in reason or "mount" in reason:
@@ -501,6 +518,8 @@ def _reason_categories(item: Dict[str, Any], check_results: Dict[str, Any], arr_
         categories.append("ua_error")
     if status_value == "manual_review" or "manual_review" in verdict:
         categories.append("manual_review")
+    if status_value == "rejected":
+        categories.append("rejected")
     if status_value == "skipped":
         categories.append("skipped")
     return list(dict.fromkeys(categories))
@@ -673,7 +692,8 @@ def _summary_flag_label(label: str) -> str:
         "Media Info": "Media Info",
         "Source Detection": "Source",
         "Path Mapping": "Path",
-        "Folder Name": "Folder",
+        "Folder Name": "Rename",
+        "Rename Check": "Rename",
         "Upload Assistant": "UA",
         "Discovarr": "Discovarr",
         "Release Group": "Group",
@@ -713,20 +733,19 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
     media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
     ua = check_results.get("ua") if isinstance(check_results.get("ua"), dict) else {}
     srrdb = check_results.get("srrdb") if isinstance(check_results.get("srrdb"), dict) else {}
+    rename_detection = _rename_check(item, check_results)
     policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
     cross = item.get("cross_check") if isinstance(item.get("cross_check"), dict) else _cross_check_status(item.get("coverage") or [], item.get("valid_for_trackers") or [])
-    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
     rows = [
         _summary_row("Media Info", *_media_summary_state(media), str(media.get("reason") or ""), "mediainfo", "Raw MediaInfo", "json"),
         _summary_row("Source Detection", *_source_summary_state(item), str((item.get("nfo_info") or {}).get("message") or ""), "nfo", "NFO View", "text"),
         _summary_row("Path Mapping", *_path_summary_state(item, check_results), str(item.get("mapped_path") or item.get("content_path") or ""), "diagnostics", "Path Mapping View", "json"),
         _summary_row(
-            "Folder Name",
-            str(folder_check.get("state") or "Not Applicable"),
-            str(folder_check.get("group") or "neutral"),
-            str(folder_check.get("notes") or ""),
-            "diagnostics",
-            "Folder Name View",
+            "Rename Check",
+            *_rename_summary_state(rename_detection),
+            str(rename_detection.get("reason") or ""),
+            "rename_detection",
+            "Rename Check View",
             "json",
         ),
         _summary_row("Upload Assistant", *_ua_summary_state(item, item.get("tracker_results") or {}), str(ua.get("reason") or item.get("tracker_summary") or ""), "ua_log", "UA Log View", "text"),
@@ -736,6 +755,56 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
         _summary_row("Cross Check", *_cross_summary_state(cross), ", ".join(cross.get("trackers") or cross.get("selected") or []), "diagnostics", "Cross Check Validation", "json"),
     ]
     return rows
+
+
+def _rename_check(item: Dict[str, Any], check_results: Dict[str, Any]) -> Dict[str, Any]:
+    rename = check_results.get("rename_detection") if isinstance(check_results.get("rename_detection"), dict) else {}
+    if rename:
+        return dict(rename)
+    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
+    if str(folder_check.get("group") or "") == "warning":
+        return {
+            "version": 1,
+            "status": "manual_review",
+            "confidence": "high",
+            "reason": str(folder_check.get("notes") or "Folder name needs review before upload."),
+            "evidence": [
+                {
+                    "kind": "folder_name_warning",
+                    "scope": "folder",
+                    "confidence": "high",
+                    "source": "legacy",
+                    "value": str(folder_check.get("root_name") or ""),
+                    "expected": str(folder_check.get("normalized") or ""),
+                    "reason": str(folder_check.get("notes") or ""),
+                }
+            ],
+        }
+    for flag in _check_flags(check_results):
+        key = str(flag.get("key") or "")
+        if key in {"folder_name_warning", "possible_renamed_release", "renamed_release_warning"}:
+            return {
+                "version": 1,
+                "status": "manual_review" if key in {"folder_name_warning", "renamed_release_warning"} else "warning",
+                "confidence": "high" if key in {"folder_name_warning", "renamed_release_warning"} else "medium",
+                "reason": str(flag.get("detail") or flag.get("label") or "Rename Check needs review."),
+                "evidence": [
+                    {
+                        "kind": key,
+                        "scope": "legacy",
+                        "confidence": "high" if key != "possible_renamed_release" else "medium",
+                        "source": "legacy",
+                        "reason": str(flag.get("detail") or flag.get("label") or ""),
+                    }
+                ],
+            }
+    return {
+        "version": 1,
+        "status": "pass",
+        "confidence": "low",
+        "reason": "Rename Check did not find suspicious name mismatches.",
+        "evidence": [],
+    }
 
 
 def _summary_row(label: str, state: str, group: str, notes: str, raw_key: str, raw_title: str, raw_kind: str) -> Dict[str, str]:
@@ -776,6 +845,18 @@ def _media_summary_state(media: Dict[str, Any]) -> tuple[str, str]:
     if "warning" in value or "warning" in severities:
         return "Warning", "warning"
     return ("Pass", "pass") if value or issues == [] else ("Not Applicable", "neutral")
+
+
+def _rename_summary_state(rename_detection: Dict[str, Any]) -> tuple[str, str]:
+    status_value = str(rename_detection.get("status") or "").lower()
+    confidence = str(rename_detection.get("confidence") or "").lower()
+    if status_value == "manual_review" or confidence == "high":
+        return "Warning", "warning"
+    if status_value == "warning" or confidence == "medium":
+        return "Warning", "warning"
+    if status_value == "pass":
+        return "Pass", "pass"
+    return "Not Applicable", "neutral"
 
 
 def _path_summary_state(item: Dict[str, Any], check_results: Dict[str, Any]) -> tuple[str, str]:
@@ -1083,6 +1164,7 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     checks = item.get("check_results") if isinstance(item.get("check_results"), dict) else {}
     media = checks.get("media") if isinstance(checks.get("media"), dict) else {}
     srrdb = checks.get("srrdb") if isinstance(checks.get("srrdb"), dict) else {}
+    rename_detection = _rename_check(item, checks)
     nfo_info = item.get("nfo_info") if isinstance(item.get("nfo_info"), dict) else checks.get("nfo") if isinstance(checks.get("nfo"), dict) else {}
     raw_mediainfo = _json_array(item.get("media_raw_mediainfo_payloads")) or (media.get("raw_mediainfo_payloads") if isinstance(media, dict) else [])
     raw_local_mediainfo = _json_array(item.get("media_raw_local_mediainfo_payloads")) or (
@@ -1131,6 +1213,12 @@ def _raw_payloads(item: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "kind": "json",
             "available": bool(srrdb),
             "content": srrdb or {"message": "No srrDB verification recorded."},
+        },
+        "rename_detection": {
+            "title": "Rename Check",
+            "kind": "json",
+            "available": bool(rename_detection),
+            "content": rename_detection or {"message": "No Rename Check evidence recorded."},
         },
         "diagnostics": {
             "title": "Check diagnostics",
@@ -1188,6 +1276,7 @@ def _api_item_summary(row: Any) -> Dict[str, Any]:
         "tracker_coverage": item.get("tracker_coverage") or [],
         "cross_check": item.get("cross_check") or {},
         "folder_name_check": item.get("folder_name_check") or _folder_name_check(item),
+        "rename_detection": item.get("check_results", {}).get("rename_detection", {}) if isinstance(item.get("check_results"), dict) else {},
         "source_label": item["source_label"],
     }
 
@@ -1212,6 +1301,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
         "ua": {**(stored_checks.get("ua") if isinstance(stored_checks.get("ua"), dict) else {}), **ua},
         "arr": stored_checks.get("arr") or arr,
         "srrdb": stored_checks.get("srrdb") or {},
+        "rename_detection": stored_checks.get("rename_detection") or {},
         "release_group_policy": stored_checks.get("release_group_policy") or {},
         "coverage_resolution": stored_checks.get("coverage_resolution") or {},
         "decision": stored_checks.get("decision") or {},
@@ -1651,7 +1741,7 @@ def _tracker_summary(groups: Dict[str, List[str]]) -> str:
 def _stage_flow(item: Dict[str, Any], check_results: Dict[str, Any], arr_result: Dict[str, Any]) -> List[Dict[str, str]]:
     status_value = _effective_status(item)
     stage = str(item.get("check_stage") or "")
-    final_statuses = {"candidate", "covered", "blocked", "skipped", "manual_review", "retry", "error", "ignored", "inventory", "baseline"}
+    final_statuses = {"candidate", "covered", "rejected", "blocked", "skipped", "manual_review", "retry", "error", "ignored", "inventory", "baseline"}
     media_done = bool(check_results.get("media"))
     ua_done = bool(check_results.get("ua"))
     arr_done = bool(check_results.get("arr") or arr_result)
@@ -1683,6 +1773,7 @@ def _status_label(value: str) -> str:
     labels = {
         "candidate": "Ready",
         "covered": "Covered",
+        "rejected": "Rejected",
         "blocked": "Blocked",
         "skipped": "Skipped",
         "manual_review": "Review",
@@ -2239,6 +2330,7 @@ async def dashboard(
                 "baseline": "baseline",
                 "candidates": "candidate",
                 "covered": "covered",
+                "rejected": "rejected",
                 "blocked": "blocked",
                 "skipped": "skipped",
                 "manual": "manual review",
@@ -2263,7 +2355,7 @@ async def dashboard(
             else "",
         },
         "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query),
-        "problem_view": selected in {"blocked", "manual", "errors"},
+        "problem_view": selected in {"blocked", "manual", "rejected", "errors"},
     }
     return templates.TemplateResponse(request, "dashboard.html", context)
 
@@ -2410,6 +2502,22 @@ async def create_item_report_form(
     if row is None:
         raise HTTPException(status_code=404, detail="Item not found")
     request.app.state.db.create_report(item_id, str(row["name"] or ""), _sanitize_report_stage(stage), notes)
+    return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#reporting"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/items/{item_id}/reject")
+async def reject_item_form(
+    request: Request,
+    item_id: int,
+    stage: str = Form("Tracker Moderation"),
+    notes: str = Form(""),
+    return_to: str = Form(""),
+) -> RedirectResponse:
+    if not str(notes or "").strip():
+        raise HTTPException(status_code=400, detail="Rejected reason is required")
+    report_id = request.app.state.db.reject_item(item_id, _sanitize_report_stage(stage), notes)
+    if report_id is None:
+        raise HTTPException(status_code=404, detail="Item not found")
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}#reporting"), status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2648,6 +2756,7 @@ async def recheck_filtered_items(
         "baseline": "baseline",
         "candidates": "candidate",
         "covered": "covered",
+        "rejected": "rejected",
         "blocked": "blocked",
         "manual": "manual review",
     }[selected]
@@ -3054,6 +3163,37 @@ async def api_create_item_report(request: Request, item_id: int) -> JSONResponse
     )
     report = request.app.state.db.get_report(report_id)
     return JSONResponse({"success": True, "report": _report_payload(report)}, status_code=201)
+
+
+@app.post("/api/items/{item_id}/reject")
+async def api_reject_item(request: Request, item_id: int) -> JSONResponse:
+    _require_api_auth(request)
+    row = request.app.state.db.get_item(item_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    notes = str(payload.get("notes") or "") if isinstance(payload, dict) else ""
+    if not notes.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rejected reason is required")
+    report_id = request.app.state.db.reject_item(
+        item_id=item_id,
+        stage=_sanitize_report_stage(str(payload.get("stage") or "Tracker Moderation") if isinstance(payload, dict) else "Tracker Moderation"),
+        notes=notes,
+    )
+    if report_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    report = request.app.state.db.get_report(report_id)
+    rejected = request.app.state.db.get_item(item_id)
+    return JSONResponse(
+        {
+            "success": True,
+            "report": _report_payload(report),
+            "item": _api_item_summary(_row_detail_dict(rejected, _coverage_for_row(request.app.state.db, rejected))),
+        }
+    )
 
 
 @app.get("/api/reports")

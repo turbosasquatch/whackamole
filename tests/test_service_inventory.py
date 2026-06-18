@@ -1344,9 +1344,11 @@ def test_folder_name_warning_sends_candidate_to_review(tmp_path, monkeypatch):
     checks = json.loads(row["check_results"])
 
     assert row["status"] == "manual_review"
-    assert row["verdict"] == "folder_name_warning"
+    assert row["verdict"] == "renamed_release_warning"
     assert row["reason"] == "Folder name would be normalised to American.Crime.Story.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb."
-    assert "folder_name_warning" in {flag["key"] for flag in checks["flags"]}
+    assert "renamed_release_warning" in {flag["key"] for flag in checks["flags"]}
+    assert checks["rename_detection"]["status"] == "manual_review"
+    assert any(item["kind"] == "folder_scene_normalization" for item in checks["rename_detection"]["evidence"])
     assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == [
         "media",
         "path",
@@ -1354,5 +1356,70 @@ def test_folder_name_warning_sends_candidate_to_review(tmp_path, monkeypatch):
         "arr",
         "policy",
         "srrdb",
-        "folder_name",
+        "rename_check",
     ]
+
+
+def test_rename_check_reviews_double_dot_episode_title_without_srrdb(tmp_path, monkeypatch):
+    release_root = "Trophy.Wife.Murder.on.Safari.S01.1080p.HULU.WEB-DL.DD+5.1.H.264-playWEB"
+    MediaQuiClient.files = [
+        {
+            "index": 0,
+            "name": f"{release_root}/Trophy.Wife.Murder.on.Safari.S01E01.Jekyll..Hyde.1080p.HULU.WEB-DL.DD+5.1.H.264-playWEB.mkv",
+            "size": 1000,
+        },
+        {
+            "index": 1,
+            "name": f"{release_root}/Trophy.Wife.Murder.on.Safari.S01E02.Something.Fishy.1080p.HULU.WEB-DL.DD+5.1.H.264-playWEB.mkv",
+            "size": 1000,
+        },
+        {
+            "index": 2,
+            "name": f"{release_root}/Trophy.Wife.Murder.on.Safari.S01E03.Crocodile.Tears.1080p.HULU.WEB-DL.DD+5.1.H.264-playWEB.mkv",
+            "size": 1000,
+        },
+    ]
+    MediaQuiClient.mediainfo = {
+        "streams": [
+            {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.nfo_content = None
+    PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {}
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_root)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+
+    assert row["status"] == "manual_review"
+    assert row["verdict"] == "renamed_release_warning"
+    assert checks["rename_detection"]["status"] == "manual_review"
+    assert any(item["kind"] == "empty_title_token" for item in checks["rename_detection"]["evidence"])

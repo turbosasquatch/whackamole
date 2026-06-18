@@ -16,6 +16,7 @@ class CheckResults:
     ua: Dict[str, Any] = field(default_factory=dict)
     arr: Dict[str, Any] = field(default_factory=dict)
     srrdb: Dict[str, Any] = field(default_factory=dict)
+    rename_detection: Dict[str, Any] = field(default_factory=dict)
     release_group_policy: Dict[str, Any] = field(default_factory=dict)
     coverage_resolution: Dict[str, Any] = field(default_factory=dict)
     decision: Dict[str, Any] = field(default_factory=dict)
@@ -37,6 +38,7 @@ class CheckResults:
             ua=_dict_value(payload.get("ua")),
             arr=_dict_value(payload.get("arr")),
             srrdb=_dict_value(payload.get("srrdb")),
+            rename_detection=_dict_value(payload.get("rename_detection")),
             release_group_policy=_dict_value(payload.get("release_group_policy")),
             coverage_resolution=_dict_value(payload.get("coverage_resolution")),
             decision=_dict_value(payload.get("decision")),
@@ -57,6 +59,7 @@ class CheckResults:
             "ua": self.ua,
             "arr": self.arr,
             "srrdb": self.srrdb,
+            "rename_detection": self.rename_detection,
             "release_group_policy": self.release_group_policy,
             "coverage_resolution": self.coverage_resolution,
             "decision": self.decision,

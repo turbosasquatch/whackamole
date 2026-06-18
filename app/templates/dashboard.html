@@ -75,6 +75,16 @@
         {% endfor %}
       </fieldset>
 
+      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
+        <legend>Rejected reason</legend>
+        {% for option in reason_filter_options if "rejected" in option.applies_to %}
+          <label class="checkbox">
+            <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}>
+            {{ option.label }}
+          </label>
+        {% endfor %}
+      </fieldset>
+
       <label class="checkbox {% if view not in filterable_views %}disabled{% endif %}">
         <input name="hide_any_primary" value="true" type="checkbox" {% if dashboard_filters.hide_any_primary %}checked{% endif %} {% if view not in filterable_views %}disabled{% endif %}>
         Hide rows with any primary tracker

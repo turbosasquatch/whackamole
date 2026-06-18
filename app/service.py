@@ -33,6 +33,7 @@ from app.media_policy import (
 )
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
+from app.rename_detection import analyze_rename_detection, rename_detection_flag
 from app.rules import apply_decision_payload, evaluate_decision
 from app.srrdb import apply_srrdb_result, srrdb_lookup_name, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
@@ -1405,23 +1406,41 @@ class WhackamoleService:
                         "matched": srrdb_result.get("matched"),
                     },
                 )
-            folder_name_warning = _folder_name_review_warning(mapped_path, media_result)
-            if status == "candidate" and folder_name_warning:
-                flags = [*flags, folder_name_warning]
+            rename_detection = analyze_rename_detection(
+                item_name=str(item["name"] or ""),
+                mapped_path=mapped_path,
+                media_result=media_result,
+                arr_results=arr_results,
+                srrdb_result=srrdb_result,
+            )
+            candidate_review_flag = _candidate_review_flag(flags)
+            if status == "candidate" and not candidate_review_flag and str(rename_detection.get("status") or "") == "manual_review":
+                rename_flag = rename_detection_flag(rename_detection)
+                flags = [*flags, rename_flag]
                 status = "manual_review"
-                verdict = "folder_name_warning"
-                reason = str(folder_name_warning["detail"])
+                verdict = str(rename_flag["key"])
+                reason = str(rename_detection.get("reason") or rename_flag["detail"])
                 check_results = add_stage_diagnostic(
                     check_results,
-                    stage="folder_name",
+                    stage="rename_check",
                     status="warning",
                     reason=reason,
                     extra={
-                        "root_name": str(folder_name_warning.get("root_name") or ""),
-                        "normalized": str(folder_name_warning.get("normalized") or ""),
+                        "confidence": str(rename_detection.get("confidence") or ""),
+                        "evidence_count": len(rename_detection.get("evidence") or []),
                     },
                 )
-            candidate_review_flag = _candidate_review_flag(flags)
+            elif str(rename_detection.get("status") or "") == "warning":
+                check_results = add_stage_diagnostic(
+                    check_results,
+                    stage="rename_check",
+                    status="warning",
+                    reason=str(rename_detection.get("reason") or ""),
+                    extra={
+                        "confidence": str(rename_detection.get("confidence") or ""),
+                        "evidence_count": len(rename_detection.get("evidence") or []),
+                    },
+                )
             if status == "candidate" and candidate_review_flag:
                 status = "manual_review"
                 verdict = str(candidate_review_flag.get("key") or "manual_review")
@@ -1437,6 +1456,7 @@ class WhackamoleService:
                 check_results,
                 arr=arr_results,
                 srrdb=srrdb_result,
+                rename_detection=rename_detection,
                 release_group_policy=policy_result,
                 flags=flags,
             )

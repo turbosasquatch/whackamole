@@ -1457,6 +1457,35 @@ class Database:
             )
             return int(cur.lastrowid)
 
+    def reject_item(self, item_id: int, stage: str, notes: str) -> Optional[int]:
+        now = int(time.time())
+        cleaned_notes = str(notes or "").strip()
+        reason = cleaned_notes or "Moderator rejected this upload."
+        with self.connect() as conn:
+            row = conn.execute("SELECT id, name FROM items WHERE id = ?", (int(item_id),)).fetchone()
+            if row is None:
+                return None
+            cur = conn.execute(
+                """
+                INSERT INTO item_reports(item_id, item_name, stage, notes, state, created_at, updated_at)
+                VALUES(?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (int(item_id), str(row["name"] or ""), str(stage or "Tracker Moderation"), reason, now, now),
+            )
+            conn.execute(
+                """
+                UPDATE items
+                SET status = 'rejected',
+                    verdict = 'moderation_rejected',
+                    reason = ?,
+                    next_check_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (reason, now, int(item_id)),
+            )
+            return int(cur.lastrowid)
+
     def list_reports(self, state: str = "active", item_id: Optional[int] = None, limit: int = 200) -> List[sqlite3.Row]:
         state = state if state in REPORT_STATES else "active"
         clauses = ["state = ?"]
@@ -1657,6 +1686,14 @@ def _reason_filter_clauses(reasons: Optional[Iterable[str]]) -> Tuple[List[str],
             clauses.append("(LOWER(i.reason) LIKE '%equal-or-better%' OR LOWER(i.arr_results) LIKE '%equal-or-better%')")
         elif reason == "banned_release_group":
             clauses.append("(LOWER(i.verdict) LIKE '%banned_release_group%' OR LOWER(i.check_results) LIKE '%banned_release_group%')")
+        elif reason == "renamed_release_warning":
+            clauses.append(
+                "("
+                "LOWER(i.verdict) LIKE '%renamed_release_warning%' OR "
+                "LOWER(i.check_results) LIKE '%rename_detection%' OR "
+                "LOWER(i.reason) LIKE '%rename%'"
+                ")"
+            )
         elif reason == "no_video":
             clauses.append("(LOWER(i.verdict) LIKE '%no_video%' OR LOWER(i.reason) LIKE '%video files%')")
         elif reason == "path_error":

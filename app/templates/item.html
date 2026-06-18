@@ -51,6 +51,9 @@
       <form method="post" action="/items/{{ item.id }}/ignore">
         <button class="button secondary" type="submit">Ignore</button>
       </form>
+      {% if item.effective_status == "covered" %}
+        <a class="button danger" href="/items/{{ item.id }}#reporting">Rejected</a>
+      {% endif %}
       <a class="button secondary" href="{{ next_item_url }}">Next Item</a>
     </div>
   </section>
@@ -380,6 +383,33 @@
           <button class="button" type="submit">Flag Error</button>
         </form>
       </section>
+
+      {% if item.effective_status == "covered" %}
+        <section class="details-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">Moderation</span>
+              <h2>Rejected</h2>
+            </div>
+          </div>
+          <form class="report-form" method="post" action="/items/{{ item.id }}/reject">
+            <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+            <label>
+              Rejected Stage
+              <select name="stage">
+                {% for stage in reporting_stages %}
+                  <option value="{{ stage }}" {% if stage == "Tracker Moderation" %}selected{% endif %}>{{ stage }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              Rejected Reason
+              <textarea name="notes" rows="5" required placeholder="What did moderation reject?"></textarea>
+            </label>
+            <button class="button danger" type="submit">Rejected</button>
+          </form>
+        </section>
+      {% endif %}
 
       <section class="details-panel">
         <h2>Active Reports</h2>

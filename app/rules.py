@@ -6,10 +6,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
-RULESET_VERSION = 1
+RULESET_VERSION = 2
 TRACKER_BUCKETS = ("passed", "covered", "dupe", "skipped", "error")
 TERMINAL_REPLAY_STATUSES = {"candidate", "manual_review", "blocked", "skipped"}
-PROTECTED_REPLAY_STATUSES = {"queued", "deferred", "checking", "retry", "error", "covered", "baseline", "inventory", "ignored"}
+PROTECTED_REPLAY_STATUSES = {"queued", "deferred", "checking", "retry", "error", "covered", "rejected", "baseline", "inventory", "ignored"}
 
 VALID_SEVERITIES = {"pass", "info", "warning", "error"}
 VALID_EFFECTS = {"none", "candidate", "review", "block", "skip", "retry", "error"}
@@ -18,6 +18,15 @@ VALID_EFFECTS = {"none", "candidate", "review", "block", "skip", "retry", "error
 RULESET_CHANGELOG: List[Dict[str, Any]] = [
     {
         "version": RULESET_VERSION,
+        "changed_rules": [
+            "review.rename_check",
+            "review.folder_name_warning",
+        ],
+        "summary": "Replace folder-only review with structured Rename Check evidence and protect rejected moderation feedback from replay.",
+        "replay_recommended": True,
+    },
+    {
+        "version": 1,
         "changed_rules": [
             "ua.no_uploadable_trackers",
             "ua.duplicates_no_targets",
@@ -164,6 +173,7 @@ def evaluate_decision(
     arr = _dict_value(arr_results) or _dict_value(checks.get("arr"))
     policy = _dict_value(checks.get("release_group_policy"))
     srrdb = _dict_value(checks.get("srrdb"))
+    rename_detection = _dict_value(checks.get("rename_detection"))
     flags = _flag_list(checks.get("flags"))
     status = str(current_status or ua.get("status") or arr.get("status") or "")
     verdict = str(current_verdict or ua.get("verdict") or "")
@@ -272,6 +282,7 @@ def evaluate_decision(
             "media_error",
             "no_video_files",
             "folder_name_warning",
+            "renamed_release_warning",
             "srrdb_filename_mismatch",
             "missing_release_group",
         },
@@ -290,6 +301,7 @@ def evaluate_decision(
     if review_flag:
         rule_id = {
             "folder_name_warning": "review.folder_name_warning",
+            "renamed_release_warning": "review.rename_check",
             "missing_release_group": "review.missing_release_group",
         }.get(str(review_flag.get("key") or ""), "review.evidence_warning")
         return _decision(
@@ -301,6 +313,17 @@ def evaluate_decision(
             _flag_reason(review_flag),
             rules,
             {"flag": review_flag},
+        )
+    if str(rename_detection.get("status") or "") == "manual_review":
+        return _decision(
+            "review.rename_check",
+            "manual_review",
+            "warning",
+            "review",
+            "renamed_release_warning",
+            str(rename_detection.get("reason") or "Rename Check found high-confidence renamed release evidence."),
+            rules,
+            {"rename_detection": rename_detection},
         )
 
     if valid_trackers:
@@ -557,7 +580,8 @@ RULE_DEFINITIONS: List[RuleDefinition] = [
     RuleDefinition("tracker.no_remaining_valid_targets", "No remaining valid targets", "Decision", "Tracker Validation", "info", "skip", "release_group_policy", notes="Skips cleanly when filtering leaves no valid tracker.", order=120),
     RuleDefinition("review.missing_release_group", "Missing release group", "Decision", "Release Group", "warning", "review", "release_group_policy", notes="Reviews when policy needs a release group and none can be parsed.", order=130),
     RuleDefinition("review.srrdb_mismatch", "srrDB mismatch", "Decision", "srrDB", "warning", "review", "check_results.srrdb", notes="Reviews when archived filenames or sizes differ.", order=140),
-    RuleDefinition("review.folder_name_warning", "Folder name normalization", "Decision", "Folder Name", "warning", "review", "check_results.flags", notes="Reviews multi-file folders whose name would be normalized before upload.", order=150),
+    RuleDefinition("review.rename_check", "Rename Check", "Decision", "Rename Check", "warning", "review", "check_results.rename_detection", notes="Reviews high-confidence renamed folder, file, sibling, Arr, or srrDB evidence.", order=150),
+    RuleDefinition("review.folder_name_warning", "Folder name normalization", "Decision", "Rename Check", "warning", "review", "check_results.flags", notes="Legacy folder normalization warning rendered through Rename Check.", order=155),
     RuleDefinition("review.evidence_warning", "Evidence warning", "Decision", "Rules", "warning", "review", "check_results.flags", notes="Reviews candidate-affecting warning evidence.", order=160),
     RuleDefinition("final.candidate", "Candidate", "Decision", "Final", "pass", "candidate", "valid tracker set", notes="Allows upload when at least one valid tracker remains.", order=900),
     RuleDefinition("system.not_replayable", "Not replayable", "Information", "Rules", "info", "none", "legacy row", notes="Used when stored evidence is insufficient for replay.", order=1000),

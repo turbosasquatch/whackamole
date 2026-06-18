@@ -28,7 +28,7 @@ def test_rule_catalogue_has_unique_valid_entries():
     assert len(ids) == len(set(ids))
     assert all(row["severity"] in {"pass", "info", "warning", "error"} for row in rows)
     assert all(row["effect"] in {"none", "candidate", "review", "block", "skip", "retry", "error"} for row in rows)
-    assert ruleset_changelog()[0]["version"] == 1
+    assert ruleset_changelog()[0]["version"] == 2
 
 
 def test_evaluator_keeps_valid_tracker_candidate():
@@ -122,6 +122,27 @@ def test_evaluator_keeps_source_missing_candidate_informational():
     assert decision.status == "candidate"
     assert decision.effect == "candidate"
     assert decision.winning_rule_id == "final.candidate"
+
+
+def test_evaluator_reviews_high_confidence_rename_check():
+    decision = evaluate_decision(
+        current_status="manual_review",
+        current_verdict="renamed_release_warning",
+        tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+        check_results={
+            "ua": {"status": "candidate"},
+            "rename_detection": {
+                "status": "manual_review",
+                "confidence": "high",
+                "reason": "File contains an empty title token.",
+                "evidence": [{"kind": "empty_title_token"}],
+            },
+        },
+    )
+
+    assert decision.status == "manual_review"
+    assert decision.verdict == "renamed_release_warning"
+    assert decision.winning_rule_id == "review.rename_check"
 
 
 def test_evaluator_errors_no_video_files():

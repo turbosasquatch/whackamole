@@ -661,7 +661,7 @@ def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_
         assert review_page.status_code == 200
         assert "Example.Show.S01E01" not in candidates_page.text
         assert "Example.Show.S01E01" in review_page.text
-        assert "Folder" in review_page.text
+        assert "Rename" in review_page.text
         assert "Review" in review_page.text
         assert "Folder name would be normalised to American.Crime.Story.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb." in review_page.text
         assert 'class="button small success"' in review_page.text
@@ -676,7 +676,7 @@ def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_
         assert review_items[0]["effective_status"] == "manual_review"
         assert review_items[0]["decision_label"] == "Review"
         assert review_items[0]["display_status"]["label"] == "Needs Review"
-        assert "Folder" in {tag["label"] for tag in review_items[0]["alert_tags"]}
+        assert "Rename" in {tag["label"] for tag in review_items[0]["alert_tags"]}
 
 
 def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monkeypatch):
@@ -1126,6 +1126,44 @@ def test_reporting_api_tracks_active_resolved_and_deleted_reports(tmp_path, monk
         assert deleted.status_code == 200
         assert missing.status_code == 404
         assert deleted_attempt.status_code == 404
+
+
+def test_rejected_action_moves_covered_item_and_creates_report(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        db.update_status(
+            item_id,
+            "covered",
+            "covered",
+            "Covered in QUI: IHD",
+            tracker_results={"passed": [], "covered": ["IHD"], "dupe": [], "skipped": [], "error": []},
+        )
+
+        page = client.get(f"/items/{item_id}")
+        response = client.post(
+            f"/items/{item_id}/reject",
+            data={"stage": "Rename Check", "notes": "Moderator rejected: renamed episode title", "return_to": f"/items/{item_id}#reporting"},
+            follow_redirects=False,
+        )
+        rejected_page = client.get("/dashboard?view=rejected")
+        rejected_api = client.get("/api/items?status=rejected", headers=_auth_headers())
+        reports = client.get("/api/reports", headers=_auth_headers())
+
+        row = db.get_item(item_id)
+
+        assert page.status_code == 200
+        assert "Rejected" in page.text
+        assert response.status_code == 303
+        assert row["status"] == "rejected"
+        assert row["verdict"] == "moderation_rejected"
+        assert "renamed episode title" in row["reason"]
+        assert rejected_page.status_code == 200
+        assert "Example.Show.S01E01" in rejected_page.text
+        assert rejected_api.json()["items"][0]["status"] == "rejected"
+        assert reports.json()["reports"][0]["stage"] == "Rename Check"
+        assert reports.json()["reports"][0]["notes"] == "Moderator rejected: renamed episode title"
 
 
 def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monkeypatch):
