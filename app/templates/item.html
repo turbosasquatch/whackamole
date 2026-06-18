@@ -51,7 +51,7 @@
       <form method="post" action="/items/{{ item.id }}/ignore">
         <button class="button secondary" type="submit">Ignore</button>
       </form>
-      {% if item.effective_status == "covered" %}
+      {% if item.effective_status != "rejected" %}
         <a class="button danger" href="/items/{{ item.id }}#reporting">Rejected</a>
       {% endif %}
       <a class="button secondary" href="{{ next_item_url }}">Next Item</a>
@@ -384,7 +384,7 @@
         </form>
       </section>
 
-      {% if item.effective_status == "covered" %}
+      {% if item.effective_status != "rejected" %}
         <section class="details-panel">
           <div class="panel-heading">
             <div>

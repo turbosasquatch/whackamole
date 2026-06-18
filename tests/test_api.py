@@ -1128,18 +1128,11 @@ def test_reporting_api_tracks_active_resolved_and_deleted_reports(tmp_path, monk
         assert deleted_attempt.status_code == 404
 
 
-def test_rejected_action_moves_covered_item_and_creates_report(tmp_path, monkeypatch):
+def test_rejected_action_moves_candidate_item_and_creates_report(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
         db = client.app.state.db
-        db.update_status(
-            item_id,
-            "covered",
-            "covered",
-            "Covered in QUI: IHD",
-            tracker_results={"passed": [], "covered": ["IHD"], "dupe": [], "skipped": [], "error": []},
-        )
 
         page = client.get(f"/items/{item_id}")
         response = client.post(
@@ -1147,6 +1140,7 @@ def test_rejected_action_moves_covered_item_and_creates_report(tmp_path, monkeyp
             data={"stage": "Rename Check", "notes": "Moderator rejected: renamed episode title", "return_to": f"/items/{item_id}#reporting"},
             follow_redirects=False,
         )
+        rejected_item_page = client.get(f"/items/{item_id}")
         rejected_page = client.get("/dashboard?view=rejected")
         rejected_api = client.get("/api/items?status=rejected", headers=_auth_headers())
         reports = client.get("/api/reports", headers=_auth_headers())
@@ -1154,11 +1148,14 @@ def test_rejected_action_moves_covered_item_and_creates_report(tmp_path, monkeyp
         row = db.get_item(item_id)
 
         assert page.status_code == 200
-        assert "Rejected" in page.text
+        assert f'href="/items/{item_id}#reporting">Rejected</a>' in page.text
+        assert f'action="/items/{item_id}/reject"' in page.text
+        assert "Rejected Reason" in page.text
         assert response.status_code == 303
         assert row["status"] == "rejected"
         assert row["verdict"] == "moderation_rejected"
         assert "renamed episode title" in row["reason"]
+        assert f'action="/items/{item_id}/reject"' not in rejected_item_page.text
         assert rejected_page.status_code == 200
         assert "Example.Show.S01E01" in rejected_page.text
         assert rejected_api.json()["items"][0]["status"] == "rejected"
