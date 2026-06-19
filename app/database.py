@@ -4,7 +4,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from app.inventory import build_inventory_meta, item_inventory_meta, sort_coverage_values
 from app.media_identity import extract_release_group
@@ -1151,7 +1151,8 @@ class Database:
                 WHERE item_id = ? AND status IN ('pending', 'running')
                 ORDER BY
                   CASE status WHEN 'running' THEN 0 ELSE 1 END,
-                  created_at ASC
+                  created_at ASC,
+                  id ASC
                 LIMIT 1
                 """,
                 (int(item_id),),
@@ -1170,7 +1171,8 @@ class Database:
                 WHERE item_id IN ({placeholders}) AND status IN ('pending', 'running')
                 ORDER BY
                   CASE status WHEN 'running' THEN 0 ELSE 1 END,
-                  created_at ASC
+                  created_at ASC,
+                  id ASC
                 """,
                 ids,
             ).fetchall()
@@ -1179,37 +1181,87 @@ class Database:
             imports.setdefault(int(row["item_id"]), row)
         return imports
 
-    def list_imports(self, limit: int = 100, offset: int = 0) -> List[sqlite3.Row]:
+    def list_imports(
+        self,
+        statuses: Optional[Sequence[str]] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[sqlite3.Row]:
+        requested_statuses = [str(status) for status in (statuses or []) if str(status).strip()]
+        status_clause = ""
+        params: List[Any] = []
+        if requested_statuses:
+            placeholders = ",".join("?" for _ in requested_statuses)
+            status_clause = f"WHERE qi.status IN ({placeholders})"
+            params.extend(requested_statuses)
+        params.extend([max(1, int(limit or 100)), max(0, int(offset or 0))])
         with self.connect() as conn:
             return conn.execute(
-                """
+                f"""
                 SELECT qi.*, i.status AS item_status, i.verdict AS item_verdict
                 FROM queued_imports AS qi
                 LEFT JOIN items AS i ON i.id = qi.item_id
+                {status_clause}
                 ORDER BY
                   CASE qi.status
                     WHEN 'running' THEN 0
                     WHEN 'pending' THEN 1
                     WHEN 'error' THEN 2
                     WHEN 'complete' THEN 3
+                    WHEN 'cancelled' THEN 4
                     ELSE 4
                   END,
-                  qi.created_at ASC
+                  qi.created_at ASC,
+                  qi.id ASC
                 LIMIT ? OFFSET ?
                 """,
-                (max(1, int(limit or 100)), max(0, int(offset or 0))),
+                params,
             ).fetchall()
+
+    def count_imports(self, statuses: Sequence[str]) -> int:
+        requested_statuses = [str(status) for status in statuses if str(status).strip()]
+        if not requested_statuses:
+            return 0
+        placeholders = ",".join("?" for _ in requested_statuses)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM queued_imports WHERE status IN ({placeholders})",
+                requested_statuses,
+            ).fetchone()
+        return int(row["count"] or 0) if row is not None else 0
 
     def queued_import_counts(self) -> Dict[str, int]:
         with self.connect() as conn:
             rows = conn.execute("SELECT status, COUNT(*) AS count FROM queued_imports GROUP BY status").fetchall()
-        counts = {"pending": 0, "running": 0, "complete": 0, "error": 0}
+        counts = {"pending": 0, "running": 0, "complete": 0, "error": 0, "cancelled": 0}
         for row in rows:
             key = str(row["status"] or "")
             counts[key] = int(row["count"] or 0)
         counts["active"] = counts["pending"] + counts["running"]
-        counts["total"] = counts["pending"] + counts["running"] + counts["complete"] + counts["error"]
+        counts["total"] = counts["pending"] + counts["running"] + counts["complete"] + counts["error"] + counts["cancelled"]
         return counts
+
+    def has_pending_imports(self) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM queued_imports WHERE status = 'pending' LIMIT 1").fetchone()
+        return row is not None
+
+    def cancel_import(self, import_id: int) -> bool:
+        now = int(time.time())
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queued_imports
+                SET status = 'cancelled',
+                    message = 'Cancelled from queue.',
+                    session_id = '',
+                    finished_at = ?,
+                    updated_at = ?
+                WHERE id = ? AND status IN ('pending', 'error')
+                """,
+                (now, now, int(import_id)),
+            )
+            return int(cursor.rowcount or 0) == 1
 
     def recover_running_imports(self) -> int:
         now = int(time.time())
@@ -1230,21 +1282,26 @@ class Database:
     def claim_next_import(self, session_id: str) -> Optional[sqlite3.Row]:
         now = int(time.time())
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM queued_imports WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-            ).fetchone()
-            if row is None:
-                return None
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE queued_imports
                 SET status = 'running', session_id = ?, started_at = ?, updated_at = ?, message = 'Running unattended import.'
-                WHERE id = ? AND status = 'pending'
+                WHERE id = (
+                    SELECT id
+                    FROM queued_imports
+                    WHERE status = 'pending'
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT 1
+                ) AND status = 'pending'
                 """,
-                (session_id, now, now, int(row["id"])),
+                (session_id, now, now),
             )
-        with self.connect() as conn:
-            return conn.execute("SELECT * FROM queued_imports WHERE id = ?", (int(row["id"]),)).fetchone()
+            if int(cursor.rowcount or 0) != 1:
+                return None
+            return conn.execute(
+                "SELECT * FROM queued_imports WHERE session_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
 
     def mark_import_complete(self, import_id: int, message: str, output: str = "") -> None:
         now = int(time.time())

@@ -27,6 +27,16 @@
     button.innerHTML = '<span class="submit-tick" aria-hidden="true">&#10003;</span><span class="sr-only">' + label + "</span>";
   }
 
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[char]));
+  }
+
   function setSidebar(collapsed) {
     if (!shell) return;
     shell.classList.toggle("sidebar-collapsed", collapsed);
@@ -648,6 +658,40 @@
     });
   }
 
+  function formatEventTime(value) {
+    const timestamp = Number(value || 0);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+    return new Date(timestamp * 1000).toLocaleString();
+  }
+
+  function renderNotifications(events) {
+    const rows = Array.isArray(events) ? events : [];
+    const count = rows.length;
+    document.querySelectorAll("[data-notification-count]").forEach((node) => {
+      node.textContent = String(count);
+      node.hidden = count === 0;
+    });
+    document.querySelectorAll("[data-notification-clear]").forEach((node) => {
+      node.hidden = count === 0;
+    });
+    document.querySelectorAll("[data-notification-empty]").forEach((node) => {
+      node.hidden = count !== 0;
+    });
+    document.querySelectorAll("[data-notification-list]").forEach((list) => {
+      list.hidden = count === 0;
+      list.innerHTML = rows.slice().reverse().map((event) => {
+        const repeat = Number(event && event.count ? event.count : 0);
+        return [
+          "<li>",
+          `<time>${escapeHtml(formatEventTime(event && event.last_seen_at))}</time>`,
+          `<span>${escapeHtml(event && event.message)}</span>`,
+          repeat > 1 ? `<em>x${escapeHtml(repeat)}</em>` : "",
+          "</li>",
+        ].join("");
+      }).join("");
+    });
+  }
+
   function refreshStatus() {
     if (!document.querySelector("[data-count-view], [data-queue-field], [data-service-running]")) return;
     fetch("/api/status", { headers: { accept: "application/json" } })
@@ -688,6 +732,7 @@
           node.classList.toggle("warn", footer === "Paused");
           node.classList.toggle("run", footer === "Running");
         });
+        renderNotifications(service.service_errors || []);
       })
       .catch(() => {});
   }

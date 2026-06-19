@@ -656,7 +656,7 @@ class WhackamoleService:
         if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
             self._queued_import_run_requested = False
             return
-        if not self.db.queued_import_counts().get("pending"):
+        if not self.db.has_pending_imports():
             self._queued_import_run_requested = False
             return
         lease = await self.ua_execution.acquire(
@@ -721,7 +721,7 @@ class WhackamoleService:
             self.db.append_service_error(message)
         finally:
             await lease.release()
-            if not self.db.queued_import_counts().get("pending"):
+            if not self.db.has_pending_imports():
                 self._queued_import_run_requested = False
 
     def snapshot(self) -> dict:

@@ -11,14 +11,22 @@
     </div>
     <div class="button-row">
       <form method="post" action="/imports/run-pending">
+        <input type="hidden" name="return_to" value="{{ current_url }}">
         <button class="button small" type="submit" {% if not import_counts.pending or import_counts.running %}disabled{% endif %}>Run pending imports</button>
       </form>
-      <span class="pill neutral">{{ import_counts.pending }} pending</span>
-      <span class="pill neutral">{{ import_counts.running }} running</span>
-      <span class="pill neutral">{{ import_counts.complete }} complete</span>
-      <span class="pill neutral">{{ import_counts.error }} error</span>
     </div>
   </div>
+
+  <nav class="button-row import-tabs" aria-label="Queued import status">
+    {% for tab in import_tabs %}
+      <a class="button small {% if not tab.selected %}secondary{% endif %}" href="{{ tab.href }}">
+        {{ tab.label }}
+        {% if tab.show_count %}<span class="button-count">{{ tab.count }}</span>{% endif %}
+      </a>
+    {% endfor %}
+  </nav>
+
+  <p class="compact-count">Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total }}</p>
 
   <div class="table-wrap imports-table-wrap">
     <table class="mini-table imports-table">
@@ -26,11 +34,12 @@
         <tr>
           <th>Item</th>
           <th>Status</th>
-          <th>Path</th>
-          <th>Arguments</th>
           <th>Queued</th>
           <th>Updated</th>
+          <th>Path</th>
+          <th>Arguments</th>
           <th>Message</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -38,17 +47,40 @@
           <tr>
             <td data-label="Item"><a class="item-title" href="/items/{{ import.item_id }}#upload-assistant">{{ import.item_name }}</a></td>
             <td data-label="Status"><span class="import-state {{ import.status }}">{{ import.status }}</span></td>
-            <td data-label="Path" class="path-cell">{{ import.path }}</td>
-            <td data-label="Arguments" class="path-cell">{{ import.args }}</td>
             <td data-label="Queued">{{ import.created_at | datetime }}</td>
             <td data-label="Updated">{{ import.updated_at | datetime }}</td>
+            <td data-label="Path" class="path-cell">{{ import.path }}</td>
+            <td data-label="Arguments" class="path-cell">{{ import.args }}</td>
             <td data-label="Message">{{ import.message or "-" }}</td>
+            <td data-label="Actions" class="import-actions">
+              {% if import.status in ["pending", "error"] %}
+                <form method="post" action="/imports/{{ import.id }}/cancel">
+                  <input type="hidden" name="view" value="{{ import_view }}">
+                  <input type="hidden" name="page" value="{{ pagination.page }}">
+                  <button class="button small secondary" type="submit">Remove</button>
+                </form>
+              {% else %}
+                <span class="muted">-</span>
+              {% endif %}
+            </td>
           </tr>
         {% else %}
-          <tr><td colspan="7" class="empty">No queued imports yet.</td></tr>
+          <tr><td colspan="8" class="empty">No imports in this tab.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  {% if pagination.show %}
+    <nav class="pagination" aria-label="Import pagination">
+      {% if pagination.prev_url %}
+        <a class="button small secondary" href="{{ pagination.prev_url }}">Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ pagination.page }}</span>
+      {% if pagination.next_url %}
+        <a class="button small secondary" href="{{ pagination.next_url }}">Next</a>
+      {% endif %}
+    </nav>
+  {% endif %}
 </section>
 {% endblock %}

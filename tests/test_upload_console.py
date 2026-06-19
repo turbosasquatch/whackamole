@@ -283,8 +283,155 @@ def test_imports_run_pending_button_triggers_runner(tmp_path, monkeypatch):
         response = client.post("/imports/run-pending", follow_redirects=False)
 
         assert response.status_code == 303
-        assert response.headers["location"] == "/imports"
+        assert response.headers["location"] == "/imports?view=queue&page=1"
         assert calls == [True]
+
+
+def test_imports_page_defaults_to_queue_and_filters_statuses(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.enqueue_import(1, "Running.Movie.2026.1080p.WEB-DL-GRP", "/ua/running.mkv", "--unattended")
+        db.claim_next_import("running-session")
+        db.enqueue_import(2, "Pending.Movie.2026.1080p.WEB-DL-GRP", "/ua/pending.mkv", "--unattended")
+        error_id = db.enqueue_import(3, "Error.Movie.2026.1080p.WEB-DL-GRP", "/ua/error.mkv", "--unattended")
+        complete_id = db.enqueue_import(4, "Complete.Movie.2026.1080p.WEB-DL-GRP", "/ua/complete.mkv", "--unattended")
+        cancelled_id = db.enqueue_import(5, "Cancelled.Movie.2026.1080p.WEB-DL-GRP", "/ua/cancelled.mkv", "--unattended")
+        db.mark_import_error(error_id, "failed")
+        db.mark_import_complete(complete_id, "complete")
+        assert db.cancel_import(cancelled_id) is True
+
+        page = client.get("/imports")
+
+        assert page.status_code == 200
+        assert "Pending.Movie.2026" in page.text
+        assert "Running.Movie.2026" in page.text
+        assert "Error.Movie.2026" not in page.text
+        assert "Complete.Movie.2026" not in page.text
+        assert "Cancelled.Movie.2026" not in page.text
+        assert f'href="/items/2#upload-assistant"' in page.text
+        assert f'href="/items/1#upload-assistant"' in page.text
+        assert " pending</span>" not in page.text
+        assert " running</span>" not in page.text
+
+
+def test_import_tabs_show_expected_statuses_and_cancel_actions(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        error_id = db.enqueue_import(10, "Error.Movie.2026.1080p.WEB-DL-GRP", "/ua/error.mkv", "--unattended")
+        complete_id = db.enqueue_import(11, "Complete.Movie.2026.1080p.WEB-DL-GRP", "/ua/complete.mkv", "--unattended")
+        cancelled_id = db.enqueue_import(12, "Cancelled.Movie.2026.1080p.WEB-DL-GRP", "/ua/cancelled.mkv", "--unattended")
+        db.mark_import_error(error_id, "failed")
+        db.mark_import_complete(complete_id, "complete")
+        assert db.cancel_import(cancelled_id) is True
+
+        error_page = client.get("/imports?view=error")
+        complete_page = client.get("/imports?view=complete")
+        cancelled_page = client.get("/imports?view=cancelled")
+
+        assert "Error.Movie.2026" in error_page.text
+        assert f'action="/imports/{error_id}/cancel"' in error_page.text
+        assert "Complete.Movie.2026" in complete_page.text
+        assert f'action="/imports/{complete_id}/cancel"' not in complete_page.text
+        assert "Cancelled.Movie.2026" in cancelled_page.text
+        assert f'action="/imports/{cancelled_id}/cancel"' not in cancelled_page.text
+        assert "Cancelled" in cancelled_page.text
+
+
+def test_import_cancellation_rules_and_claim_skip_cancelled(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        running_id = db.enqueue_import(3, "Running", "/ua/running.mkv", "")
+        db.claim_next_import("running-session")
+        pending_id = db.enqueue_import(1, "Pending", "/ua/pending.mkv", "")
+        error_id = db.enqueue_import(2, "Error", "/ua/error.mkv", "")
+        complete_id = db.enqueue_import(4, "Complete", "/ua/complete.mkv", "")
+        db.mark_import_error(error_id, "failed")
+        db.mark_import_complete(complete_id, "complete")
+
+        assert db.cancel_import(pending_id) is True
+        assert db.cancel_import(error_id) is True
+        assert db.cancel_import(running_id) is False
+        assert db.cancel_import(complete_id) is False
+        assert db.cancel_import(999999) is False
+        assert db.claim_next_import("after-cancel") is None
+        assert db.queued_import_counts()["cancelled"] == 2
+        assert db.count_imports(["cancelled"]) == 2
+
+
+def test_cancelled_import_does_not_block_fresh_queue(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+        first_id = client.app.state.db.enqueue_import(
+            item_id=item_id,
+            item_name="Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
+            path="/ua/movie.mkv",
+            args="--trackers dp --unattended",
+        )
+        assert client.app.state.db.cancel_import(first_id) is True
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/queue", json={"args": "--trackers dp"})
+        rows = client.app.state.db.list_imports()
+
+        assert response.status_code == 200
+        assert response.json().get("already_queued") is not True
+        assert [row["status"] for row in rows] == ["pending", "cancelled"]
+
+
+def test_import_pagination_and_out_of_range_redirect(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        for index in range(51):
+            db.enqueue_import(index + 1, f"Queued.Movie.{index:02d}.2026.1080p.WEB-DL-GRP", f"/ua/{index}.mkv", "--unattended")
+
+        first_page = client.get("/imports?view=queue&page=1")
+        second_page = client.get("/imports?view=queue&page=2")
+        out_of_range = client.get("/imports?view=queue&page=99", follow_redirects=False)
+
+        assert first_page.status_code == 200
+        assert "Next" in first_page.text
+        assert "Queued.Movie.00" in first_page.text
+        assert "Queued.Movie.50" not in first_page.text
+        assert "Queued.Movie.50" in second_page.text
+        assert out_of_range.status_code == 303
+        assert out_of_range.headers["location"] == "/imports?view=queue&page=2"
+
+
+def test_cancel_import_redirects_to_valid_page_after_last_row_removed(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        for index in range(51):
+            import_id = db.enqueue_import(index + 1, f"Failed.Movie.{index:02d}.2026.1080p.WEB-DL-GRP", f"/ua/{index}.mkv", "--unattended")
+            db.mark_import_error(import_id, "failed")
+
+        response = client.post("/imports/51/cancel", data={"view": "error", "page": "2"}, follow_redirects=False)
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/imports?view=error&page=1"
+
+
+def test_notification_polling_updates_service_events():
+    script = Path("app/static/app.js").read_text()
+    template = Path("app/templates/base.html").read_text()
+
+    assert "function renderNotifications" in script
+    assert "renderNotifications(service.service_errors || [])" in script
+    assert "[data-notification-count]" in script
+    assert "data-notification-list" in template
+    assert "Service events" in template
+    assert "Service errors" not in template
+
+
+def test_mobile_import_cards_use_two_column_fact_grid():
+    styles = Path("app/static/style.css").read_text()
+
+    assert ".imports-table tr" in styles
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    assert '.imports-table td[data-label="Item"]' in styles
+    assert "padding: 14px;" in styles
 
 
 def test_upload_console_full_snapshots_are_not_terminal_replacements():

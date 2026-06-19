@@ -1865,6 +1865,14 @@ tr:last-child td {
   max-height: calc(100vh - 180px);
 }
 
+.import-tabs {
+  margin-bottom: 10px;
+}
+
+.imports-panel > .compact-count {
+  margin-bottom: 10px;
+}
+
 .imports-table-wrap {
   overflow-x: hidden;
   width: 100%;
@@ -1883,7 +1891,7 @@ tr:last-child td {
 
 .imports-table th:nth-child(1),
 .imports-table td:nth-child(1) {
-  width: 24%;
+  width: 22%;
 }
 
 .imports-table th:nth-child(2),
@@ -1895,19 +1903,36 @@ tr:last-child td {
 .imports-table td:nth-child(3),
 .imports-table th:nth-child(4),
 .imports-table td:nth-child(4) {
-  width: 18%;
+  width: 112px;
 }
 
 .imports-table th:nth-child(5),
-.imports-table td:nth-child(5),
+.imports-table td:nth-child(5) {
+  width: 16%;
+}
+
 .imports-table th:nth-child(6),
 .imports-table td:nth-child(6) {
-  width: 112px;
+  width: 16%;
+}
+
+.imports-table th:nth-child(7),
+.imports-table td:nth-child(7) {
+  width: 18%;
+}
+
+.imports-table th:nth-child(8),
+.imports-table td:nth-child(8) {
+  width: 92px;
 }
 
 .path-cell {
   max-width: 320px;
   overflow-wrap: anywhere;
+}
+
+.import-actions form {
+  display: inline-flex;
 }
 
 .import-state {
@@ -1938,6 +1963,11 @@ tr:last-child td {
 .import-state.error {
   background: var(--red-bg);
   color: var(--red);
+}
+
+.import-state.cancelled {
+  background: var(--surface-strong);
+  color: #64748b;
 }
 
 dl {
@@ -2834,11 +2864,12 @@ dd {
     border-radius: 8px;
     box-shadow: var(--shadow);
     display: grid;
-    gap: 10px;
+    gap: 10px 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin: 0;
     max-width: 100%;
     min-width: 0;
-    padding: 12px;
+    padding: 14px;
     width: 100%;
   }
 
@@ -2851,6 +2882,23 @@ dd {
     padding: 0;
     text-align: left;
     width: auto !important;
+  }
+
+  .imports-table td[data-label="Item"],
+  .imports-table td[data-label="Actions"],
+  .imports-table td.empty {
+    grid-column: 1 / -1;
+  }
+
+  .imports-table td[data-label="Item"]::before,
+  .imports-table td[data-label="Actions"]::before,
+  .imports-table td.empty::before {
+    content: none;
+  }
+
+  .imports-table td[data-label="Item"] {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
   }
 
   .imports-table td::before {
@@ -2880,9 +2928,19 @@ dd {
     word-break: normal;
   }
 
+  .imports-table .import-actions form,
+  .imports-table .import-actions .button {
+    width: 100%;
+  }
+
   .mini-table tr,
   .responsive-table tr {
     border-bottom: 1px solid var(--line);
     padding: 8px 0;
+  }
+
+  .mini-table.imports-table tr {
+    border-bottom: 1px solid var(--line);
+    padding: 14px;
   }
 }

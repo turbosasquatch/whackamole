@@ -1063,7 +1063,7 @@ def test_service_error_history_popout_and_clear(tmp_path, monkeypatch):
         clear = client.post("/service-errors/clear", data={"return_to": "/"}, follow_redirects=False)
 
         assert page.status_code == 200
-        assert "Service errors" in page.text
+        assert "Service events" in page.text
         assert "QUI timeout" in page.text
         assert "x2" in page.text
         assert status_response.json()["service"]["service_errors"][0]["count"] == 2

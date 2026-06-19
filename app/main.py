@@ -81,6 +81,19 @@ DASHBOARD_TABS = [
     ("ignored", "Ignored", ["ignored"]),
     ("all", "All", []),
 ]
+IMPORT_PAGE_SIZE = 50
+IMPORT_VIEW_STATUSES = {
+    "queue": ["pending", "running"],
+    "error": ["error"],
+    "complete": ["complete"],
+    "cancelled": ["cancelled"],
+}
+IMPORT_TABS = [
+    {"key": "queue", "label": "Queue", "show_count": True},
+    {"key": "error", "label": "Error", "show_count": True},
+    {"key": "complete", "label": "Complete", "show_count": False},
+    {"key": "cancelled", "label": "Cancelled", "show_count": True},
+]
 MEDIA_FILTERS = [
     {"key": "movie", "label": "Movies"},
     {"key": "tv", "label": "TV shows"},
@@ -2200,6 +2213,19 @@ def _dashboard_url(
     return f"/dashboard?{urlencode(params, doseq=True)}"
 
 
+def _imports_url(view: str = "queue", page: int = 1) -> str:
+    selected = view if view in IMPORT_VIEW_STATUSES else "queue"
+    params: Dict[str, Any] = {"view": selected, "page": max(1, int(page or 1))}
+    return f"/imports?{urlencode(params)}"
+
+
+def _clamped_imports_url(db: Database, view: str = "queue", page: int = 1) -> str:
+    selected = view if view in IMPORT_VIEW_STATUSES else "queue"
+    total = db.count_imports(IMPORT_VIEW_STATUSES[selected])
+    max_page = max(1, (total + IMPORT_PAGE_SIZE - 1) // IMPORT_PAGE_SIZE)
+    return _imports_url(selected, min(max(1, int(page or 1)), max_page))
+
+
 def _next_item_url(db: Database, item: Dict[str, Any]) -> str:
     status_value = str(item.get("status") or "")
     view = next((key for key, _label, statuses in DASHBOARD_TABS if status_value in statuses), "all")
@@ -2417,8 +2443,38 @@ async def reports_page(request: Request, state_filter: str = Query("active", ali
 
 
 @app.get("/imports", response_class=HTMLResponse)
-async def queued_imports(request: Request) -> HTMLResponse:
-    rows = request.app.state.db.list_imports(limit=200)
+async def queued_imports(
+    request: Request,
+    view: str = Query("queue"),
+    page: int = Query(1, ge=1),
+) -> HTMLResponse:
+    selected = view if view in IMPORT_VIEW_STATUSES else "queue"
+    if selected != view:
+        return RedirectResponse(url=_imports_url(selected, 1), status_code=status.HTTP_303_SEE_OTHER)
+    statuses = IMPORT_VIEW_STATUSES[selected]
+    total = request.app.state.db.count_imports(statuses)
+    max_page = max(1, (total + IMPORT_PAGE_SIZE - 1) // IMPORT_PAGE_SIZE)
+    if page > max_page:
+        return RedirectResponse(url=_imports_url(selected, max_page), status_code=status.HTTP_303_SEE_OTHER)
+    offset = (page - 1) * IMPORT_PAGE_SIZE
+    rows = request.app.state.db.list_imports(statuses=statuses, limit=IMPORT_PAGE_SIZE, offset=offset)
+    import_counts = request.app.state.db.queued_import_counts()
+    tabs = []
+    for tab in IMPORT_TABS:
+        key = str(tab["key"])
+        if key == "queue":
+            count = int(import_counts.get("active") or 0)
+        else:
+            count = int(import_counts.get(key) or 0)
+        tabs.append(
+            {
+                **tab,
+                "count": count,
+                "href": _imports_url(key, 1),
+                "selected": key == selected,
+            }
+        )
+    current_url = _imports_url(selected, page)
     return templates.TemplateResponse(
         request,
         "imports.html",
@@ -2426,18 +2482,43 @@ async def queued_imports(request: Request) -> HTMLResponse:
             **_shell_context(request, section="imports", view="imports"),
             "request": request,
             "imports": [dict(row) for row in rows],
-            "import_counts": request.app.state.db.queued_import_counts(),
-            "current_url": "/imports",
+            "import_counts": import_counts,
+            "import_tabs": tabs,
+            "import_view": selected,
+            "pagination": {
+                "page": page,
+                "limit": IMPORT_PAGE_SIZE,
+                "total": total,
+                "start": offset + 1 if total else 0,
+                "end": offset + len(rows),
+                "prev_url": _imports_url(selected, page - 1) if page > 1 else "",
+                "next_url": _imports_url(selected, page + 1) if offset + len(rows) < total else "",
+                "show": total > IMPORT_PAGE_SIZE,
+            },
+            "current_url": current_url,
         },
     )
 
 
 @app.post("/imports/run-pending")
-async def run_pending_imports(request: Request) -> RedirectResponse:
-    counts = request.app.state.db.queued_import_counts()
-    if counts.get("pending"):
+async def run_pending_imports(request: Request, return_to: str = Form("/imports?view=queue&page=1")) -> RedirectResponse:
+    if request.app.state.db.has_pending_imports():
         await request.app.state.service.request_queued_import_run()
-    return RedirectResponse(url="/imports", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=_safe_local_redirect(return_to, "/imports?view=queue&page=1"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/imports/{import_id}/cancel")
+async def cancel_import(
+    request: Request,
+    import_id: int,
+    view: str = Form("queue"),
+    page: int = Form(1),
+) -> RedirectResponse:
+    request.app.state.db.cancel_import(import_id)
+    return RedirectResponse(
+        url=_clamped_imports_url(request.app.state.db, view, page),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/items/{item_id}/recheck")

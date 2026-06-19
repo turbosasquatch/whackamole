@@ -107,33 +107,28 @@
             {% if service is defined %}
               {% set service_errors = service.service_errors or [] %}
               <div class="notification-menu" data-notification-menu>
-                <button class="notification-button" type="button" data-notification-toggle aria-label="Service errors">
+                <button class="notification-button" type="button" data-notification-toggle aria-label="Service events">
                   <span>!</span>
-                  {% if service_errors %}<strong>{{ service_errors | length }}</strong>{% endif %}
+                  <strong data-notification-count {% if not service_errors %}hidden{% endif %}>{{ service_errors | length }}</strong>
                 </button>
                 <section class="notification-popout" data-notification-popout hidden>
                   <header>
-                    <strong>Service errors</strong>
-                    {% if service_errors %}
-                      <form method="post" action="/service-errors/clear">
-                        <input type="hidden" name="return_to" value="{{ current_url | default(request.url.path) }}">
-                        <button class="button small secondary" type="submit">Clear</button>
-                      </form>
-                    {% endif %}
+                    <strong>Service events</strong>
+                    <form method="post" action="/service-errors/clear" data-notification-clear {% if not service_errors %}hidden{% endif %}>
+                      <input type="hidden" name="return_to" value="{{ current_url | default(request.url.path) }}">
+                      <button class="button small secondary" type="submit">Clear</button>
+                    </form>
                   </header>
-                  {% if service_errors %}
-                    <ol>
-                      {% for error in service_errors | reverse %}
-                        <li>
-                          <time>{{ error.last_seen_at | datetime }}</time>
-                          <span>{{ error.message }}</span>
-                          {% if error.count and error.count > 1 %}<em>x{{ error.count }}</em>{% endif %}
-                        </li>
-                      {% endfor %}
-                    </ol>
-                  {% else %}
-                    <p>No service errors.</p>
-                  {% endif %}
+                  <ol data-notification-list {% if not service_errors %}hidden{% endif %}>
+                    {% for error in service_errors | reverse %}
+                      <li>
+                        <time>{{ error.last_seen_at | datetime }}</time>
+                        <span>{{ error.message }}</span>
+                        {% if error.count and error.count > 1 %}<em>x{{ error.count }}</em>{% endif %}
+                      </li>
+                    {% endfor %}
+                  </ol>
+                  <p data-notification-empty {% if service_errors %}hidden{% endif %}>No service events.</p>
                 </section>
               </div>
             {% endif %}
