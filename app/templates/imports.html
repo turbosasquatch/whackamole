@@ -12,7 +12,7 @@
     <div class="button-row">
       <form method="post" action="/imports/run-pending">
         <input type="hidden" name="return_to" value="{{ current_url }}">
-        <button class="button small" type="submit" {% if not import_counts.pending or import_counts.running %}disabled{% endif %}>Run pending imports</button>
+        <button class="button small" type="submit" {% if not import_counts.pending or import_counts.running %}disabled{% endif %}>Run Pending Imports</button>
       </form>
     </div>
   </div>
@@ -69,6 +69,51 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  <div class="imports-cards" aria-label="Queued import cards">
+    {% for import in imports %}
+      <article class="import-card">
+        <a class="item-title" href="/items/{{ import.item_id }}#upload-assistant">{{ import.item_name }}</a>
+        <div class="import-card-facts">
+          <div class="import-card-fact">
+            <span>Status</span>
+            <strong><span class="import-state {{ import.status }}">{{ import.status }}</span></strong>
+          </div>
+          <div class="import-card-fact">
+            <span>Queued</span>
+            <strong>{{ import.created_at | datetime }}</strong>
+          </div>
+          <div class="import-card-fact">
+            <span>Updated</span>
+            <strong>{{ import.updated_at | datetime }}</strong>
+          </div>
+          <div class="import-card-fact">
+            <span>Path</span>
+            <strong>{{ import.path }}</strong>
+          </div>
+          <div class="import-card-fact">
+            <span>Arguments</span>
+            <strong>{{ import.args }}</strong>
+          </div>
+          <div class="import-card-fact">
+            <span>Message</span>
+            <strong>{{ import.message or "-" }}</strong>
+          </div>
+        </div>
+        {% if import.status in ["pending", "error"] %}
+          <footer class="import-card-actions">
+            <form method="post" action="/imports/{{ import.id }}/cancel">
+              <input type="hidden" name="view" value="{{ import_view }}">
+              <input type="hidden" name="page" value="{{ pagination.page }}">
+              <button class="button small secondary" type="submit">Remove</button>
+            </form>
+          </footer>
+        {% endif %}
+      </article>
+    {% else %}
+      <section class="empty-card">No imports in this tab.</section>
+    {% endfor %}
   </div>
 
   {% if pagination.show %}

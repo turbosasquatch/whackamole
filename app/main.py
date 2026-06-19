@@ -92,7 +92,7 @@ IMPORT_TABS = [
     {"key": "queue", "label": "Queue", "show_count": True},
     {"key": "error", "label": "Error", "show_count": True},
     {"key": "complete", "label": "Complete", "show_count": False},
-    {"key": "cancelled", "label": "Cancelled", "show_count": True},
+    {"key": "cancelled", "label": "Cancelled", "show_count": False},
 ]
 MEDIA_FILTERS = [
     {"key": "movie", "label": "Movies"},

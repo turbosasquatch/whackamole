@@ -1861,16 +1861,36 @@ tr:last-child td {
   flex: 1 1 auto;
 }
 
+.imports-panel {
+  display: grid;
+  gap: 12px;
+  overflow-x: visible;
+}
+
 .imports-panel .table-wrap {
   max-height: calc(100vh - 180px);
 }
 
+.imports-panel .panel-heading h2 {
+  margin-bottom: 0;
+}
+
 .import-tabs {
-  margin-bottom: 10px;
+  gap: 10px;
+  margin: 0;
+  width: 100%;
+}
+
+.import-tabs .button {
+  gap: 0.45rem;
 }
 
 .imports-panel > .compact-count {
-  margin-bottom: 10px;
+  margin: 0;
+}
+
+.imports-cards {
+  display: none;
 }
 
 .imports-table-wrap {
@@ -1933,6 +1953,56 @@ tr:last-child td {
 
 .import-actions form {
   display: inline-flex;
+}
+
+.import-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.import-card-facts {
+  display: grid;
+  gap: 10px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.import-card-fact {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.import-card-fact > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.import-card-fact > strong {
+  font-size: 14px;
+  line-height: 1.35;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.import-card-actions {
+  align-items: center;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.import-card-actions form,
+.import-card-actions .button {
+  width: 100%;
 }
 
 .import-state {
@@ -2840,6 +2910,36 @@ dd {
   .imports-panel > .panel-heading .button-row form,
   .imports-panel > .panel-heading .button-row .button {
     width: 100%;
+  }
+
+  .import-tabs {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .import-tabs .button {
+    justify-content: center;
+    min-width: 0;
+    padding-left: 6px;
+    padding-right: 6px;
+    white-space: normal;
+    width: 100%;
+  }
+
+  .imports-cards {
+    display: grid;
+    gap: 12px;
+  }
+
+  .imports-table-wrap {
+    display: none;
+  }
+
+  .import-card .item-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .imports-table,

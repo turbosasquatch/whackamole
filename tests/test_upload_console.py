@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -99,7 +100,8 @@ def test_upload_console_queue_endpoint_enqueues_unattended_import_when_lock_busy
         assert rows[0]["args"] == "--trackers dp --unattended"
         assert imports_page.status_code == 200
         assert "Queued Imports" in imports_page.text
-        assert "Run pending imports" in imports_page.text
+        assert "Run Pending Imports" in imports_page.text
+        assert "Run pending imports" not in imports_page.text
         assert "--trackers dp --unattended" in imports_page.text
 
 
@@ -335,6 +337,7 @@ def test_import_tabs_show_expected_statuses_and_cancel_actions(tmp_path, monkeyp
         assert "Cancelled.Movie.2026" in cancelled_page.text
         assert f'action="/imports/{cancelled_id}/cancel"' not in cancelled_page.text
         assert "Cancelled" in cancelled_page.text
+        assert not re.search(r">\s*Cancelled\s*<span class=\"button-count\"", cancelled_page.text)
 
 
 def test_import_cancellation_rules_and_claim_skip_cancelled(tmp_path, monkeypatch):
@@ -427,11 +430,20 @@ def test_notification_polling_updates_service_events():
 
 def test_mobile_import_cards_use_two_column_fact_grid():
     styles = Path("app/static/style.css").read_text()
+    template = Path("app/templates/imports.html").read_text()
 
-    assert ".imports-table tr" in styles
-    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
-    assert '.imports-table td[data-label="Item"]' in styles
+    assert "imports-cards" in template
+    assert "import-card-facts" in template
+    assert ".imports-panel {\n  display: grid;\n  gap: 12px;" in styles
+    assert ".import-tabs" in styles
+    assert ".import-tabs .button" in styles
+    assert "gap: 0.45rem;" in styles
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in styles
+    assert ".import-card" in styles
     assert "padding: 14px;" in styles
+    assert ".import-card-facts" in styles
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    assert ".imports-table-wrap {\n    display: none;" in styles
 
 
 def test_upload_console_full_snapshots_are_not_terminal_replacements():
