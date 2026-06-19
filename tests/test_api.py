@@ -635,7 +635,7 @@ def test_candidate_dashboard_uses_smaller_page_size(tmp_path, monkeypatch):
         assert row_builds == 75
 
 
-def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_path, monkeypatch):
+def test_folder_name_normalization_keeps_candidate_without_detail_scan(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
@@ -659,24 +659,18 @@ def test_folder_name_warning_routes_candidate_to_review_without_detail_scan(tmp_
 
         assert candidates_page.status_code == 200
         assert review_page.status_code == 200
-        assert "Example.Show.S01E01" not in candidates_page.text
-        assert "Example.Show.S01E01" in review_page.text
-        assert "Rename" in review_page.text
-        assert "Review" in review_page.text
-        assert "Folder name would be normalised to American.Crime.Story.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb." in review_page.text
-        assert 'class="button small success"' in review_page.text
-        assert "Upload" in review_page.text
+        assert "Example.Show.S01E01" in candidates_page.text
+        assert "Example.Show.S01E01" not in review_page.text
 
         assert candidate_api.status_code == 200
         assert review_api.status_code == 200
-        assert candidate_api.json()["items"] == []
-        review_items = review_api.json()["items"]
-        assert len(review_items) == 1
-        assert review_items[0]["status"] == "candidate"
-        assert review_items[0]["effective_status"] == "manual_review"
-        assert review_items[0]["decision_label"] == "Review"
-        assert review_items[0]["display_status"]["label"] == "Needs Review"
-        assert "Rename" in {tag["label"] for tag in review_items[0]["alert_tags"]}
+        candidate_items = candidate_api.json()["items"]
+        assert len(candidate_items) == 1
+        assert candidate_items[0]["status"] == "candidate"
+        assert candidate_items[0]["effective_status"] == "candidate"
+        assert candidate_items[0]["decision_label"] == "candidate"
+        assert candidate_items[0]["display_status"]["label"] == "Ready"
+        assert review_api.json()["items"] == []
 
 
 def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monkeypatch):

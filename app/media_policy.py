@@ -409,7 +409,6 @@ def apply_release_group_policy(
             }
         )
 
-    existing_flags.extend(_possible_renamed_flags(arr_results, release_group, item_name))
     policy_result = {
         "version": 1,
         "release_group": release_group,
@@ -449,29 +448,6 @@ def _candidate_trackers(tracker_results: Mapping[str, Sequence[str]], arr_result
     return [str(tracker) for tracker in tracker_results.get("passed", []) if str(tracker)]
 
 
-def _possible_renamed_flags(arr_results: Mapping[str, Any], release_group: str, item_name: str) -> List[Dict[str, Any]]:
-    if not release_group:
-        return []
-    local_key = _release_key(item_name)
-    for decision in arr_results.get("decisions", []) if isinstance(arr_results, Mapping) else []:
-        if not isinstance(decision, Mapping):
-            continue
-        best = decision.get("best_release")
-        if not isinstance(best, Mapping):
-            continue
-        title = str(best.get("title") or "")
-        if _policy_key(extract_release_group(title)) == _policy_key(release_group) and _release_key(title) != local_key:
-            return [
-                {
-                    "key": "possible_renamed_release",
-                    "label": "Possible renamed release",
-                    "severity": "warning",
-                    "detail": "Arr found a same-group release with a different release title.",
-                }
-            ]
-    return []
-
-
 def _torrent_root_name(files: Sequence[Mapping[str, Any]]) -> str:
     roots = []
     for file_info in files:
@@ -482,12 +458,6 @@ def _torrent_root_name(files: Sequence[Mapping[str, Any]]) -> str:
     if roots and len(set(roots)) == 1:
         return roots[0]
     return ""
-
-
-def _release_key(value: str) -> str:
-    name = PurePosixPath(str(value or "")).name
-    name = re.sub(r"\.(?:mkv|mp4|avi|m2ts|ts|mov|wmv|nfo)$", "", name, flags=re.IGNORECASE)
-    return re.sub(r"[^a-z0-9]+", "", name.lower())
 
 
 def _policy_key(value: str) -> str:

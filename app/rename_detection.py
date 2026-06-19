@@ -131,7 +131,7 @@ def _folder_evidence(root_name: str, mapped_root: str, files: Sequence[Mapping[s
                 _evidence(
                     kind="folder_scene_normalization",
                     scope="folder",
-                    confidence="high",
+                    confidence="low",
                     source="torrent_root",
                     value=root_name,
                     expected=normalized,
@@ -262,6 +262,10 @@ def _arr_evidence(local_title: str, arr: Mapping[str, Any]) -> List[Dict[str, An
         if _release_key(title) == local_key:
             continue
         if _same_arr_scope(local_traits, remote_traits):
+            tracker = str(decision.get("tracker") or best.get("tracker") or "").strip()
+            reason = "Arr found a same-group release in the same scope with a different release title."
+            if tracker:
+                reason = f"Arr found a same-group release on {tracker} in the same scope with a different release title."
             return [
                 _evidence(
                     kind="same_group_arr_title_mismatch",
@@ -270,7 +274,15 @@ def _arr_evidence(local_title: str, arr: Mapping[str, Any]) -> List[Dict[str, An
                     source="Discovarr",
                     value=local_title,
                     expected=title,
-                    reason="Arr found a same-group release in the same scope with a different release title.",
+                    reason=reason,
+                    tracker=tracker,
+                    local_title=local_title,
+                    remote_title=title,
+                    release_group=local_traits.release_group,
+                    local_key=local_key,
+                    remote_key=_release_key(title),
+                    local_scope=_scope_payload(local_traits),
+                    remote_scope=_scope_payload(remote_traits),
                 )
             ]
     return []
@@ -366,6 +378,18 @@ def _same_arr_scope(local: Any, remote: Any) -> bool:
     return True
 
 
+def _scope_payload(traits: Any) -> Dict[str, Any]:
+    return {
+        "season": traits.season,
+        "episode": traits.episode,
+        "season_pack": bool(traits.season_pack),
+        "resolution": traits.resolution,
+        "source_tag": traits.source_tag,
+        "source_provider": traits.source_provider,
+        "rip_type": traits.rip_type,
+    }
+
+
 def _release_key(value: str) -> str:
     stem = _stem(str(value or ""))
     return re.sub(r"[^a-z0-9]+", "", stem.lower())
@@ -392,8 +416,9 @@ def _evidence(
     value: str = "",
     expected: str = "",
     reason: str,
+    **extra: Any,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "kind": kind,
         "scope": scope,
         "confidence": confidence,
@@ -402,6 +427,8 @@ def _evidence(
         "expected": expected,
         "reason": reason,
     }
+    payload.update({key: value for key, value in extra.items() if value not in ("", None, [], {})})
+    return payload
 
 
 def _dedupe_evidence(evidence: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:

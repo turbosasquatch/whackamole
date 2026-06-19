@@ -793,6 +793,113 @@ def test_primary_language_matching_arr_original_language_does_not_block_candidat
     }
 
 
+def test_hebrew_primary_language_code_matching_arr_original_language_does_not_block_candidate(tmp_path, monkeypatch):
+    release_title = "Tehran (2020) S01 (2160p ATVP WEB-DL H265 DDP 5.1 English - HONE)"
+    MediaQuiClient.files = [{"index": 1, "name": f"{release_title}/{release_title}.mkv", "size": 1000}]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 1,
+        "streams": [
+            {"@type": "Video", "Format": "HEVC", "Height": "2160", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "He", "Default": "Yes"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "English", "Default": "No"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {}
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "media": {"original_language": "Hebrew"},
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+    assert row["status"] == "candidate"
+    assert row["verdict"] == "candidate"
+    assert checks["media"]["release_group"] == "HONE"
+    assert "primary_language" not in {flag["key"] for flag in checks["flags"]}
+    assert checks["media"]["primary_language_resolved_by_arr"] == {
+        "original_language": "Hebrew",
+        "default_audio_language": "hebrew",
+    }
+
+
+def test_primary_language_without_confident_arr_language_routes_to_review_not_blocked(tmp_path, monkeypatch):
+    release_title = "Example.Movie.2026.2160p.AMZN.WEB-DL.DDP5.1.H.265-GRP"
+    MediaQuiClient.files = [{"index": 1, "name": f"{release_title}/{release_title}.mkv", "size": 1000}]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 1,
+        "streams": [
+            {"@type": "Video", "Format": "HEVC", "Height": "2160", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "German", "Default": "Yes"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "English", "Default": "No"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {}
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "media": {},
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    checks = json.loads(row["check_results"])
+    assert row["status"] == "manual_review"
+    assert row["verdict"] == "primary_language_unverified"
+    assert "primary_language" not in {flag["key"] for flag in checks["flags"]}
+    assert "primary_language_unverified" in {flag["key"] for flag in checks["flags"]}
+    assert checks["decision"]["effect"] == "review"
+
+
 def test_web_source_missing_is_skipped_when_ua_has_no_tracker(tmp_path, monkeypatch):
     release_title = "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"
     MediaQuiClient.files = [
@@ -1288,7 +1395,7 @@ def test_srrdb_filename_mismatch_sends_candidate_to_review(tmp_path, monkeypatch
     assert FakeSrrdbClient.calls == ["The.Panic.in.Needle.Park.1971.1080p.BluRay.X264-AMIABLE"]
 
 
-def test_folder_name_warning_sends_candidate_to_review(tmp_path, monkeypatch):
+def test_folder_name_normalization_is_informational(tmp_path, monkeypatch):
     release_root = "American Crime Story S03 1080p AMZN WEB-DL DDP5 1 H 264-NTb"
     MediaQuiClient.files = [
         {
@@ -1343,12 +1450,12 @@ def test_folder_name_warning_sends_candidate_to_review(tmp_path, monkeypatch):
     row = db.get_item(item_id)
     checks = json.loads(row["check_results"])
 
-    assert row["status"] == "manual_review"
-    assert row["verdict"] == "renamed_release_warning"
-    assert row["reason"] == "Folder name would be normalised to American.Crime.Story.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb."
-    assert "renamed_release_warning" in {flag["key"] for flag in checks["flags"]}
-    assert checks["rename_detection"]["status"] == "manual_review"
-    assert any(item["kind"] == "folder_scene_normalization" for item in checks["rename_detection"]["evidence"])
+    assert row["status"] == "candidate"
+    assert row["verdict"] == "candidate"
+    assert "renamed_release_warning" not in {flag["key"] for flag in checks["flags"]}
+    assert checks["rename_detection"]["status"] == "pass"
+    evidence = checks["rename_detection"]["evidence"]
+    assert any(item["kind"] == "folder_scene_normalization" and item["confidence"] == "low" for item in evidence)
     assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == [
         "media",
         "path",
@@ -1356,7 +1463,6 @@ def test_folder_name_warning_sends_candidate_to_review(tmp_path, monkeypatch):
         "arr",
         "policy",
         "srrdb",
-        "rename_check",
     ]
 
 

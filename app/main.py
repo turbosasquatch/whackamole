@@ -357,9 +357,6 @@ def _effective_status(item: Mapping[str, Any]) -> str:
     decision_status = str(decision.get("status") or "")
     if decision_status in {"candidate", "manual_review", "blocked", "skipped", "retry", "error"}:
         return decision_status
-    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
-    if value == "candidate" and folder_check.get("group") == "warning":
-        return "manual_review"
     return value
 
 
@@ -373,8 +370,6 @@ def _effective_status_for_row(row: Any) -> str:
     decision_status = str(decision.get("status") or "")
     if decision_status in {"candidate", "manual_review", "blocked", "skipped", "retry", "error"}:
         return decision_status
-    if value == "candidate" and _folder_name_check(item).get("group") == "warning":
-        return "manual_review"
     return value
 
 
@@ -484,9 +479,6 @@ def _valid_for_trackers(
 def _decision_notice(item: Dict[str, Any], check_results: Dict[str, Any]) -> str:
     if str(item.get("status") or "") == "rejected":
         return str(item.get("reason") or "Moderator rejection recorded.").strip()
-    folder_check = item.get("folder_name_check") if isinstance(item.get("folder_name_check"), dict) else _folder_name_check(item)
-    if str(item.get("status") or "") == "candidate" and folder_check.get("group") == "warning":
-        return str(folder_check.get("notes") or "").strip()
     flags = _check_flags(check_results)
     for severity in ("blocker", "error", "warning"):
         for flag in flags:
@@ -778,14 +770,14 @@ def _rename_check(item: Dict[str, Any], check_results: Dict[str, Any]) -> Dict[s
     if str(folder_check.get("group") or "") == "warning":
         return {
             "version": 1,
-            "status": "manual_review",
-            "confidence": "high",
+            "status": "pass",
+            "confidence": "low",
             "reason": str(folder_check.get("notes") or "Folder name needs review before upload."),
             "evidence": [
                 {
-                    "kind": "folder_name_warning",
+                    "kind": "folder_scene_normalization",
                     "scope": "folder",
-                    "confidence": "high",
+                    "confidence": "low",
                     "source": "legacy",
                     "value": str(folder_check.get("root_name") or ""),
                     "expected": str(folder_check.get("normalized") or ""),
@@ -796,16 +788,24 @@ def _rename_check(item: Dict[str, Any], check_results: Dict[str, Any]) -> Dict[s
     for flag in _check_flags(check_results):
         key = str(flag.get("key") or "")
         if key in {"folder_name_warning", "possible_renamed_release", "renamed_release_warning"}:
+            status = "warning"
+            confidence = "medium"
+            if key == "folder_name_warning":
+                status = "pass"
+                confidence = "low"
+            elif key == "renamed_release_warning":
+                status = "manual_review"
+                confidence = "high"
             return {
                 "version": 1,
-                "status": "manual_review" if key in {"folder_name_warning", "renamed_release_warning"} else "warning",
-                "confidence": "high" if key in {"folder_name_warning", "renamed_release_warning"} else "medium",
+                "status": status,
+                "confidence": confidence,
                 "reason": str(flag.get("detail") or flag.get("label") or "Rename Check needs review."),
                 "evidence": [
                     {
                         "kind": key,
                         "scope": "legacy",
-                        "confidence": "high" if key != "possible_renamed_release" else "medium",
+                        "confidence": confidence,
                         "source": "legacy",
                         "reason": str(flag.get("detail") or flag.get("label") or ""),
                     }

@@ -281,8 +281,6 @@ def evaluate_decision(
             "mediainfo_missing",
             "media_error",
             "no_video_files",
-            "folder_name_warning",
-            "renamed_release_warning",
             "srrdb_filename_mismatch",
             "missing_release_group",
         },
@@ -300,8 +298,6 @@ def evaluate_decision(
         )
     if review_flag:
         rule_id = {
-            "folder_name_warning": "review.folder_name_warning",
-            "renamed_release_warning": "review.rename_check",
             "missing_release_group": "review.missing_release_group",
         }.get(str(review_flag.get("key") or ""), "review.evidence_warning")
         return _decision(
@@ -581,7 +577,7 @@ RULE_DEFINITIONS: List[RuleDefinition] = [
     RuleDefinition("review.missing_release_group", "Missing release group", "Decision", "Release Group", "warning", "review", "release_group_policy", notes="Reviews when policy needs a release group and none can be parsed.", order=130),
     RuleDefinition("review.srrdb_mismatch", "srrDB mismatch", "Decision", "srrDB", "warning", "review", "check_results.srrdb", notes="Reviews when archived filenames or sizes differ.", order=140),
     RuleDefinition("review.rename_check", "Rename Check", "Decision", "Rename Check", "warning", "review", "check_results.rename_detection", notes="Reviews high-confidence renamed folder, file, sibling, Arr, or srrDB evidence.", order=150),
-    RuleDefinition("review.folder_name_warning", "Folder name normalization", "Decision", "Rename Check", "warning", "review", "check_results.flags", notes="Legacy folder normalization warning rendered through Rename Check.", order=155),
+    RuleDefinition("review.folder_name_warning", "Folder name normalization", "Information", "Rename Check", "info", "none", "check_results.rename_detection", notes="Legacy folder normalization is informational; rename routing uses structured Rename Check evidence.", order=155),
     RuleDefinition("review.evidence_warning", "Evidence warning", "Decision", "Rules", "warning", "review", "check_results.flags", notes="Reviews candidate-affecting warning evidence.", order=160),
     RuleDefinition("final.candidate", "Candidate", "Decision", "Final", "pass", "candidate", "valid tracker set", notes="Allows upload when at least one valid tracker remains.", order=900),
     RuleDefinition("system.not_replayable", "Not replayable", "Information", "Rules", "info", "none", "legacy row", notes="Used when stored evidence is insufficient for replay.", order=1000),

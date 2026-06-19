@@ -215,6 +215,51 @@ def test_mediainfo_analysis_blocks_non_english_default_when_english_audio_exists
     assert any(flag["key"] == "primary_language" for flag in result["flags"])
 
 
+def test_mediainfo_analysis_treats_hebrew_language_code_as_confident_primary_language():
+    release = "Tehran.S01E01.2160p.ATVP.WEB-DL.DDP5.1.H.265-HONE"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "He", "Default": "Yes"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "English", "Default": "No"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert any(issue["key"] == "primary_language" for issue in result["issues"])
+    assert not any(issue["key"] == "primary_language_unverified" for issue in result["issues"])
+    assert result["mediainfo_files"][0]["default_audio"]["language"] == "hebrew"
+
+
+def test_mediainfo_analysis_reviews_unknown_primary_language_code():
+    release = "Movie.2026.2160p.WEB-DL.DDP5.1.H.265-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    mediainfo = [
+        {
+            "fileIndex": 0,
+            "relativePath": f"{release}/{release}.mkv",
+            "streams": [
+                {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "zz", "Default": "Yes"},
+                {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Language": "English", "Default": "No"},
+            ],
+        }
+    ]
+
+    result = analyze_mediainfo(item_name=release, files=files, mediainfo_payloads=mediainfo)
+
+    assert result["status"] == "manual_review"
+    assert any(issue["key"] == "primary_language_unverified" for issue in result["issues"])
+    assert not any(issue["key"] == "primary_language" for issue in result["issues"])
+    assert any(flag["key"] == "primary_language_unverified" for flag in result["flags"])
+
+
 def test_local_mediainfo_confirms_atmos_missing_from_qui():
     release = "Movie.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP"
     files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]

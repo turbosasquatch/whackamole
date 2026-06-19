@@ -4,6 +4,8 @@ from pathlib import Path
 from app.media_identity import (
     analyze_media_payloads,
     extract_release_group,
+    language_is_confident,
+    normalize_language_label,
     parse_release_traits,
     release_is_equal_or_better,
     traits_from_mediainfo,
@@ -26,6 +28,11 @@ def test_release_identity_normalizes_common_user_aliases():
     assert traits.codec == "HEVC"
     assert "Dolby Vision" in traits.hdr_formats
     assert traits.release_group == "GRP"
+
+
+def test_language_normalization_preserves_multiple_languages_alias():
+    assert normalize_language_label("Multiple Languages") == "multi"
+    assert language_is_confident("Multiple Languages")
 
 
 def test_source_provider_can_be_extracted_from_nfo_long_and_short_names():

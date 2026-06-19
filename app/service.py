@@ -20,7 +20,13 @@ from app.config import ConfigManager, SecretStore
 from app.database import Database
 from app.filters import is_completed_torrent, is_watchable_torrent
 from app.inventory import build_inventory_meta, is_inventory_support
-from app.media_identity import ReleaseTraits, parse_release_traits, traits_from_payload
+from app.media_identity import (
+    ReleaseTraits,
+    language_is_confident,
+    normalize_language_label,
+    parse_release_traits,
+    traits_from_payload,
+)
 from app.media_policy import (
     analyze_mediainfo,
     apply_release_group_policy,
@@ -35,7 +41,7 @@ from app.pathmap import map_path
 from app.reducer import reduce_ua_log
 from app.rename_detection import analyze_rename_detection, rename_detection_flag
 from app.rules import apply_decision_payload, evaluate_decision
-from app.srrdb import apply_srrdb_result, srrdb_lookup_name, verify_srrdb_release
+from app.srrdb import apply_srrdb_result, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
 
@@ -75,30 +81,6 @@ def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> Rele
     return local
 
 
-def _folder_name_review_warning(mapped_path: str, media_result: Mapping[str, Any]) -> Dict[str, Any]:
-    video_files = media_result.get("video_files") if isinstance(media_result.get("video_files"), list) else []
-    if len(video_files) == 1:
-        return {}
-
-    root_name = str(media_result.get("torrent_root") or PurePosixPath(str(mapped_path or "")).name).strip()
-    if not root_name or PurePosixPath(root_name).suffix.lower() in VIDEO_EXTENSIONS:
-        return {}
-
-    normalized = srrdb_lookup_name(root_name)
-    if not normalized or normalized == root_name:
-        return {}
-
-    reason = f"Folder name would be normalised to {normalized}."
-    return {
-        "key": "folder_name_warning",
-        "label": "Folder Name",
-        "severity": "warning",
-        "detail": reason,
-        "root_name": root_name,
-        "normalized": normalized,
-    }
-
-
 def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     review_keys = {
         "mediainfo_unavailable",
@@ -133,21 +115,54 @@ def _resolve_primary_language_with_arr(
     flags: Sequence[Mapping[str, Any]],
     arr_results: Mapping[str, Any],
 ) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+    flag_list = [dict(flag) for flag in flags if isinstance(flag, Mapping)]
+    primary_flags = [flag for flag in flag_list if str(flag.get("key") or "") == "primary_language"]
+    if not primary_flags:
+        return dict(media_result), flag_list
+
     original_language = _arr_original_language(arr_results)
     default_language = _media_default_audio_language(media_result)
-    if not original_language or not default_language:
-        return dict(media_result), [dict(flag) for flag in flags if isinstance(flag, Mapping)]
-    if _normalise_language(original_language) != _normalise_language(default_language):
-        return dict(media_result), [dict(flag) for flag in flags if isinstance(flag, Mapping)]
+    default_normalized = normalize_language_label(default_language)
+    original_normalized = normalize_language_label(original_language)
+    if (
+        original_language
+        and default_language
+        and language_is_confident(original_language)
+        and language_is_confident(default_language)
+        and original_normalized == default_normalized
+    ):
+        resolved_flags = [flag for flag in flag_list if str(flag.get("key") or "") != "primary_language"]
+        media = _remove_primary_language_issues(media_result)
+        media["primary_language_resolved_by_arr"] = {
+            "original_language": original_language,
+            "default_audio_language": default_normalized,
+        }
+        severities = {str(issue.get("severity") or "") for issue in media.get("issues", []) if isinstance(issue, Mapping)}
+        if "ERROR" not in severities:
+            media["status"] = "passed"
+            media["media_status"] = "warning" if "WARNING" in severities else "confirmed"
+            media["verdict"] = "media_warning" if "WARNING" in severities else "mediainfo_passed"
+            media["reason"] = "Default audio language matches Arr original language."
+        return media, resolved_flags
 
-    resolved_flags = [
-        dict(flag)
-        for flag in flags
-        if isinstance(flag, Mapping) and str(flag.get("key") or "") != "primary_language"
+    if original_language and language_is_confident(original_language) and default_language and language_is_confident(default_language):
+        return dict(media_result), flag_list
+
+    media = _downgrade_primary_language_to_unverified(
+        media_result,
+        original_language=original_language,
+        default_language=default_language,
+    )
+    review_flags = [
+        _primary_language_unverified_flag(flag, original_language=original_language, default_language=default_language)
+        if str(flag.get("key") or "") == "primary_language"
+        else dict(flag)
+        for flag in flag_list
     ]
-    if len(resolved_flags) == len([flag for flag in flags if isinstance(flag, Mapping)]):
-        return dict(media_result), resolved_flags
+    return media, review_flags
 
+
+def _remove_primary_language_issues(media_result: Mapping[str, Any]) -> Dict[str, Any]:
     media = dict(media_result)
     issues = [
         dict(issue)
@@ -160,17 +175,68 @@ def _resolve_primary_language_with_arr(
         for flag in media_result.get("flags", [])
         if isinstance(flag, Mapping) and str(flag.get("key") or "") != "primary_language"
     ]
-    media["primary_language_resolved_by_arr"] = {
+    return media
+
+
+def _downgrade_primary_language_to_unverified(
+    media_result: Mapping[str, Any],
+    *,
+    original_language: str,
+    default_language: str,
+) -> Dict[str, Any]:
+    media = dict(media_result)
+    detail = _primary_language_unverified_detail(original_language=original_language, default_language=default_language)
+    media["issues"] = [
+        _primary_language_unverified_issue(issue, detail)
+        if isinstance(issue, Mapping) and str(issue.get("key") or "") == "primary_language"
+        else dict(issue)
+        for issue in media_result.get("issues", [])
+        if isinstance(issue, Mapping)
+    ]
+    media["flags"] = [
+        _primary_language_unverified_flag(flag, original_language=original_language, default_language=default_language)
+        if isinstance(flag, Mapping) and str(flag.get("key") or "") == "primary_language"
+        else dict(flag)
+        for flag in media_result.get("flags", [])
+        if isinstance(flag, Mapping)
+    ]
+    media["primary_language_review_reason"] = {
         "original_language": original_language,
-        "default_audio_language": default_language,
+        "default_audio_language": normalize_language_label(default_language) or default_language,
+        "reason": detail,
     }
-    severities = {str(issue.get("severity") or "") for issue in issues if isinstance(issue, Mapping)}
-    if "ERROR" not in severities:
-        media["status"] = "passed"
-        media["media_status"] = "warning" if "WARNING" in severities else "confirmed"
-        media["verdict"] = "media_warning" if "WARNING" in severities else "mediainfo_passed"
-        media["reason"] = "Default audio language matches Arr original language."
-    return media, resolved_flags
+    media["reason"] = detail
+    return media
+
+
+def _primary_language_unverified_issue(issue: Mapping[str, Any], detail: str) -> Dict[str, Any]:
+    payload = dict(issue)
+    payload["key"] = "primary_language_unverified"
+    payload["message"] = detail
+    return payload
+
+
+def _primary_language_unverified_flag(
+    flag: Mapping[str, Any],
+    *,
+    original_language: str,
+    default_language: str,
+) -> Dict[str, Any]:
+    payload = dict(flag)
+    payload["key"] = "primary_language_unverified"
+    payload["detail"] = _primary_language_unverified_detail(
+        original_language=original_language,
+        default_language=default_language,
+    )
+    return payload
+
+
+def _primary_language_unverified_detail(*, original_language: str, default_language: str) -> str:
+    if not original_language:
+        return "Arr original language is unavailable; review primary audio language before upload."
+    if not default_language:
+        return "Default audio language is unavailable; review primary audio language before upload."
+    return "Arr or MediaInfo language metadata is not confident enough; review primary audio language before upload."
 
 
 def _arr_original_language(arr_results: Mapping[str, Any]) -> str:
@@ -201,40 +267,6 @@ def _media_default_audio_language(media_result: Mapping[str, Any]) -> str:
             if isinstance(track, Mapping) and str(track.get("language") or "").strip():
                 return str(track.get("language") or "").strip()
     return ""
-
-
-def _normalise_language(value: str) -> str:
-    text = re.sub(r"\s*\([^)]*\)", "", str(value or "").strip().lower())
-    primary = text.split("-", 1)[0]
-    aliases = {
-        "en": "english",
-        "eng": "english",
-        "english": "english",
-        "de": "german",
-        "ger": "german",
-        "deu": "german",
-        "german": "german",
-        "fr": "french",
-        "fre": "french",
-        "fra": "french",
-        "french": "french",
-        "es": "spanish",
-        "spa": "spanish",
-        "spanish": "spanish",
-        "it": "italian",
-        "ita": "italian",
-        "italian": "italian",
-        "ja": "japanese",
-        "jpn": "japanese",
-        "japanese": "japanese",
-        "ko": "korean",
-        "kor": "korean",
-        "korean": "korean",
-        "ru": "russian",
-        "rus": "russian",
-        "russian": "russian",
-    }
-    return aliases.get(primary, aliases.get(text, text))
 
 
 def _review_reason_from_flag(flag: Mapping[str, Any]) -> str:

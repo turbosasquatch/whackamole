@@ -180,7 +180,7 @@ def test_upload_console_queue_endpoint_uses_default_args_when_payload_args_is_nu
         assert rows[0]["args"] == "--trackers dp,ulcx --service AMZN --unattended"
 
 
-def test_upload_console_blocks_folder_name_that_would_be_normalized(tmp_path, monkeypatch):
+def test_upload_console_allows_folder_name_that_would_be_normalized(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         cfg = client.app.state.config_manager.load()
         cfg.upload_assistant.url = "http://ua"
@@ -200,7 +200,7 @@ def test_upload_console_blocks_folder_name_that_would_be_normalized(tmp_path, mo
         assert "Folder name would be normalised to Dirty.Business.2026.S01.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR." in page.text
         assert "Rename Check" in page.text
         assert '<strong>Rename Check</strong>' in page.text
-        assert '<span class="check-state warning">Warning</span>' in page.text
+        assert '<span class="check-state pass">Pass</span>' in page.text
         assert "Review Required" not in page.text
         assert "Queue Upload" in page.text
         assert 'data-can-queue="true"' in page.text

@@ -117,6 +117,115 @@ BITRATE_AUDIO_RULES: Sequence[Tuple[str, Optional[float], bool, float, float]] =
     ("DTS-HD MA", None, False, 2000.0, 8000.0),
 )
 
+LANGUAGE_ALIASES = {
+    "ar": "arabic",
+    "ara": "arabic",
+    "arabic": "arabic",
+    "cmn": "mandarin",
+    "mandarin": "mandarin",
+    "cs": "czech",
+    "ces": "czech",
+    "cze": "czech",
+    "czech": "czech",
+    "da": "danish",
+    "dan": "danish",
+    "danish": "danish",
+    "de": "german",
+    "deu": "german",
+    "ger": "german",
+    "german": "german",
+    "el": "greek",
+    "ell": "greek",
+    "gre": "greek",
+    "greek": "greek",
+    "en": "english",
+    "eng": "english",
+    "english": "english",
+    "es": "spanish",
+    "spa": "spanish",
+    "spanish": "spanish",
+    "fa": "persian",
+    "fas": "persian",
+    "farsi": "persian",
+    "per": "persian",
+    "persian": "persian",
+    "fi": "finnish",
+    "fin": "finnish",
+    "finnish": "finnish",
+    "fr": "french",
+    "fra": "french",
+    "fre": "french",
+    "french": "french",
+    "he": "hebrew",
+    "heb": "hebrew",
+    "hebrew": "hebrew",
+    "hi": "hindi",
+    "hin": "hindi",
+    "hindi": "hindi",
+    "hu": "hungarian",
+    "hun": "hungarian",
+    "hungarian": "hungarian",
+    "id": "indonesian",
+    "ind": "indonesian",
+    "indonesian": "indonesian",
+    "it": "italian",
+    "ita": "italian",
+    "italian": "italian",
+    "ja": "japanese",
+    "jpn": "japanese",
+    "japanese": "japanese",
+    "ko": "korean",
+    "kor": "korean",
+    "korean": "korean",
+    "mul": "multi",
+    "multi": "multi",
+    "multi-language": "multi",
+    "multiple": "multi",
+    "multiple languages": "multi",
+    "nl": "dutch",
+    "nld": "dutch",
+    "dut": "dutch",
+    "dutch": "dutch",
+    "no": "norwegian",
+    "nor": "norwegian",
+    "norwegian": "norwegian",
+    "pl": "polish",
+    "pol": "polish",
+    "polish": "polish",
+    "pt": "portuguese",
+    "por": "portuguese",
+    "portuguese": "portuguese",
+    "ro": "romanian",
+    "ron": "romanian",
+    "rum": "romanian",
+    "romanian": "romanian",
+    "ru": "russian",
+    "rus": "russian",
+    "russian": "russian",
+    "sv": "swedish",
+    "swe": "swedish",
+    "swedish": "swedish",
+    "th": "thai",
+    "tha": "thai",
+    "thai": "thai",
+    "tr": "turkish",
+    "tur": "turkish",
+    "turkish": "turkish",
+    "uk": "ukrainian",
+    "ukr": "ukrainian",
+    "ukrainian": "ukrainian",
+    "vi": "vietnamese",
+    "vie": "vietnamese",
+    "vietnamese": "vietnamese",
+    "yue": "cantonese",
+    "cantonese": "cantonese",
+    "zh": "chinese",
+    "chi": "chinese",
+    "zho": "chinese",
+    "chinese": "chinese",
+}
+LANGUAGE_LABELS = set(LANGUAGE_ALIASES.values())
+
 
 @dataclass(frozen=True)
 class ReleaseTraits:
@@ -274,6 +383,23 @@ def traits_from_payload(value: Mapping[str, Any]) -> ReleaseTraits:
         episode=_optional_int_payload_value(payload.get("episode")),
         season_pack=_bool_payload_value(payload.get("season_pack")),
     )
+
+
+def normalize_language_label(value: Any) -> str:
+    text = re.sub(r"\s*\([^)]*\)", "", str(value or "").strip().lower())
+    if not text:
+        return ""
+    primary = text.split("-", 1)[0].strip()
+    return LANGUAGE_ALIASES.get(primary, LANGUAGE_ALIASES.get(text, primary or text))
+
+
+def language_is_confident(value: Any) -> bool:
+    text = re.sub(r"\s*\([^)]*\)", "", str(value or "").strip().lower())
+    if not text:
+        return False
+    primary = text.split("-", 1)[0].strip()
+    normalized = normalize_language_label(text)
+    return primary in LANGUAGE_ALIASES or text in LANGUAGE_ALIASES or normalized in LANGUAGE_LABELS
 
 
 def media_display_fields_from_files(
@@ -826,28 +952,28 @@ def _policy_blocking_issues(
             )
         )
 
-    default_language = _language_name(default_audio) if isinstance(default_audio, Mapping) else ""
+    default_language_raw = _language_track_text(default_audio) if isinstance(default_audio, Mapping) else ""
+    default_language = normalize_language_label(default_language_raw)
+    default_language_confident = language_is_confident(default_language_raw)
     audio_tracks = file_result.get("audio") if isinstance(file_result.get("audio"), list) else []
     audio_languages = {_language_name(track) for track in audio_tracks if isinstance(track, Mapping) and _language_name(track)}
-    declared_languages = {str(language or "").lower() for language in title_traits.languages}
+    declared_languages = {normalize_language_label(language) for language in title_traits.languages if normalize_language_label(language)}
     if default_language and default_language != "english" and "english" in audio_languages:
-        issues.append(
-            _issue(
-                "ERROR",
-                "primary_language",
-                f"Primary audio language is {default_language.title()}, but English audio is available.",
-                file_result,
-            )
+        key = "primary_language" if default_language_confident else "primary_language_unverified"
+        message = (
+            f"Primary audio language is {default_language.title()}, but English audio is available."
+            if default_language_confident
+            else f'Primary audio language "{default_language_raw}" could not be confidently identified; review before upload.'
         )
+        issues.append(_issue("ERROR", key, message, file_result))
     elif default_language and default_language != "english" and default_language not in declared_languages:
-        issues.append(
-            _issue(
-                "ERROR",
-                "primary_language",
-                f"Primary audio language is {default_language.title()}, but the release name does not declare it.",
-                file_result,
-            )
+        key = "primary_language" if default_language_confident else "primary_language_unverified"
+        message = (
+            f"Primary audio language is {default_language.title()}, but the release name does not declare it."
+            if default_language_confident
+            else f'Primary audio language "{default_language_raw}" could not be confidently identified; review before upload.'
         )
+        issues.append(_issue("ERROR", key, message, file_result))
     return issues
 
 
@@ -1672,35 +1798,11 @@ def _track_title(track: Mapping[str, Any]) -> str:
 
 
 def _language_name(track: Mapping[str, Any]) -> str:
-    value = _track_text(track, "Language", "language").strip().lower()
-    value = re.sub(r"\s*\([^)]*\)", "", value).strip()
-    primary = value.split("-", 1)[0]
-    aliases = {
-        "en": "english",
-        "eng": "english",
-        "english": "english",
-        "de": "german",
-        "ger": "german",
-        "deu": "german",
-        "fr": "french",
-        "fre": "french",
-        "fra": "french",
-        "es": "spanish",
-        "spa": "spanish",
-        "it": "italian",
-        "ita": "italian",
-        "ja": "japanese",
-        "jpn": "japanese",
-        "ko": "korean",
-        "kor": "korean",
-        "mul": "multi",
-        "multi": "multi",
-        "multiple languages": "multi",
-        "multiple": "multi",
-        "ru": "russian",
-        "rus": "russian",
-    }
-    return aliases.get(primary, aliases.get(value, value))
+    return normalize_language_label(_language_track_text(track))
+
+
+def _language_track_text(track: Mapping[str, Any]) -> str:
+    return _track_text(track, "Language", "language").strip()
 
 
 def _track_type(track: Mapping[str, Any]) -> str:

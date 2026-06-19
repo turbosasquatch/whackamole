@@ -145,6 +145,30 @@ def test_evaluator_reviews_high_confidence_rename_check():
     assert decision.winning_rule_id == "review.rename_check"
 
 
+def test_evaluator_ignores_legacy_rename_flag_without_structured_detection():
+    decision = evaluate_decision(
+        current_status="candidate",
+        current_verdict="candidate",
+        current_reason="Valid upload candidate on: DP",
+        tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+        check_results={
+            "ua": {"status": "candidate"},
+            "flags": [
+                {
+                    "key": "renamed_release_warning",
+                    "label": "Rename Check",
+                    "severity": "warning",
+                    "detail": "Legacy rename flag.",
+                }
+            ],
+        },
+    )
+
+    assert decision.status == "candidate"
+    assert decision.verdict == "candidate"
+    assert decision.winning_rule_id == "final.candidate"
+
+
 def test_evaluator_errors_no_video_files():
     decision = evaluate_decision(
         current_status="error",
