@@ -96,6 +96,8 @@ def rename_detection_flag(result: Mapping[str, Any]) -> Dict[str, Any]:
 def _srrdb_evidence(srrdb: Mapping[str, Any]) -> List[Dict[str, Any]]:
     status = str(srrdb.get("status") or "").lower()
     if status == "mismatch":
+        local_entries = _srrdb_entries(srrdb, "local_video_entries", "local_video_files")
+        archived_entries = _srrdb_entries(srrdb, "archived_video_entries", "proper_filenames")
         return [
             _evidence(
                 kind="srrdb_mismatch",
@@ -105,9 +107,15 @@ def _srrdb_evidence(srrdb: Mapping[str, Any]) -> List[Dict[str, Any]]:
                 value=", ".join(str(item) for item in srrdb.get("local_video_files") or []),
                 expected=", ".join(str(item) for item in srrdb.get("proper_filenames") or []),
                 reason=str(srrdb.get("reason") or "srrDB archived filenames differ from local files."),
+                queried_name=str(srrdb.get("queried_name") or ""),
+                local_video_entries=local_entries,
+                archived_video_entries=archived_entries,
+                comparison_pairs=_srrdb_pairs(srrdb, local_entries, archived_entries),
             )
         ]
     if status == "verified":
+        local_entries = _srrdb_entries(srrdb, "local_video_entries", "local_video_files")
+        archived_entries = _srrdb_entries(srrdb, "archived_video_entries", "proper_filenames")
         return [
             _evidence(
                 kind="srrdb_verified",
@@ -117,6 +125,10 @@ def _srrdb_evidence(srrdb: Mapping[str, Any]) -> List[Dict[str, Any]]:
                 value=", ".join(str(item) for item in srrdb.get("local_video_files") or []),
                 expected=", ".join(str(item) for item in srrdb.get("proper_filenames") or []),
                 reason="srrDB archived filename matches local files.",
+                queried_name=str(srrdb.get("queried_name") or ""),
+                local_video_entries=local_entries,
+                archived_video_entries=archived_entries,
+                comparison_pairs=_srrdb_pairs(srrdb, local_entries, archived_entries),
             )
         ]
     return []
@@ -156,7 +168,8 @@ def _folder_evidence(root_name: str, mapped_root: str, files: Sequence[Mapping[s
 def _file_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     evidence: List[Dict[str, Any]] = []
     root_traits = parse_release_traits(root_name)
-    root_group = _policy_key(root_traits.release_group or extract_release_group(root_name))
+    root_group_name = root_traits.release_group or extract_release_group(root_name)
+    root_group = _policy_key(root_group_name)
     for file_info in files:
         name = PurePosixPath(str(file_info.get("name") or "")).name
         stem = _stem(name)
@@ -171,6 +184,8 @@ def _file_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> List[D
                     source="video_file",
                     value=name,
                     reason=f"{name} contains an empty title token in the human-readable title area.",
+                    filename=name,
+                    files=[name],
                 )
             )
         if root_traits.is_comparable and _looks_random_basename(stem):
@@ -183,6 +198,8 @@ def _file_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> List[D
                     value=name,
                     expected=root_name,
                     reason=f"{name} looks like a random renamed video basename inside a structured release folder.",
+                    filename=name,
+                    files=[name],
                 )
             )
         file_group = _policy_key(extract_release_group(name))
@@ -194,8 +211,12 @@ def _file_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> List[D
                     confidence="high",
                     source="video_file",
                     value=name,
-                    expected=root_traits.release_group,
+                    expected=root_group_name,
                     reason=f"{name} uses a different release group than the folder/root.",
+                    filename=name,
+                    file_group=extract_release_group(name),
+                    root_group=root_group_name,
+                    files=[name],
                 )
             )
     return evidence
@@ -227,6 +248,7 @@ def _sibling_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> Lis
                 value=", ".join(sorted(groups)),
                 expected=extract_release_group(root_name),
                 reason="Video files in the same folder use mixed release groups.",
+                groups=groups,
             )
         )
     if len(signatures) > 1 and _has_majority_outlier(signatures):
@@ -238,9 +260,43 @@ def _sibling_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> Lis
                 source="video_files",
                 value="; ".join(f"{len(names)}x {key}" for key, names in sorted(signatures.items())),
                 reason="Video files in the same folder have inconsistent technical release tails.",
+                signatures=signatures,
             )
         )
     return evidence
+
+
+def _srrdb_entries(srrdb: Mapping[str, Any], entries_key: str, fallback_key: str) -> List[Dict[str, Any]]:
+    entries = srrdb.get(entries_key)
+    if isinstance(entries, list):
+        return [
+            {"name": str(entry.get("name") or ""), "size": int(entry.get("size") or 0)}
+            for entry in entries
+            if isinstance(entry, Mapping) and str(entry.get("name") or "")
+        ]
+    return [{"name": str(name), "size": 0} for name in srrdb.get(fallback_key, []) if str(name)]
+
+
+def _srrdb_pairs(
+    srrdb: Mapping[str, Any],
+    local_entries: Sequence[Mapping[str, Any]],
+    archived_entries: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    pairs = srrdb.get("comparison_pairs")
+    if isinstance(pairs, list):
+        return [dict(pair) for pair in pairs if isinstance(pair, Mapping)]
+    if len(local_entries) == len(archived_entries):
+        return [
+            {
+                "local_name": str(local.get("name") or ""),
+                "archived_name": str(archived.get("name") or ""),
+                "local_size": int(local.get("size") or 0),
+                "archived_size": int(archived.get("size") or 0),
+                "status": "legacy_pair",
+            }
+            for local, archived in zip(local_entries, archived_entries)
+        ]
+    return []
 
 
 def _arr_evidence(local_title: str, arr: Mapping[str, Any]) -> List[Dict[str, Any]]:

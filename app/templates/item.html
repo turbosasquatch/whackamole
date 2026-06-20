@@ -17,6 +17,8 @@
   {% set media = checks.media or {} %}
   {% set srrdb = checks.srrdb or {} %}
   {% set policy = checks.release_group_policy or {} %}
+  {% set rename_check = item.rename_check or {} %}
+  {% set rename_counts = rename_check.summary_counts or {} %}
   {% set ua_owner = service.ua_execution or {} %}
   {% set ua_console = item.upload_console or {} %}
   {% set ua_session = upload_console_session or {} %}
@@ -81,6 +83,7 @@
   <section class="tabs-shell" data-tabs>
     <div class="tab-list" role="tablist" aria-label="Item sections">
       <button class="active" type="button" data-tab-target="overview">Overview</button>
+      <button type="button" data-tab-target="rename">Rename</button>
       <button type="button" data-tab-target="mediainfo">Media Info</button>
       <button type="button" data-tab-target="upload-assistant">Upload Assistant</button>
       <button type="button" data-tab-target="discovarr">Discovarr</button>
@@ -143,6 +146,132 @@
           </div>
         </section>
       </div>
+    </div>
+
+    <div class="tab-panel" data-tab-panel="rename">
+      <section class="details-panel rename-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">Rename Check</span>
+            <h2>{{ rename_check.status_label or "No Rename Check evidence" }}</h2>
+          </div>
+          <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Rename Check" data-raw-kind="json" data-raw-source="raw-rename_detection">Raw</button>
+        </div>
+
+        <div class="rename-summary">
+          <div>
+            <span>Status</span>
+            <strong><span class="check-state {{ rename_check.state or 'neutral' }}">{{ rename_check.status_label or "Not Run" }}</span></strong>
+          </div>
+          <div>
+            <span>Confidence</span>
+            <strong>{{ rename_check.confidence or "low" }}</strong>
+          </div>
+          <div>
+            <span>Evidence</span>
+            <strong>{{ rename_counts.total or 0 }}</strong>
+          </div>
+          <div>
+            <span>High / Medium / Info</span>
+            <strong>{{ rename_counts.high or 0 }} / {{ rename_counts.medium or 0 }} / {{ rename_counts.info or 0 }}</strong>
+          </div>
+        </div>
+
+        {% if rename_check.reason %}
+          <p class="muted">{{ rename_check.reason }}</p>
+        {% endif %}
+
+        <table class="mini-table responsive-table rename-table">
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Source</th>
+              <th>Issue</th>
+              <th>Our record</th>
+              <th>Their / expected record</th>
+              <th>Difference</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rename_check.rows or [] %}
+              <tr>
+                <td data-label="Severity">
+                  <span class="severity-pill {{ row.severity }}">{{ row.severity_label }}</span>
+                  <small class="rename-confidence">{{ row.confidence }}</small>
+                </td>
+                <td data-label="Source">
+                  <strong>{{ row.source }}</strong>
+                  {% if row.tracker %}<small class="rename-confidence">Tracker {{ row.tracker }}</small>{% endif %}
+                  {% if row.scope_label %}<small class="rename-confidence">{{ row.scope_label }}</small>{% endif %}
+                </td>
+                <td data-label="Issue">
+                  <strong>{{ row.kind_label }}</strong>
+                  {% if row.reason %}<small class="rename-reason">{{ row.reason }}</small>{% endif %}
+                </td>
+                <td data-label="Our record">
+                  <span class="rename-cell-label">{{ row.local_label }}</span>
+                  {% if row.diff.local %}
+                    <code class="rename-diff" aria-label="{{ row.local_label }}">
+                      {%- for segment in row.diff.local -%}
+                        <span class="rename-diff-{{ segment.type }}">{{ segment.text }}</span>
+                      {%- endfor -%}
+                    </code>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td data-label="Their / expected record">
+                  <span class="rename-cell-label">{{ row.remote_label }}</span>
+                  {% if row.diff.remote %}
+                    <code class="rename-diff" aria-label="{{ row.remote_label }}">
+                      {%- for segment in row.diff.remote -%}
+                        <span class="rename-diff-{{ segment.type }}">{{ segment.text }}</span>
+                      {%- endfor -%}
+                    </code>
+                  {% elif row.remote_value %}
+                    <code class="rename-diff">{{ row.remote_value }}</code>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td data-label="Difference">
+                  <strong>{{ row.difference_summary }}</strong>
+                  {% if row.token_chips %}
+                    <div class="rename-token-list" aria-label="Changed tokens">
+                      {% for chip in row.token_chips %}
+                        <span class="rename-token-chip {{ chip.side }}">{{ chip.label }}: {{ chip.token }}</span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                  {% if row.meta %}
+                    <dl class="rename-meta">
+                      {% for item in row.meta %}
+                        <dt>{{ item.label }}</dt>
+                        <dd>{{ item.value }}</dd>
+                      {% endfor %}
+                    </dl>
+                  {% endif %}
+                  {% if row.files %}
+                    <details class="rename-files">
+                      <summary>Affected files</summary>
+                      {% for group in row.files %}
+                        <strong>{{ group.label }}</strong>
+                        <ul>
+                          {% for file in group.items %}
+                            <li>{{ file }}</li>
+                          {% endfor %}
+                        </ul>
+                      {% endfor %}
+                    </details>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="muted">No Rename Check issues recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
     </div>
 
     <div class="tab-panel" data-tab-panel="mediainfo">

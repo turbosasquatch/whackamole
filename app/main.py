@@ -43,6 +43,7 @@ from app.rules import rule_catalogue, ruleset_changelog
 from app.service import WhackamoleService
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.srrdb import srrdb_lookup_name
+from app.rename_display import build_rename_check
 from app.ua_execution import UaExecutionCoordinator, UploadConsoleManager
 
 APP_DIR = Path(__file__).resolve().parent
@@ -261,6 +262,7 @@ def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]
     item["decision_label"] = _decision_label(item)
     item["overview_checks"] = _overview_checks(item, item["check_results"], item["arr_result"])
     item["alert_tags"] = _alert_tags(item, item["check_results"], item["arr_result"])
+    item["rename_check"] = build_rename_check(_rename_check(item, item["check_results"]))
     item["raw_payloads"] = _raw_payloads(item)
     item["upload_console"] = _upload_console_context(item)
     return item
@@ -1329,6 +1331,7 @@ def _api_item_detail(row: Any) -> Dict[str, Any]:
             "video_files": item.get("video_files") or _video_files_for_item(item),
             "ua": ua,
             "arr": arr,
+            "rename_check": item.get("rename_check") or build_rename_check(checks.get("rename_detection") if isinstance(checks.get("rename_detection"), dict) else {}),
             "checks": checks,
         }
     )

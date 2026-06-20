@@ -1472,6 +1472,180 @@ tr:last-child td {
   white-space: normal;
 }
 
+.rename-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.rename-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.rename-summary > div {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.rename-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.rename-summary strong {
+  align-items: center;
+  display: flex;
+  font-size: 15px;
+  min-height: 27px;
+}
+
+.rename-table {
+  min-width: 1320px;
+}
+
+.rename-table th:nth-child(1),
+.rename-table td:nth-child(1) {
+  width: 9%;
+}
+
+.rename-table th:nth-child(2),
+.rename-table td:nth-child(2) {
+  width: 12%;
+}
+
+.rename-table th:nth-child(3),
+.rename-table td:nth-child(3) {
+  width: 15%;
+}
+
+.rename-table th:nth-child(4),
+.rename-table td:nth-child(4),
+.rename-table th:nth-child(5),
+.rename-table td:nth-child(5) {
+  width: 22%;
+}
+
+.rename-table th:nth-child(6),
+.rename-table td:nth-child(6) {
+  width: 20%;
+}
+
+.rename-confidence,
+.rename-reason,
+.rename-cell-label {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.rename-reason {
+  font-size: 12px;
+}
+
+.rename-diff {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 5px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 7px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rename-diff-delete,
+.rename-diff-replace {
+  background: var(--red-bg);
+  border-radius: 3px;
+  color: var(--red);
+  font-weight: 800;
+  padding: 1px 2px;
+}
+
+.rename-diff-insert {
+  background: var(--green-bg);
+  border-radius: 3px;
+  color: var(--green);
+  font-weight: 800;
+  padding: 1px 2px;
+}
+
+.rename-token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.rename-token-chip {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 7px;
+}
+
+.rename-token-chip.local {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.rename-token-chip.remote {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.rename-meta {
+  border-top: 1px solid var(--line);
+  grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
+  margin-top: 9px;
+  padding-top: 8px;
+}
+
+.rename-meta dt,
+.rename-meta dd {
+  font-size: 12px;
+}
+
+.rename-files {
+  margin-top: 8px;
+}
+
+.rename-files summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.rename-files ul {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+}
+
+.rename-files li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .actions {
   justify-content: flex-end;
   white-space: nowrap;
@@ -3042,5 +3216,38 @@ dd {
   .mini-table.imports-table tr {
     border-bottom: 1px solid var(--line);
     padding: 14px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .rename-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .rename-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rename-table {
+    min-width: 0;
+  }
+
+  .rename-table td {
+    display: grid;
+    gap: 5px;
+  }
+
+  .rename-table td::before {
+    color: var(--muted);
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .rename-meta {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

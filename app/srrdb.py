@@ -39,7 +39,15 @@ async def verify_srrdb_release(
     local_files = [entry["name"] for entry in local_entries]
     queried_name = srrdb_lookup_name(str(media_result.get("torrent_root") or item_name))
     if not queried_name or not local_files:
-        return _result("skipped", queried_name, local_files, [], "No local video filename is available for srrDB verification.", timestamp)
+        return _result(
+            "skipped",
+            queried_name,
+            local_files,
+            [],
+            "No local video filename is available for srrDB verification.",
+            timestamp,
+            local_entries=local_entries,
+        )
 
     cache_key = _cache_key(queried_name)
     cached = _cache_read(cache, cache_key, timestamp)
@@ -49,14 +57,31 @@ async def verify_srrdb_release(
     try:
         payload = await client.details(queried_name)
     except Exception as exc:
-        result = _result("skipped", queried_name, local_files, [], f"srrDB unavailable: {str(exc)[:160]}", timestamp)
+        result = _result(
+            "skipped",
+            queried_name,
+            local_files,
+            [],
+            f"srrDB unavailable: {str(exc)[:160]}",
+            timestamp,
+            local_entries=local_entries,
+        )
         _cache_write(cache, cache_key, result, timestamp, ERROR_CACHE_SECONDS)
         return result
 
     archived_entries = archived_video_entries(payload)
     archived = [entry["name"] for entry in archived_entries]
     if not archived:
-        result = _result("not_found", queried_name, local_files, [], "No srrDB archived video filename was found.", timestamp)
+        result = _result(
+            "not_found",
+            queried_name,
+            local_files,
+            [],
+            "No srrDB archived video filename was found.",
+            timestamp,
+            local_entries=local_entries,
+            archived_entries=archived_entries,
+        )
         _cache_write(cache, cache_key, result, timestamp, NOT_FOUND_CACHE_SECONDS)
         return result
 
@@ -64,7 +89,17 @@ async def verify_srrdb_release(
     missing = [name for name in archived if _filename_key(name) not in local_keys]
     if missing:
         reason = "srrDB archived filename mismatch. Proper filename should be: " + ", ".join(missing)
-        result = _result("mismatch", queried_name, local_files, archived, reason, timestamp, matched=False)
+        result = _result(
+            "mismatch",
+            queried_name,
+            local_files,
+            archived,
+            reason,
+            timestamp,
+            matched=False,
+            local_entries=local_entries,
+            archived_entries=archived_entries,
+        )
         _cache_write(cache, cache_key, result, timestamp, FOUND_CACHE_SECONDS)
         return result
 
@@ -78,11 +113,31 @@ async def verify_srrdb_release(
     ]
     if size_mismatches:
         reason = "srrDB archived file size mismatch. File may have been modified: " + ", ".join(size_mismatches)
-        result = _result("mismatch", queried_name, local_files, archived, reason, timestamp, matched=False)
+        result = _result(
+            "mismatch",
+            queried_name,
+            local_files,
+            archived,
+            reason,
+            timestamp,
+            matched=False,
+            local_entries=local_entries,
+            archived_entries=archived_entries,
+        )
         _cache_write(cache, cache_key, result, timestamp, FOUND_CACHE_SECONDS)
         return result
 
-    result = _result("verified", queried_name, local_files, archived, "srrDB archived video filename matches local file.", timestamp, matched=True)
+    result = _result(
+        "verified",
+        queried_name,
+        local_files,
+        archived,
+        "srrDB archived video filename matches local file.",
+        timestamp,
+        matched=True,
+        local_entries=local_entries,
+        archived_entries=archived_entries,
+    )
     _cache_write(cache, cache_key, result, timestamp, FOUND_CACHE_SECONDS)
     return result
 
@@ -181,7 +236,11 @@ def _result(
     checked_at: int,
     *,
     matched: Optional[bool] = None,
+    local_entries: Optional[Sequence[Mapping[str, Any]]] = None,
+    archived_entries: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    local_payload = _entry_payloads(local_entries) if local_entries is not None else _entries_from_names(local_files)
+    archived_payload = _entry_payloads(archived_entries) if archived_entries is not None else _entries_from_names(archived_files)
     return {
         "version": 1,
         "status": status,
@@ -189,10 +248,80 @@ def _result(
         "local_video_files": list(local_files),
         "archived_video_files": list(archived_files),
         "proper_filenames": list(archived_files),
+        "local_video_entries": local_payload,
+        "archived_video_entries": archived_payload,
+        "comparison_pairs": _comparison_pairs(local_payload, archived_payload),
         "matched": matched,
         "reason": reason,
         "checked_at": checked_at,
     }
+
+
+def _entry_payloads(entries: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {"name": str(entry.get("name") or ""), "size": int(entry.get("size") or 0)}
+        for entry in entries
+        if isinstance(entry, Mapping) and str(entry.get("name") or "")
+    ]
+
+
+def _entries_from_names(names: Sequence[str]) -> List[Dict[str, Any]]:
+    return [{"name": str(name), "size": 0} for name in names if str(name)]
+
+
+def _comparison_pairs(local_entries: Sequence[Mapping[str, Any]], archived_entries: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    local_by_key = {_filename_key(str(entry.get("name") or "")): entry for entry in local_entries if str(entry.get("name") or "")}
+    archived_by_key = {_filename_key(str(entry.get("name") or "")): entry for entry in archived_entries if str(entry.get("name") or "")}
+    pairs: List[Dict[str, Any]] = []
+    used_archived: set[str] = set()
+    for local_index, local in enumerate(local_entries):
+        local_name = str(local.get("name") or "")
+        local_key = _filename_key(local_name)
+        archived = archived_by_key.get(local_key)
+        pair_status = "matched"
+        if archived is None and len(local_entries) == len(archived_entries):
+            archived = archived_entries[local_index]
+            pair_status = "filename_mismatch"
+        if archived is None:
+            pairs.append(
+                {
+                    "local_name": local_name,
+                    "archived_name": "",
+                    "local_size": int(local.get("size") or 0),
+                    "archived_size": 0,
+                    "status": "missing_archived_pair",
+                }
+            )
+            continue
+        archived_name = str(archived.get("name") or "")
+        used_archived.add(_filename_key(archived_name))
+        local_size = int(local.get("size") or 0)
+        archived_size = int(archived.get("size") or 0)
+        if pair_status == "matched" and local_size and archived_size and local_size != archived_size:
+            pair_status = "size_mismatch"
+        pairs.append(
+            {
+                "local_name": local_name,
+                "archived_name": archived_name,
+                "local_size": local_size,
+                "archived_size": archived_size,
+                "status": pair_status,
+            }
+        )
+    for archived in archived_entries:
+        archived_name = str(archived.get("name") or "")
+        archived_key = _filename_key(archived_name)
+        if archived_key and archived_key not in used_archived and archived_key not in local_by_key:
+            pairs.append(
+                {
+                    "local_name": "",
+                    "archived_name": archived_name,
+                    "local_size": 0,
+                    "archived_size": int(archived.get("size") or 0),
+                    "status": "extra_archived",
+                }
+            )
+    return pairs
 
 
 def _cache_key(queried_name: str) -> str:

@@ -63,6 +63,9 @@ def test_srrdb_verifier_marks_exact_archived_filename_as_verified():
 
     assert result["status"] == "verified"
     assert result["matched"] is True
+    assert result["local_video_entries"] == [{"name": "Movie.2024.1080p.BluRay-GRP.mkv", "size": 0}]
+    assert result["archived_video_entries"] == [{"name": "Movie.2024.1080p.BluRay-GRP.mkv", "size": 0}]
+    assert result["comparison_pairs"][0]["status"] == "matched"
     assert client.calls == ["Movie.2024.1080p.BluRay-GRP"]
 
 
@@ -104,6 +107,15 @@ def test_srrdb_verifier_marks_archived_filename_mismatch_with_proper_filename():
 
     assert result["status"] == "mismatch"
     assert result["proper_filenames"] == ["The.Panic.in.Needle.Park.1971.1080p.BluRay.X264-AMIABLE.mkv"]
+    assert result["comparison_pairs"] == [
+        {
+            "local_name": "The Panic in Needle Park 1971 1080p BluRay X264-AMIABLE.mkv",
+            "archived_name": "The.Panic.in.Needle.Park.1971.1080p.BluRay.X264-AMIABLE.mkv",
+            "local_size": 0,
+            "archived_size": 0,
+            "status": "filename_mismatch",
+        }
+    ]
     assert "Proper filename should be" in result["reason"]
 
 
@@ -126,6 +138,15 @@ def test_srrdb_verifier_marks_archived_size_mismatch_as_modified():
 
     assert result["status"] == "mismatch"
     assert result["matched"] is False
+    assert result["comparison_pairs"] == [
+        {
+            "local_name": "Movie.2024.1080p.BluRay-GRP.mkv",
+            "archived_name": "Movie.2024.1080p.BluRay-GRP.mkv",
+            "local_size": 1000,
+            "archived_size": 2000,
+            "status": "size_mismatch",
+        }
+    ]
     assert "file size mismatch" in result["reason"]
 
 

@@ -1083,6 +1083,64 @@ def test_item_detail_and_log_endpoints_return_full_check_data(tmp_path, monkeypa
         assert missing.status_code == 404
 
 
+def test_item_detail_renders_rename_tab_and_api_display_model(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        local = "Example.Show.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-HONE"
+        remote = "Example.Series.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-HONE"
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "renamed_release_warning",
+            "Arr found a same-group release on IHD in the same scope with a different release title.",
+            check_results={
+                "version": 1,
+                "rename_detection": {
+                    "version": 1,
+                    "status": "manual_review",
+                    "confidence": "high",
+                    "reason": "Arr found a same-group release on IHD in the same scope with a different release title.",
+                    "evidence": [
+                        {
+                            "kind": "same_group_arr_title_mismatch",
+                            "scope": "arr_title",
+                            "confidence": "high",
+                            "source": "Discovarr",
+                            "tracker": "IHD",
+                            "local_title": local,
+                            "remote_title": remote,
+                            "release_group": "HONE",
+                            "local_key": "exampleshows01e011080pamznwebdlddp51h264hone",
+                            "remote_key": "exampleseriess01e011080pamznwebdlddp51h264hone",
+                            "local_scope": {"season": 1, "episode": 1, "resolution": "1080p"},
+                            "remote_scope": {"season": 1, "episode": 1, "resolution": "1080p"},
+                            "reason": "Arr found a same-group release on IHD in the same scope with a different release title.",
+                        }
+                    ],
+                },
+            },
+        )
+
+        detail = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+        page = client.get(f"/items/{item_id}")
+
+        assert detail.status_code == 200
+        rename_check = detail.json()["rename_check"]
+        assert rename_check["rows"][0]["tracker"] == "IHD"
+        assert rename_check["rows"][0]["local_value"] == local
+        assert rename_check["rows"][0]["remote_value"] == remote
+        assert detail.json()["checks"]["rename_detection"]["evidence"][0]["kind"] == "same_group_arr_title_mismatch"
+        assert page.status_code == 200
+        assert 'data-tab-target="rename"' in page.text
+        assert "Our record" in page.text
+        assert "Their / expected record" in page.text
+        assert "Arr found a same-group release on IHD" in page.text
+        assert "Example.Show.S01E01" in page.text
+        assert "Example.Series.S01E01" in page.text
+        assert "rename-diff-replace" in page.text
+
+
 def test_reporting_api_tracks_active_resolved_and_deleted_reports(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
