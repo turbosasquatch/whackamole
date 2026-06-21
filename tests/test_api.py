@@ -597,6 +597,9 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert 'data-submit-tick="Upload queued"' in page.text
         assert "data-submit-tick-button" in page.text
         assert f'action="/items/{item_id}/ignore"' in page.text
+        assert "data-ignore-item-form" in page.text
+        assert 'data-submit-tick="Ignored"' in page.text
+        assert 'data-submit-error-label="Retry"' in page.text
         assert 'name="return_to" value="/dashboard?view=candidates&amp;page=1&amp;media=episode&amp;missing=DP&amp;valid_for=IHD"' in page.text
         assert "Ignore" in page.text
         assert "Upload" in page.text

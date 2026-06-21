@@ -242,9 +242,9 @@
             </div>
             {% set active_import = item.active_import or {} %}
             <div class="card-actions">
-              <form method="post" action="/items/{{ item.id }}/ignore">
+              <form method="post" action="/items/{{ item.id }}/ignore" data-ignore-item-form data-submit-tick="Ignored" data-submit-error-label="Retry">
                 <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small secondary" type="submit">Ignore</button>
+                <button class="button small secondary" type="submit" data-submit-tick-button>Ignore</button>
               </form>
               <form
                 method="post"

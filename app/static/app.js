@@ -137,7 +137,7 @@
 
   document.querySelectorAll("form[data-submit-tick]").forEach((form) => {
     form.addEventListener("submit", () => {
-      if (form.matches("[data-queue-upload-form]")) return;
+      if (form.matches("[data-queue-upload-form], [data-ignore-item-form]")) return;
       const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
       setButtonTick(button, form.dataset.submitTick || "Done");
     });
@@ -175,6 +175,43 @@
         setButtonTick(button, form.dataset.submitTick || "Upload queued");
       } catch (error) {
         const message = error.message || "Queue failed";
+        button.disabled = false;
+        button.textContent = form.dataset.submitErrorLabel || originalLabel || "Retry";
+        button.title = message;
+        button.setAttribute("aria-label", message);
+      }
+    });
+  });
+
+  document.querySelectorAll("form[data-ignore-item-form]").forEach((form) => {
+    const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
+    if (button && !button.dataset.originalLabel) {
+      button.dataset.originalLabel = button.textContent.trim();
+    }
+    form.addEventListener("submit", async (event) => {
+      if (!button || !window.fetch || !window.FormData) return;
+      event.preventDefault();
+      const originalLabel = button.dataset.originalLabel || button.textContent.trim() || "Ignore";
+      button.disabled = true;
+      button.textContent = "Ignoring";
+      button.removeAttribute("title");
+      button.removeAttribute("aria-label");
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: new FormData(form),
+        });
+        if (!response.ok) {
+          throw new Error(`Ignore failed with ${response.status}`);
+        }
+        const card = form.closest(".media-card");
+        if (card) {
+          card.remove();
+        } else {
+          setButtonTick(button, form.dataset.submitTick || "Ignored");
+        }
+      } catch (error) {
+        const message = error.message || "Ignore failed";
         button.disabled = false;
         button.textContent = form.dataset.submitErrorLabel || originalLabel || "Retry";
         button.title = message;
