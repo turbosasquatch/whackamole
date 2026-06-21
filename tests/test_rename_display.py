@@ -1,4 +1,16 @@
+from pathlib import Path
+
 from app.rename_display import build_rename_check
+
+
+def test_mobile_rename_css_stacks_cells_full_width():
+    css = Path("app/static/style.css").read_text()
+    mobile_block = css.split("@media (max-width: 860px)")[-1]
+
+    assert ".rename-table td" in mobile_block
+    assert "display: block;" in mobile_block
+    assert "width: 100% !important;" in mobile_block
+    assert ".rename-table td::before" in mobile_block
 
 
 def test_rename_display_explains_arr_title_mismatch_with_diff_and_tracker():
