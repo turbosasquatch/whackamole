@@ -2876,9 +2876,9 @@ async def recheck_filtered_items(
 
 
 @app.post("/items/{item_id}/ignore")
-async def ignore_item(item_id: int) -> RedirectResponse:
+async def ignore_item(item_id: int, return_to: str = Form("/")) -> RedirectResponse:
     app.state.db.ignore(item_id)
-    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=_safe_local_redirect(return_to, "/"), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/maintenance/pause")

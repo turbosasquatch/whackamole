@@ -596,8 +596,25 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "data-queue-upload-form" in page.text
         assert 'data-submit-tick="Upload queued"' in page.text
         assert "data-submit-tick-button" in page.text
+        assert f'action="/items/{item_id}/ignore"' in page.text
+        assert 'name="return_to" value="/dashboard?view=candidates&amp;page=1&amp;media=episode&amp;missing=DP&amp;valid_for=IHD"' in page.text
+        assert "Ignore" in page.text
         assert "Upload" in page.text
         assert "filter-view-list" not in page.text
+
+
+def test_ignore_item_redirects_to_safe_return_target(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        response = client.post(
+            f"/items/{item_id}/ignore",
+            data={"return_to": "/dashboard?view=candidates&page=1"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "/dashboard?view=candidates&page=1"
+        assert client.app.state.db.get_item(item_id)["status"] == "ignored"
 
 
 def test_candidate_dashboard_uses_smaller_page_size(tmp_path, monkeypatch):

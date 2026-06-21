@@ -1724,6 +1724,17 @@ tr:last-child td {
   word-break: break-word;
 }
 
+.card-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.card-actions form {
+  display: inline-flex;
+}
+
 .card-facts {
   color: var(--muted);
   display: flex;
@@ -3022,7 +3033,7 @@ dd {
     flex: 1 1 220px;
   }
 
-  .card-tracker-row form {
+  .card-tracker-row .card-actions {
     flex: 0 0 auto;
     margin-left: auto;
   }
