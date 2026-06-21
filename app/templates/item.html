@@ -236,6 +236,28 @@
                 </td>
                 <td data-label="Difference">
                   <strong>{{ row.difference_summary }}</strong>
+                  {% if row.problem %}
+                    <div class="rename-problem">
+                      <span class="rename-problem-label">Problem</span>
+                      <strong>{{ row.problem.summary }}</strong>
+                      {% if row.problem.detail %}<small>{{ row.problem.detail }}</small>{% endif %}
+                      {% if row.problem.locations %}
+                        <div class="rename-problem-locations">
+                          {% for location in row.problem.locations %}
+                            <div class="rename-problem-location">
+                              <span>Found {{ loop.index }}</span>
+                              <code class="rename-problem-code"><span>{{ location.before }}</span><span class="rename-problem-found">{{ location.found }}</span><span>{{ location.after }}</span></code>
+                              <small>{{ location.found_label }} -> {{ location.replacement_label }}</small>
+                            </div>
+                          {% endfor %}
+                        </div>
+                      {% endif %}
+                      {% if row.problem.suggested_value %}
+                        <span class="rename-problem-label">{{ row.problem.suggested_label }}</span>
+                        <code class="rename-diff rename-problem-suggestion">{{ row.problem.suggested_value }}</code>
+                      {% endif %}
+                    </div>
+                  {% endif %}
                   {% if row.token_chips %}
                     <div class="rename-token-list" aria-label="Changed tokens">
                       {% for chip in row.token_chips %}
@@ -252,7 +274,7 @@
                     </dl>
                   {% endif %}
                   {% if row.files %}
-                    <details class="rename-files">
+                    <details class="rename-files"{% if row.files_open %} open{% endif %}>
                       <summary>Affected files</summary>
                       {% for group in row.files %}
                         <strong>{{ group.label }}</strong>

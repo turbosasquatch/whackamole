@@ -110,8 +110,42 @@ def test_rename_display_highlights_empty_title_token_separator():
     )
 
     row = result["rows"][0]
-    assert row["difference_summary"].startswith("Filename contains")
+    assert row["difference_summary"] == "Filename has an empty title slot caused by adjacent separators."
+    assert row["problem"]["summary"] == "Doubled or mixed separator"
+    assert row["problem"]["suggested_value"] == "Example.Show.S01E01.The.Episode.1080p-GRP.mkv"
+    assert row["problem"]["locations"][0]["found"] == ".."
+    assert row["problem"]["locations"][0]["replacement"] == "."
     assert any(segment["type"] == "replace" and segment["text"] == ".." for segment in row["diff"]["local"])
+
+
+def test_rename_display_explains_mixed_empty_title_separator():
+    value = "Example Show - Episode 1080p-GRP.mkv"
+    result = build_rename_check(
+        {
+            "status": "manual_review",
+            "confidence": "high",
+            "reason": "Empty token.",
+            "evidence": [
+                {
+                    "kind": "empty_title_token",
+                    "scope": "file",
+                    "confidence": "high",
+                    "source": "video_file",
+                    "value": value,
+                    "reason": "Filename contains an empty title token.",
+                }
+            ],
+        }
+    )
+
+    row = result["rows"][0]
+    assert row["problem"]["locations"][0]["found"] == " - "
+    assert row["problem"]["locations"][0]["found_label"] == "space + hyphen + space"
+    assert row["problem"]["locations"][0]["before"] == "Show"
+    assert row["problem"]["locations"][0]["after"] == "Episode"
+    assert row["problem"]["suggested_value"] == "Example Show-Episode 1080p-GRP.mkv"
+    assert row["files_open"] is True
+    assert any(segment["type"] == "replace" and segment["text"] == " - " for segment in row["diff"]["local"])
 
 
 def test_rename_display_lists_mixed_release_group_files():

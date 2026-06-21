@@ -1238,6 +1238,10 @@ def test_item_detail_renders_empty_title_token_rename_files(tmp_path, monkeypatc
 
         assert page.status_code == 200
         assert "Empty title token" in page.text
+        assert "Doubled or mixed separators" in page.text
+        assert "space + hyphen + space -> hyphen" in page.text
+        assert "Suggested filename" in page.text
+        assert "Louis Theroux-Inside the Manosphere" in page.text
         assert "Affected files" in page.text
         assert filename in page.text
 

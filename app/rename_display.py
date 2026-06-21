@@ -44,6 +44,8 @@ SCOPE_FIELDS = (
     ("rip_type", "Rip type"),
 )
 
+_EMPTY_SEPARATOR_RUN_RE = re.compile(r"[._\s-]{2,}")
+
 
 def build_rename_check(rename_detection: Mapping[str, Any] | None) -> Dict[str, Any]:
     rename = rename_detection if isinstance(rename_detection, Mapping) else {}
@@ -96,6 +98,7 @@ def _base_row(evidence: Mapping[str, Any], row_id: str) -> Dict[str, Any]:
     local_value = _local_value(evidence)
     remote_value = _remote_value(evidence)
     diff = _empty_token_diff(local_value) if kind == "empty_title_token" else _diff_values(local_value, remote_value)
+    files = _file_groups(evidence)
     row = {
         "id": f"{kind}-{row_id}",
         "kind": kind,
@@ -114,10 +117,12 @@ def _base_row(evidence: Mapping[str, Any], row_id: str) -> Dict[str, Any]:
         "diff": diff,
         "diff_segments": diff,
         "token_chips": _token_chips(local_value, remote_value),
+        "problem": _empty_token_problem(local_value) if kind == "empty_title_token" else {},
         "difference_summary": _difference_summary(kind, evidence, local_value, remote_value),
         "reason": str(evidence.get("reason") or ""),
         "meta": _meta_rows(evidence),
-        "files": _file_groups(evidence),
+        "files": files,
+        "files_open": kind == "empty_title_token" and sum(len(group.get("items") or []) for group in files) <= 1,
     }
     return row
 
@@ -222,7 +227,7 @@ def _difference_summary(kind: str, evidence: Mapping[str, Any], local_value: str
     if kind == "placeholder_torrent_name_mismatch":
         return "Torrent/root name is a placeholder and does not identify the mapped release content."
     if kind == "empty_title_token":
-        return "Filename contains an empty title token, usually a doubled separator."
+        return "Filename has an empty title slot caused by adjacent separators."
     if kind == "random_video_basename":
         return "Video basename looks random inside a structured release folder."
     if kind == "file_group_mismatch":
@@ -264,7 +269,7 @@ def _empty_token_diff(value: str) -> Dict[str, List[Dict[str, str]]]:
     text = str(value or "")
     segments: List[Dict[str, str]] = []
     position = 0
-    for match in re.finditer(r"([._ -])\1+", text):
+    for match in _EMPTY_SEPARATOR_RUN_RE.finditer(text):
         if match.start() > position:
             segments.append({"type": "equal", "text": text[position : match.start()]})
         segments.append({"type": "replace", "text": match.group(0)})
@@ -272,6 +277,58 @@ def _empty_token_diff(value: str) -> Dict[str, List[Dict[str, str]]]:
     if position < len(text):
         segments.append({"type": "equal", "text": text[position:]})
     return {"local": segments or [{"type": "equal", "text": text}], "remote": []}
+
+
+def _empty_token_problem(value: str) -> Dict[str, Any]:
+    text = str(value or "")
+    locations: List[Dict[str, str]] = []
+    for match in _EMPTY_SEPARATOR_RUN_RE.finditer(text):
+        found = match.group(0)
+        replacement = _collapse_separator_run(found)
+        before, after = _separator_context(text, match.start(), match.end())
+        locations.append(
+            {
+                "found": found,
+                "found_label": _separator_label(found),
+                "replacement": replacement,
+                "replacement_label": _separator_label(replacement),
+                "before": before,
+                "after": after,
+            }
+        )
+    if not locations:
+        return {}
+    suggested = _EMPTY_SEPARATOR_RUN_RE.sub(lambda match: _collapse_separator_run(match.group(0)), text)
+    plural = "s" if len(locations) != 1 else ""
+    return {
+        "summary": f"Doubled or mixed separator{plural}",
+        "detail": f"{len(locations)} adjacent separator run{plural} found.",
+        "locations": locations,
+        "suggested_label": "Suggested filename",
+        "suggested_value": suggested,
+    }
+
+
+def _collapse_separator_run(value: str) -> str:
+    run = str(value or "")
+    if "." in run:
+        return "."
+    if "_" in run:
+        return "_"
+    if "-" in run:
+        return "-"
+    return " "
+
+
+def _separator_context(text: str, start: int, end: int) -> tuple[str, str]:
+    before_match = re.search(r"[^._\s-]+$", text[:start])
+    after_match = re.search(r"^[^._\s-]+", text[end:])
+    return (before_match.group(0) if before_match else "", after_match.group(0) if after_match else "")
+
+
+def _separator_label(value: str) -> str:
+    labels = {" ": "space", ".": "dot", "_": "underscore", "-": "hyphen"}
+    return " + ".join(labels.get(char, char) for char in str(value or ""))
 
 
 def _merge_segments(segments: Sequence[Mapping[str, str]]) -> List[Dict[str, str]]:
