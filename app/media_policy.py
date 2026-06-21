@@ -138,16 +138,16 @@ def merge_mediainfo_provider_results(
     }
     result["supplemental_mediainfo_files"] = [dict(item) for item in supplemental_files]
 
-    supplemental_by_index = {
-        int(item.get("index") or 0): item
-        for item in supplemental_files
-    }
+    primary_files = [
+        item for item in primary.get("mediainfo_files", [])
+        if isinstance(item, Mapping)
+    ] if isinstance(primary.get("mediainfo_files"), list) else []
     remaining_issues: List[Dict[str, Any]] = []
     resolved_issues: List[Dict[str, Any]] = []
     for issue in primary.get("issues", []) if isinstance(primary.get("issues"), list) else []:
         if not isinstance(issue, Mapping):
             continue
-        if _issue_confirmed_by_supplemental(issue, supplemental_by_index):
+        if _issue_confirmed_by_media_sources(issue, primary_files, supplemental_files):
             resolved = dict(issue)
             resolved["resolved_by"] = supplemental_label
             resolved_issues.append(resolved)
@@ -163,10 +163,7 @@ def merge_mediainfo_provider_results(
         media_display_fields_from_files(
             str(result.get("release_title") or primary.get("release_title") or supplemental.get("release_title") or ""),
             [
-                *[
-                    item for item in primary.get("mediainfo_files", [])
-                    if isinstance(item, Mapping)
-                ],
+                *primary_files,
                 *supplemental_files,
             ],
             suppressed_labels=_provider_disagreement_labels(primary, supplemental),
@@ -175,19 +172,61 @@ def merge_mediainfo_provider_results(
     return result
 
 
-def _issue_confirmed_by_supplemental(issue: Mapping[str, Any], supplemental_by_index: Mapping[int, Mapping[str, Any]]) -> bool:
-    if str(issue.get("key") or "") != "audio_object_missing":
-        return False
+def _issue_confirmed_by_media_sources(
+    issue: Mapping[str, Any],
+    primary_files: Sequence[Mapping[str, Any]],
+    supplemental_files: Sequence[Mapping[str, Any]],
+) -> bool:
+    key = str(issue.get("key") or "")
     issue_file = str(issue.get("file") or "")
-    supplemental_file = None
-    for candidate in supplemental_by_index.values():
-        if not issue_file or str(candidate.get("name") or "") == issue_file:
-            supplemental_file = candidate
-            break
-    traits = supplemental_file.get("traits") if isinstance(supplemental_file, Mapping) else {}
-    objects = set(traits.get("audio_objects") or []) if isinstance(traits, Mapping) else set()
-    message = str(issue.get("message") or "")
-    return any(audio_object in objects and audio_object in message for audio_object in objects)
+    primary_matches = _matching_mediainfo_files(issue_file, primary_files)
+    supplemental_matches = _matching_mediainfo_files(issue_file, supplemental_files)
+    if not supplemental_matches:
+        return False
+
+    source_matches = [*primary_matches, *supplemental_matches]
+    hdr_formats = _merged_hdr_formats(source_matches)
+    if key == "dolby_vision_missing":
+        return "Dolby Vision" in hdr_formats
+    if key == "hdr10_missing":
+        return bool(hdr_formats.intersection({"HDR10", "HDR10+"}))
+    if key == "hdr10plus_missing":
+        return "HDR10+" in hdr_formats
+    if key == "dv_hdr10_fallback_missing":
+        return "Dolby Vision" in hdr_formats and bool(hdr_formats.intersection({"HDR10", "HDR10+"}))
+    if key == "audio_object_missing":
+        objects = _merged_audio_objects(supplemental_matches)
+        message = str(issue.get("message") or "")
+        return any(audio_object in objects and audio_object in message for audio_object in objects)
+    return False
+
+
+def _matching_mediainfo_files(issue_file: str, files: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    if not issue_file:
+        return list(files)
+    issue_name = PurePosixPath(issue_file).name
+    return [
+        item
+        for item in files
+        if str(item.get("name") or "") == issue_file
+        or PurePosixPath(str(item.get("name") or "")).name == issue_name
+    ]
+
+
+def _merged_hdr_formats(files: Sequence[Mapping[str, Any]]) -> set[str]:
+    formats: set[str] = set()
+    for item in files:
+        traits = item.get("traits") if isinstance(item.get("traits"), Mapping) else {}
+        formats.update(str(value) for value in traits.get("hdr_formats", []) if str(value or ""))
+    return formats
+
+
+def _merged_audio_objects(files: Sequence[Mapping[str, Any]]) -> set[str]:
+    objects: set[str] = set()
+    for item in files:
+        traits = item.get("traits") if isinstance(item.get("traits"), Mapping) else {}
+        objects.update(str(value) for value in traits.get("audio_objects", []) if str(value or ""))
+    return objects
 
 
 def _provider_disagreement_issues(

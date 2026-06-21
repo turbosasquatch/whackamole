@@ -309,6 +309,98 @@ def test_local_mediainfo_confirms_atmos_missing_from_qui():
     assert {tag["label"]: tag["state"] for tag in merged["title_tag_matches"]}["Atmos"] == "match"
 
 
+def test_local_mediainfo_confirms_dolby_vision_missing_from_qui():
+    release = "It.Comes.at.Night.2017.2160p.WEB-DL.DD5.1.DV.MP4.x265-DVSUX"
+    files = [{"index": 0, "name": f"{release}/{release}.mp4", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mp4",
+                "streams": [
+                    {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "2160", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "AC-3", "Channels": "6", "Language": "en"},
+                    {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mp4",
+                "media": {
+                    "track": [
+                        {
+                            "@type": "Video",
+                            "Format": "HEVC",
+                            "Width": "3840",
+                            "Height": "2160",
+                            "ScanType": "Progressive",
+                            "CodecID": "dvh1.05",
+                            "CodecID_Info": "Dolby Vision",
+                        },
+                        {"@type": "Audio", "Format": "AC-3", "Channels": "6", "Language": "en"},
+                        {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+                    ]
+                },
+            }
+        ],
+    )
+
+    assert any(issue["key"] == "dolby_vision_missing" for issue in qui["issues"])
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert merged["status"] == "passed"
+    assert not any(issue["key"] == "dolby_vision_missing" for issue in merged["issues"])
+    assert merged["resolved_mediainfo_issues"][0]["key"] == "dolby_vision_missing"
+    assert "Dolby Vision" in merged["media_tags"]
+    assert {tag["label"]: tag["state"] for tag in merged["title_tag_matches"]}["Dolby Vision"] == "match"
+
+
+def test_mediainfo_missing_provider_field_is_not_disagreement():
+    release = "Movie.2024.WEB-DL.DDP2.0-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+                ],
+            }
+        ],
+    )
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert not any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
+
+
 def test_mediainfo_provider_disagreement_requires_review():
     release = "Movie.2024.1080p.WEB-DL.DDP2.0.H.264-GRP"
     files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]

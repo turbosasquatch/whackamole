@@ -14,6 +14,7 @@ build/
 config/
 data/
 .smoke-data/
+.codex/*.env
 whackamole.db
 secret.key
 secrets.json
