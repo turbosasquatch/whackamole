@@ -145,3 +145,52 @@ def test_rename_detection_ignores_arr_decision_without_best_release():
 
     assert result["status"] == "pass"
     assert not any(item["kind"] == "same_group_arr_title_mismatch" for item in result["evidence"])
+
+
+def test_rename_detection_reviews_placeholder_torrent_name_with_structured_mapped_content():
+    content = "Im.Thinking.of.Ending.Things.2020.2160p.NF.WEB-DL.DDP5.1.Atmos.DV.HDR10.H.265-BetterCallSaul"
+
+    result = analyze_rename_detection(
+        item_name="unpack",
+        mapped_path=f"/media/torrents/movies/{content}",
+        media_result={
+            "torrent_root": "unpack",
+            "video_files": [{"index": 0, "name": f"unpack/{content}.mkv"}],
+        },
+    )
+
+    assert result["status"] == "manual_review"
+    evidence = next(item for item in result["evidence"] if item["kind"] == "placeholder_torrent_name_mismatch")
+    assert evidence["confidence"] == "high"
+    assert evidence["value"] == "unpack"
+    assert evidence["expected"] == content
+
+
+def test_rename_detection_does_not_review_placeholder_without_structured_content_evidence():
+    result = analyze_rename_detection(
+        item_name="unpack",
+        mapped_path="/media/torrents/movies/unpack",
+        media_result={
+            "torrent_root": "unpack",
+            "video_files": [{"index": 0, "name": "unpack/unpack.mkv"}],
+        },
+    )
+
+    assert result["status"] == "pass"
+    assert not any(item["kind"] == "placeholder_torrent_name_mismatch" for item in result["evidence"])
+
+
+def test_rename_detection_does_not_treat_legitimate_short_title_as_placeholder():
+    release = "Up.2009.1080p.WEB-DL.H.264-GRP"
+
+    result = analyze_rename_detection(
+        item_name=release,
+        mapped_path=f"/media/torrents/movies/{release}",
+        media_result={
+            "torrent_root": release,
+            "video_files": [{"index": 0, "name": f"{release}/{release}.mkv"}],
+        },
+    )
+
+    assert result["status"] == "pass"
+    assert not any(item["kind"] == "placeholder_torrent_name_mismatch" for item in result["evidence"])

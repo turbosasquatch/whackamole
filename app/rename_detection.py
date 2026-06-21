@@ -11,6 +11,7 @@ from app.srrdb import srrdb_lookup_name
 
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
 HIGH_REVIEW_KEY = "renamed_release_warning"
+PLACEHOLDER_TORRENT_NAMES = {"unpack"}
 
 _TECHNICAL_TOKEN_RE = re.compile(
     r"^(?:"
@@ -41,6 +42,7 @@ def analyze_rename_detection(
     evidence: List[Dict[str, Any]] = []
 
     evidence.extend(_srrdb_evidence(srrdb))
+    evidence.extend(_placeholder_name_evidence(item_name, root_name, mapped_root, primary_files))
     evidence.extend(_folder_evidence(root_name, mapped_root, primary_files))
     evidence.extend(_file_evidence(root_name, primary_files))
     evidence.extend(_sibling_evidence(root_name, primary_files))
@@ -48,7 +50,12 @@ def analyze_rename_detection(
     evidence = _dedupe_evidence(evidence)
 
     if str(srrdb.get("status") or "").lower() == "verified":
-        severe_types = {"mixed_release_groups", "mixed_technical_tail", "random_video_basename"}
+        severe_types = {
+            "mixed_release_groups",
+            "mixed_technical_tail",
+            "placeholder_torrent_name_mismatch",
+            "random_video_basename",
+        }
         evidence = [
             item
             for item in evidence
@@ -163,6 +170,43 @@ def _folder_evidence(root_name: str, mapped_root: str, files: Sequence[Mapping[s
             )
         )
     return evidence
+
+
+def _placeholder_name_evidence(
+    item_name: str,
+    root_name: str,
+    mapped_root: str,
+    files: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    placeholders = [
+        ("item_name", str(item_name or "").strip()),
+        ("torrent_root", str(root_name or "").strip()),
+    ]
+    placeholder = next(
+        ((source, value) for source, value in placeholders if _placeholder_key(value) in PLACEHOLDER_TORRENT_NAMES),
+        None,
+    )
+    if not placeholder:
+        return []
+
+    source_name, placeholder_value = placeholder
+    structured = _first_structured_content_name(mapped_root, root_name, files, placeholder_value)
+    if not structured:
+        return []
+
+    return [
+        _evidence(
+            kind="placeholder_torrent_name_mismatch",
+            scope="folder",
+            confidence="high",
+            source="torrent_root",
+            value=placeholder_value,
+            expected=structured,
+            reason="Torrent/root name is a placeholder and does not identify the mapped release content.",
+            source_name=source_name,
+            content_name=structured,
+        )
+    ]
 
 
 def _file_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -364,6 +408,26 @@ def _is_extra_path(value: str) -> bool:
     return bool(_EXTRA_PATH_RE.search(str(value or "")))
 
 
+def _first_structured_content_name(
+    mapped_root: str,
+    root_name: str,
+    files: Sequence[Mapping[str, Any]],
+    placeholder_value: str,
+) -> str:
+    candidates = [mapped_root, root_name]
+    candidates.extend(_stem(PurePosixPath(str(file_info.get("name") or "")).name) for file_info in files)
+    placeholder_key = _release_key(placeholder_value)
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        if _release_key(text) == placeholder_key:
+            continue
+        if parse_release_traits(text).is_comparable:
+            return text
+    return ""
+
+
 def _stem(value: str) -> str:
     name = PurePosixPath(str(value or "")).name
     suffix = PurePosixPath(name).suffix.lower()
@@ -449,6 +513,10 @@ def _scope_payload(traits: Any) -> Dict[str, Any]:
 def _release_key(value: str) -> str:
     stem = _stem(str(value or ""))
     return re.sub(r"[^a-z0-9]+", "", stem.lower())
+
+
+def _placeholder_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
 
 
 def _policy_key(value: str) -> str:

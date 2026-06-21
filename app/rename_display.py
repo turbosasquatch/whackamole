@@ -14,6 +14,7 @@ KIND_LABELS = {
     "srrdb_verified": "srrDB verified",
     "folder_scene_normalization": "Folder normalization",
     "mapped_root_mismatch": "Mapped root mismatch",
+    "placeholder_torrent_name_mismatch": "Placeholder torrent name",
     "empty_title_token": "Empty title token",
     "random_video_basename": "Random video basename",
     "file_group_mismatch": "Release group mismatch",
@@ -152,6 +153,8 @@ def _local_label(kind: str) -> str:
         return "Our record"
     if kind in {"folder_scene_normalization", "mapped_root_mismatch"}:
         return "Current folder"
+    if kind == "placeholder_torrent_name_mismatch":
+        return "Torrent/root name"
     if kind == "file_group_mismatch":
         return "Video release group"
     if kind in {"mixed_release_groups", "mixed_technical_tail"}:
@@ -168,6 +171,8 @@ def _remote_label(kind: str) -> str:
         return "Normalized folder"
     if kind == "mapped_root_mismatch":
         return "Torrent root"
+    if kind == "placeholder_torrent_name_mismatch":
+        return "Mapped release"
     if kind == "file_group_mismatch":
         return "Folder/root release group"
     if kind in {"mixed_release_groups", "mixed_technical_tail"}:
@@ -214,6 +219,8 @@ def _difference_summary(kind: str, evidence: Mapping[str, Any], local_value: str
         return "Folder name only differs by scene-style normalization."
     if kind == "mapped_root_mismatch":
         return "Mapped folder name differs from the torrent root name."
+    if kind == "placeholder_torrent_name_mismatch":
+        return "Torrent/root name is a placeholder and does not identify the mapped release content."
     if kind == "empty_title_token":
         return "Filename contains an empty title token, usually a doubled separator."
     if kind == "random_video_basename":
