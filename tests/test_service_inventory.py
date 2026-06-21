@@ -1184,7 +1184,7 @@ def test_media_error_sends_candidate_to_review(tmp_path, monkeypatch):
     ]
 
 
-def test_mediainfo_failure_runs_ua_and_arr_before_review_when_candidate(tmp_path, monkeypatch):
+def test_mediainfo_failure_stops_as_terminal_error(tmp_path, monkeypatch):
     MediaQuiClient.files = [
         {"index": 0, "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP/episode.mkv", "size": 1000}
     ]
@@ -1219,12 +1219,13 @@ def test_mediainfo_failure_runs_ua_and_arr_before_review_when_candidate(tmp_path
     asyncio.run(run_check())
 
     row = db.get_item(item_id)
-    assert row["status"] == "manual_review"
+    assert row["status"] == "error"
     assert row["verdict"] == "mediainfo_unavailable"
-    assert PassingUploadAssistantClient.calls == 1
+    assert PassingUploadAssistantClient.calls == 0
     checks = json.loads(row["check_results"])
+    assert checks["decision"]["winning_rule_id"] == "system.mediainfo_unavailable"
     assert checks["diagnostics"]["last_error"]["stage"] == "media"
-    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media", "path", "ua", "arr", "policy", "srrdb", "review_gate"]
+    assert [stage["stage"] for stage in checks["diagnostics"]["stages"]] == ["media"]
     assert checks["diagnostics"]["stages"][0]["status"] == "error"
 
 

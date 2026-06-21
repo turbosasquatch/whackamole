@@ -1680,6 +1680,9 @@ tr:last-child td {
 .media-card {
   display: grid;
   gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px;
 }
 
@@ -1688,6 +1691,7 @@ tr:last-child td {
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -1702,8 +1706,22 @@ tr:last-child td {
   display: -webkit-box;
   overflow: hidden;
   overflow-wrap: anywhere;
+  word-break: break-word;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.media-card p,
+.media-card .flag-stack,
+.media-card .coverage-badges,
+.card-tracker-row {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.media-card p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .card-facts {
@@ -2993,12 +3011,15 @@ dd {
   .card-tracker-row {
     align-items: center;
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     justify-content: flex-end;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .card-tracker-row .coverage-badges {
-    flex: 1 1 auto;
+    flex: 1 1 220px;
   }
 
   .card-tracker-row form {

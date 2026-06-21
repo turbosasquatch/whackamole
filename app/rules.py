@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
-RULESET_VERSION = 2
+RULESET_VERSION = 3
 TRACKER_BUCKETS = ("passed", "covered", "dupe", "skipped", "error")
 TERMINAL_REPLAY_STATUSES = {"candidate", "manual_review", "blocked", "skipped"}
 PROTECTED_REPLAY_STATUSES = {"queued", "deferred", "checking", "retry", "error", "covered", "rejected", "baseline", "inventory", "ignored"}
@@ -18,6 +18,16 @@ VALID_EFFECTS = {"none", "candidate", "review", "block", "skip", "retry", "error
 RULESET_CHANGELOG: List[Dict[str, Any]] = [
     {
         "version": RULESET_VERSION,
+        "changed_rules": [
+            "system.mediainfo_unavailable",
+            "system.no_video_files",
+            "review.evidence_warning",
+        ],
+        "summary": "Route missing QUI MediaInfo evidence to terminal errors instead of manual review.",
+        "replay_recommended": True,
+    },
+    {
+        "version": 2,
         "changed_rules": [
             "review.rename_check",
             "review.folder_name_warning",
@@ -213,6 +223,26 @@ def evaluate_decision(
     if _arr_identity_error(arr):
         return _decision("arr.no_matching_media", "error", "error", "error", "arr_no_matching_media", arr_reason, rules)
 
+    mediainfo_error_verdicts = {"mediainfo_unavailable", "mediainfo_missing"}
+    mediainfo_unavailable_flag = _first_flag(flags, mediainfo_error_verdicts)
+    if verdict in mediainfo_error_verdicts or ua_verdict in mediainfo_error_verdicts or mediainfo_unavailable_flag:
+        if verdict in mediainfo_error_verdicts:
+            error_verdict = verdict
+        elif ua_verdict in mediainfo_error_verdicts:
+            error_verdict = ua_verdict
+        else:
+            error_verdict = str(mediainfo_unavailable_flag.get("key") or "mediainfo_unavailable")
+        return _decision(
+            "system.mediainfo_unavailable",
+            "error",
+            "error",
+            "error",
+            error_verdict,
+            reason or _flag_reason(mediainfo_unavailable_flag) or "QUI MediaInfo is unavailable.",
+            rules,
+            {"flag": mediainfo_unavailable_flag} if mediainfo_unavailable_flag else {},
+        )
+
     no_video_flag = _first_flag(flags, {"no_video_files"})
     if verdict == "no_video_files" or ua_verdict == "no_video_files" or no_video_flag:
         return _decision(
@@ -277,10 +307,7 @@ def evaluate_decision(
     review_flag = _first_review_flag(
         flags,
         {
-            "mediainfo_unavailable",
-            "mediainfo_missing",
             "media_error",
-            "no_video_files",
             "srrdb_filename_mismatch",
             "missing_release_group",
         },
@@ -564,6 +591,7 @@ RULE_DEFINITIONS: List[RuleDefinition] = [
     RuleDefinition("media.hard_block", "Hard media policy", "Decision", "MediaInfo", "error", "block", "check_results.flags", notes="Blocks clear media-policy failures such as bloated audio or primary language.", order=20),
     RuleDefinition("review.source_missing", "WEB source missing", "Information", "Source Detection", "info", "none", "check_results.flags", notes="Records WEB releases without a provider in title, MediaInfo, or NFO.", order=30),
     RuleDefinition("arr.pre_release", "Pre-release media", "Decision", "Discovarr", "warning", "review", "check_results.arr", notes="Reviews Arr media that has not aired, released, or started its season.", order=35),
+    RuleDefinition("system.mediainfo_unavailable", "MediaInfo unavailable", "Decision", "MediaInfo", "error", "error", "check_results.flags", notes="Errors when QUI cannot provide MediaInfo evidence for video files.", order=37),
     RuleDefinition("system.no_video_files", "No video files", "Decision", "MediaInfo", "error", "error", "check_results.flags", notes="Errors when QUI or UA cannot find any video files for the item.", order=38),
     RuleDefinition("system.terminal_error", "Terminal system error", "Decision", "System", "error", "error", "stage diagnostics", notes="Broken setup or impossible evidence that needs investigation.", order=40),
     RuleDefinition("system.retry_transient", "Transient retry", "Decision", "System", "warning", "retry", "UA/client errors", notes="Retries temporary UA/interruption/rate-limit style failures.", order=50),

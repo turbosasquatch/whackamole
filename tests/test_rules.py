@@ -28,7 +28,7 @@ def test_rule_catalogue_has_unique_valid_entries():
     assert len(ids) == len(set(ids))
     assert all(row["severity"] in {"pass", "info", "warning", "error"} for row in rows)
     assert all(row["effect"] in {"none", "candidate", "review", "block", "skip", "retry", "error"} for row in rows)
-    assert ruleset_changelog()[0]["version"] == 2
+    assert ruleset_changelog()[0]["version"] == 3
 
 
 def test_evaluator_keeps_valid_tracker_candidate():
@@ -181,6 +181,32 @@ def test_evaluator_errors_no_video_files():
     assert decision.status == "error"
     assert decision.effect == "error"
     assert decision.winning_rule_id == "system.no_video_files"
+
+
+def test_evaluator_errors_unavailable_mediainfo_evidence():
+    for key in ("mediainfo_unavailable", "mediainfo_missing"):
+        decision = evaluate_decision(
+            current_status="candidate",
+            current_verdict="candidate",
+            current_reason="Valid upload candidate on: DP",
+            tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+            check_results={
+                "ua": {"status": "candidate"},
+                "flags": [
+                    {
+                        "key": key,
+                        "label": "MediaInfo Error",
+                        "severity": "blocker",
+                        "detail": "Whackamole could not read QUI MediaInfo.",
+                    }
+                ],
+            },
+        )
+
+        assert decision.status == "error"
+        assert decision.verdict == key
+        assert decision.effect == "error"
+        assert decision.winning_rule_id == "system.mediainfo_unavailable"
 
 
 def test_evaluator_reviews_pre_release_arr_failure():

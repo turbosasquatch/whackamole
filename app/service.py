@@ -53,6 +53,7 @@ SOURCE_PROVIDER_FIELD_RE = re.compile(
     r"\b(?:service|network|studio|publisher|provider|source|site)\b",
     re.IGNORECASE,
 )
+MEDIA_EVIDENCE_ERROR_VERDICTS = {"mediainfo_unavailable", "mediainfo_missing", "no_video_files"}
 
 
 def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> ReleaseTraits:
@@ -82,12 +83,7 @@ def _arr_local_traits_from_media_result(media_result: Mapping[str, Any]) -> Rele
 
 
 def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
-    review_keys = {
-        "mediainfo_unavailable",
-        "mediainfo_missing",
-        "media_error",
-        "no_video_files",
-    }
+    review_keys = {"media_error"}
     for flag in flags:
         if not isinstance(flag, Mapping):
             continue
@@ -97,6 +93,20 @@ def _candidate_review_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]
         if key in review_keys or (label == "MediaInfo Error" and severity == "blocker"):
             return dict(flag)
     return {}
+
+
+def _media_evidence_error(media_result: Mapping[str, Any]) -> bool:
+    if str(media_result.get("verdict") or "") in MEDIA_EVIDENCE_ERROR_VERDICTS:
+        return True
+    issues = media_result.get("issues") if isinstance(media_result.get("issues"), list) else []
+    return any(
+        isinstance(issue, Mapping) and str(issue.get("key") or "") in MEDIA_EVIDENCE_ERROR_VERDICTS
+        for issue in issues
+    )
+
+
+def _empty_tracker_results() -> Dict[str, list[str]]:
+    return {"passed": [], "covered": [], "dupe": [], "skipped": [], "error": []}
 
 
 def _candidate_blocking_flag(flags: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -1073,13 +1083,26 @@ class WhackamoleService:
                 error=exc,
                 extra={"verdict": media_result["verdict"]},
             )
-            return media_result, check_results, False
+            check_results = self._finish_terminal_media_error(item_id, media_result, check_results)
+            return media_result, check_results, True
 
         check_results = merge_check_results(
             check_results,
             media=media_result,
             flags=media_result.get("flags", []),
         )
+        if _media_evidence_error(media_result):
+            check_results = add_stage_diagnostic(
+                check_results,
+                stage="media",
+                status="error",
+                reason=str(media_result.get("reason") or "MediaInfo evidence is unavailable."),
+                started_at=started_at,
+                extra={"verdict": str(media_result.get("verdict") or "media_error")},
+            )
+            check_results = self._finish_terminal_media_error(item_id, media_result, check_results)
+            return media_result, check_results, True
+
         if media_result.get("status") != "passed":
             check_results = add_stage_diagnostic(
                 check_results,
@@ -1131,6 +1154,38 @@ class WhackamoleService:
                 check_results = merge_check_results(check_results, flags=flags)
                 return media_result, check_results, False
         return media_result, check_results, False
+
+    def _finish_terminal_media_error(
+        self,
+        item_id: int,
+        media_result: Mapping[str, Any],
+        check_results: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        tracker_results = _empty_tracker_results()
+        verdict = str(media_result.get("verdict") or "media_error")
+        reason = str(media_result.get("reason") or "MediaInfo evidence is unavailable.")
+        decision = evaluate_decision(
+            item_name=str(media_result.get("release_title") or media_result.get("torrent_root") or ""),
+            current_status="error",
+            current_verdict=verdict,
+            current_reason=reason,
+            tracker_results=tracker_results,
+            arr_results={},
+            check_results=check_results,
+        )
+        check_results = apply_decision_payload(check_results, decision)
+        self.db.update_status(
+            item_id,
+            decision.status,
+            decision.verdict,
+            decision.reason,
+            tracker_results=tracker_results,
+            arr_results={},
+            check_stage="done",
+            check_results=check_results,
+            increment_attempt=True,
+        )
+        return check_results
 
     def _run_path_stage(
         self,

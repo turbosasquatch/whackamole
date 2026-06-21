@@ -816,6 +816,47 @@ def test_dashboard_alert_tags_follow_check_summary_not_raw_flags(tmp_path, monke
         assert "Random Old Flag" not in labels
 
 
+def test_dashboard_mediainfo_unavailable_appears_as_error(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
+        item_id = _seed_item(client)
+        client.app.state.db.update_status(
+            item_id,
+            "error",
+            "mediainfo_unavailable",
+            "Whackamole could not read QUI MediaInfo.",
+            check_results={
+                "media": {
+                    "media_status": "error",
+                    "status": "error",
+                    "verdict": "mediainfo_unavailable",
+                    "reason": "Whackamole could not read QUI MediaInfo.",
+                    "issues": [{"severity": "ERROR", "key": "mediainfo_unavailable"}],
+                },
+                "flags": [
+                    {
+                        "key": "mediainfo_unavailable",
+                        "label": "MediaInfo Error",
+                        "severity": "blocker",
+                        "detail": "Whackamole could not read QUI MediaInfo.",
+                    }
+                ],
+            },
+        )
+
+        errors_api = client.get("/api/items?status=error", headers=_auth_headers())
+        manual_api = client.get("/api/items?status=manual_review", headers=_auth_headers())
+        errors_page = client.get("/dashboard?view=errors")
+        manual_page = client.get("/dashboard?view=manual")
+
+        assert errors_api.status_code == 200
+        assert errors_api.json()["items"][0]["name"] == "Example.Show.S01E01.1080p.WEB-DL.DDP5.1.H.264-GRP"
+        assert {"key": "media_info", "label": "Media Info", "severity": "critical"} in errors_api.json()["items"][0]["alert_tags"]
+        assert manual_api.json()["items"] == []
+        assert "Example.Show.S01E01" in errors_page.text
+        assert "Example.Show.S01E01" not in manual_page.text
+
+
 def test_dashboard_suppresses_generic_manual_review_alert(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

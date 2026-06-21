@@ -57,6 +57,16 @@ def test_mediainfo_analysis_marks_no_video_files_as_error():
     assert any(flag["key"] == "no_video_files" for flag in result["flags"])
 
 
+def test_mediainfo_analysis_marks_missing_mediainfo_as_error():
+    release = "Movie.2024.1080p.WEB-DL-GRP"
+
+    result = analyze_mediainfo(item_name=release, files=[{"index": 0, "name": f"{release}/{release}.mkv"}], mediainfo_payloads=[])
+
+    assert result["status"] == "error"
+    assert result["verdict"] == "mediainfo_missing"
+    assert any(flag["key"] == "mediainfo_missing" for flag in result["flags"])
+
+
 def test_mediainfo_analysis_blocks_bloated_1080p_bluray_audio():
     release = "Movie.2024.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP"
     files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]

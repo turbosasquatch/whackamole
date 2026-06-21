@@ -29,7 +29,7 @@ def video_file_payloads(files: Sequence[Mapping[str, Any]]) -> List[Dict[str, An
 
 
 def build_media_manual_result(verdict: str, reason: str, files: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
-    status = "error" if verdict == "no_video_files" else "manual_review"
+    status = "error" if verdict in {"mediainfo_unavailable", "mediainfo_missing", "no_video_files"} else "manual_review"
     return {
         "version": 1,
         "source": "mediainfo",
@@ -88,6 +88,7 @@ def analyze_mediainfo(
         status = "error"
     elif not mediainfo_payloads:
         verdict = "mediainfo_missing"
+        status = "error"
     elif status != "passed":
         verdict = "media_error"
     else:
