@@ -257,7 +257,7 @@
                       {% for group in row.files %}
                         <strong>{{ group.label }}</strong>
                         <ul>
-                          {% for file in group.items %}
+                          {% for file in group["items"] %}
                             <li>{{ file }}</li>
                           {% endfor %}
                         </ul>

@@ -1141,6 +1141,46 @@ def test_item_detail_renders_rename_tab_and_api_display_model(tmp_path, monkeypa
         assert "rename-diff-replace" in page.text
 
 
+def test_item_detail_renders_empty_title_token_rename_files(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        filename = "Louis Theroux - Inside the Manosphere (2026) (2160p NF WEB-DL Hybrid H265 DV HDR DDP Atmos 5.1 English - HONE).mkv"
+        reason = f"{filename} contains an empty title token in the human-readable title area."
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "renamed_release_warning",
+            reason,
+            check_results={
+                "version": 1,
+                "rename_detection": {
+                    "version": 1,
+                    "status": "manual_review",
+                    "confidence": "high",
+                    "reason": reason,
+                    "evidence": [
+                        {
+                            "kind": "empty_title_token",
+                            "scope": "file",
+                            "confidence": "high",
+                            "source": "video_file",
+                            "value": filename,
+                            "expected": "",
+                            "reason": reason,
+                        }
+                    ],
+                },
+            },
+        )
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert "Empty title token" in page.text
+        assert "Affected files" in page.text
+        assert filename in page.text
+
+
 def test_reporting_api_tracks_active_resolved_and_deleted_reports(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
