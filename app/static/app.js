@@ -493,6 +493,7 @@
     const canQueue = consoleRoot.dataset.canQueue === "true";
     let sessionId = consoleRoot.dataset.activeSession || "";
     let streamController = null;
+    let eventSource = null;
     let followingLatest = true;
     let running = Boolean(sessionId);
 
@@ -608,19 +609,40 @@
         stateBadge.classList.remove("busy");
       }
     };
+    const closeEventSource = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
     const processEvent = (payload) => {
       if (!payload || payload.type === "keepalive") return;
       if (payload.type === "html" || payload.type === "html_full") {
         appendHtml(payload.data || "", payload.type === "html_full");
         return;
       }
+      if (payload.type === "complete") {
+        appendLine(payload.data || "Upload Assistant session finished.", "system");
+        setRunning(false, "Idle");
+        sessionId = "";
+        closeEventSource();
+        return;
+      }
       if (payload.type === "exit") {
         appendLine(`Process exited with code ${payload.code}`, "system");
         setRunning(false, "Idle");
         sessionId = "";
+        closeEventSource();
         return;
       }
       appendLine(payload.data || payload.message || payload.error || "", payload.type === "error" ? "error" : "system");
+    };
+    const handleEventData = (data) => {
+      try {
+        processEvent(JSON.parse(data));
+      } catch {
+        appendLine(data, "system");
+      }
     };
     const consumeStream = async (response) => {
       sessionId = response.headers.get("X-UA-Session-ID") || sessionId;
@@ -635,11 +657,7 @@
       const handleLine = (line) => {
         if (!line.startsWith("data: ")) return;
         receivedEvent = true;
-        try {
-          processEvent(JSON.parse(line.slice(6)));
-        } catch {
-          appendLine(line.slice(6), "system");
-        }
+        handleEventData(line.slice(6));
       };
       while (true) {
         const { done, value } = await reader.read();
@@ -655,6 +673,31 @@
       if (!receivedEvent) {
         appendLine("Upload Assistant stream ended without output.", "error");
       }
+    };
+    const openEventStream = (url) => {
+      if (!window.EventSource) {
+        openStream(url, { method: "GET" });
+        return;
+      }
+      closeEventSource();
+      let receivedEvent = false;
+      eventSource = new EventSource(url);
+      eventSource.onopen = () => {
+        appendLine("Connected to Upload Assistant stream.", "system");
+      };
+      eventSource.onmessage = (event) => {
+        receivedEvent = true;
+        handleEventData(event.data || "");
+      };
+      eventSource.onerror = () => {
+        closeEventSource();
+        if (!running) return;
+        if (!receivedEvent) {
+          appendLine("Upload Assistant stream connection closed before output.", "error");
+        }
+        setRunning(false, "Idle");
+        sessionId = "";
+      };
     };
     const openStream = async (url, options = {}) => {
       try {
@@ -685,7 +728,7 @@
       if (/(^|\s)--unattended(\s|$)/.test(trimmed)) return trimmed;
       return `${trimmed} --unattended`.trim();
     };
-    const startUpload = (args) => {
+    const startUpload = async (args) => {
       try {
         if (running) {
           appendLine("Upload Assistant is already running.", "system");
@@ -703,11 +746,30 @@
         lastFullSnapshotText = "";
         appendLine("Starting Upload Assistant...");
         setRunning(true, "Running");
-        openStream(consoleRoot.dataset.executeUrl, {
+        const response = await fetch(consoleRoot.dataset.executeUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Upload-Console-Start-Only": "true" },
           body: JSON.stringify({ args }),
         });
+        if (!response.ok) {
+          const text = await response.text();
+          let message = text || `Request failed with ${response.status}`;
+          try {
+            message = JSON.parse(text).error || message;
+          } catch {}
+          appendLine(message, "error");
+          setRunning(false, "Idle");
+          return;
+        }
+        const payload = await response.json().catch(() => ({}));
+        sessionId = response.headers.get("X-UA-Session-ID") || payload.session_id || sessionId;
+        if (!sessionId) {
+          appendLine("Upload Assistant did not return a session id.", "error");
+          setRunning(false, "Idle");
+          return;
+        }
+        const url = `${consoleRoot.dataset.streamUrl}?session_id=${encodeURIComponent(sessionId)}`;
+        openEventStream(url);
       } catch (error) {
         appendLine(errorMessage(error), "error");
         setRunning(false, "Idle");
@@ -778,6 +840,7 @@
       } catch (error) {
         appendLine(errorMessage(error), "error");
       }
+      closeEventSource();
       if (streamController) streamController.abort();
       output.innerHTML = "";
       lastFullSnapshotText = "";
@@ -814,7 +877,7 @@
       appendLine("Reattaching to active Upload Assistant session...");
       setRunning(true, "Running");
       const url = `${consoleRoot.dataset.streamUrl}?session_id=${encodeURIComponent(sessionId)}`;
-      openStream(url, { method: "GET" });
+      openEventStream(url);
     } else {
       setRunning(false, stateBadge ? stateBadge.textContent : "Idle");
     }

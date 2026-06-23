@@ -544,6 +544,9 @@ def test_upload_console_frontend_start_paths_report_visible_feedback():
     assert "Upload Assistant stream ended without output." in script
     assert "const handleLine = (line)" in script
     assert "appendLine(errorMessage(error), \"error\")" in script
+    assert "new EventSource(url)" in script
+    assert '"X-Upload-Console-Start-Only": "true"' in script
+    assert "Connected to Upload Assistant stream." in script
 
 
 def test_submit_buttons_have_tick_feedback_script():
@@ -796,6 +799,8 @@ def test_upload_console_execute_stream_emits_start_output_and_finish(tmp_path, m
 
         assert response.status_code == 200
         assert response.headers["x-ua-session-id"].startswith(f"whackamole-item-{item_id}-")
+        assert response.headers["content-encoding"] == "identity"
+        assert response.headers["cache-control"] == "no-cache, no-transform"
         events = [
             json.loads(line.removeprefix("data: "))
             for line in response.text.splitlines()
@@ -804,7 +809,50 @@ def test_upload_console_execute_stream_emits_start_output_and_finish(tmp_path, m
         event_text = [str(event.get("data") or "") for event in events]
         assert f'Executing Upload Assistant for "/ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP"' in event_text
         assert any("ua output /ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP --trackers dp" in text for text in event_text)
+        assert events[-1]["type"] == "complete"
         assert "Upload Assistant session finished." in event_text
+
+
+def test_upload_console_execute_can_start_session_then_attach_stream(tmp_path, monkeypatch):
+    class FakeUploadAssistantClient:
+        def __init__(self, _config, _token):
+            pass
+
+        async def execute_upload_stream(self, path, args, session_id):
+            await asyncio.sleep(0)
+            yield sse_payload("system", f"attached output {path} {args} {session_id}")
+
+    monkeypatch.setattr("app.ua_execution.UploadAssistantClient", FakeUploadAssistantClient)
+
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+
+        started = client.post(
+            f"/api/items/{item_id}/upload-assistant/execute",
+            json={"args": "--trackers dp"},
+            headers={"X-Upload-Console-Start-Only": "true"},
+        )
+
+        assert started.status_code == 200
+        session_id = started.json()["session_id"]
+        assert started.headers["x-ua-session-id"] == session_id
+
+        stream = client.get(f"/api/items/{item_id}/upload-assistant/stream?session_id={session_id}")
+        assert stream.headers["content-encoding"] == "identity"
+        assert stream.headers["cache-control"] == "no-cache, no-transform"
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in stream.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        event_text = [str(event.get("data") or "") for event in events]
+        assert f'Executing Upload Assistant for "/ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP"' in event_text
+        assert any("attached output /ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP --trackers dp" in text for text in event_text)
+        assert events[-1]["type"] == "complete"
 
 
 def test_upload_console_session_releases_lock_on_completion(tmp_path, monkeypatch):

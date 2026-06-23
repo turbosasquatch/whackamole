@@ -191,7 +191,7 @@ class UploadConsoleSession:
                 await self._publish(chunk)
             if self.state not in {"killing", "killed"}:
                 self.state = "complete"
-                await self._publish(sse_payload("system", "Upload Assistant session finished."))
+                await self._publish(sse_payload("complete", "Upload Assistant session finished."))
         except asyncio.CancelledError:
             if self.state not in {"killing", "killed"}:
                 self.state = "cancelled"

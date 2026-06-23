@@ -54,6 +54,11 @@ NFO_EXTENSIONS = {".nfo"}
 MAX_VIDEO_FILES = 200
 MAX_NFO_BYTES = 262144
 SOURCE_PROVIDER_FIELD_RE = re.compile(r"(?:site|network|source|service|provider|streaming)", re.IGNORECASE)
+UA_STREAM_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Content-Encoding": "identity",
+    "X-Accel-Buffering": "no",
+}
 DASHBOARD_VIEWS = {
     "active": ["queued", "deferred", "checking", "retry"],
     "candidates": ["candidate"],
@@ -2746,10 +2751,16 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
         message = "Check running" if owner.get("kind") == "check" else str(busy.get("message") or "Upload Assistant is busy.")
         return JSONResponse({"error": message, "success": False, "owner": owner}, status_code=409)
 
+    if request.headers.get("x-upload-console-start-only", "").lower() == "true":
+        return JSONResponse(
+            {"success": True, "session_id": session.session_id, "state": session.state},
+            headers={"Cache-Control": "no-cache", "X-UA-Session-ID": session.session_id},
+        )
+
     return StreamingResponse(
         session.subscribe(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-UA-Session-ID": session.session_id},
+        headers={**UA_STREAM_HEADERS, "X-UA-Session-ID": session.session_id},
     )
 
 
@@ -2804,7 +2815,7 @@ async def stream_item_upload_assistant(request: Request, item_id: int, session_i
     return StreamingResponse(
         session.subscribe(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-UA-Session-ID": session.session_id},
+        headers={**UA_STREAM_HEADERS, "X-UA-Session-ID": session.session_id},
     )
 
 
