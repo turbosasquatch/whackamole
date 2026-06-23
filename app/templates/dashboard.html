@@ -17,7 +17,7 @@
         <span class="eyebrow">{{ dashboard_filters.label | title }}</span>
         <p class="compact-count">{{ dashboard_filters.filtered_total }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }} · showing {{ pagination.start }}-{{ pagination.end }}</p>
       </div>
-      <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters">x</button>
+      <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters"><span class="close-glyph" aria-hidden="true"></span></button>
     </div>
 
     <form class="filter-form" method="get" action="/dashboard">
@@ -188,7 +188,7 @@
                 {{ item.category or "-" }}
               </td>
               <td>{{ item.size | bytes }}</td>
-              <td>{{ item.updated_at | datetime }}</td>
+              <td><time datetime="{{ item.updated_at | datetime_iso }}" data-local-datetime>{{ item.updated_at | datetime }}</time></td>
               <td>
                 {% set active_import = item.active_import or {} %}
                 <form

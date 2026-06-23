@@ -4,10 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul11">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul11" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul13">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul13" defer></script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="app-shell" data-app-shell>
       <button class="sidebar-backdrop" type="button" data-sidebar-close aria-label="Close menu"></button>
       <aside class="app-sidebar" aria-label="Primary navigation">
@@ -17,7 +18,7 @@
             <a class="brand-name" href="/">Whackamole</a>
             <span>QUI arrival triage</span>
           </div>
-          <button class="icon-close mobile-only" type="button" data-sidebar-close aria-label="Close menu">x</button>
+          <button class="icon-close mobile-only" type="button" data-sidebar-close aria-label="Close menu"><span class="close-glyph" aria-hidden="true"></span></button>
         </div>
 
         <nav class="sidebar-nav" aria-label="Dashboard views">
@@ -92,9 +93,9 @@
                 <input type="hidden" name="hide_any_primary" value="true">
               {% endif %}
               <label for="global-search">Search media</label>
-              <input id="global-search" name="q" value="{{ search_query }}" placeholder="Search name, hash, tracker, reason">
+              <input id="global-search" type="search" name="q" value="{{ search_query }}" autocomplete="off" spellcheck="false" placeholder="Search name, hash, tracker, reason&hellip;">
               {% if search_query %}
-                <a class="clear-search" href="/dashboard?view={{ view }}" aria-label="Clear search">Clear</a>
+                <a class="clear-search" href="{{ clear_search_url }}" aria-label="Clear search">Clear</a>
               {% endif %}
             </form>
           {% endif %}
@@ -122,7 +123,7 @@
                   <ol data-notification-list {% if not service_errors %}hidden{% endif %}>
                     {% for error in service_errors | reverse %}
                       <li>
-                        <time>{{ error.last_seen_at | datetime }}</time>
+                        <time datetime="{{ error.last_seen_at | datetime_iso }}" data-local-datetime>{{ error.last_seen_at | datetime }}</time>
                         <span>{{ error.message }}</span>
                         {% if error.count and error.count > 1 %}<em>x{{ error.count }}</em>{% endif %}
                       </li>
@@ -135,7 +136,7 @@
           </div>
         </header>
 
-        <main class="content-shell">
+        <main id="main-content" class="content-shell" tabindex="-1">
           {% block content %}{% endblock %}
         </main>
       </div>
@@ -146,7 +147,7 @@
         <section class="search-modal" role="dialog" aria-modal="true" aria-labelledby="search-modal-title">
           <header>
             <h2 id="search-modal-title">Search</h2>
-            <button class="icon-close" type="button" data-search-close aria-label="Close search">x</button>
+            <button class="icon-close" type="button" data-search-close aria-label="Close search"><span class="close-glyph" aria-hidden="true"></span></button>
           </header>
           <form method="get" action="/dashboard">
             <input type="hidden" name="view" value="{{ view }}">
@@ -166,11 +167,11 @@
               <input type="hidden" name="hide_any_primary" value="true">
             {% endif %}
             <label for="mobile-search-input">Search media</label>
-            <input id="mobile-search-input" name="q" value="{{ search_query }}" placeholder="Search name, hash, tracker, reason">
+            <input id="mobile-search-input" type="search" name="q" value="{{ search_query }}" autocomplete="off" spellcheck="false" placeholder="Search name, hash, tracker, reason&hellip;">
             <div class="button-row">
               <button class="button" type="submit">Search</button>
               {% if search_query %}
-                <a class="button secondary" href="/dashboard?view={{ view }}">Clear</a>
+                <a class="button secondary" href="{{ clear_search_url }}">Clear</a>
               {% endif %}
             </div>
           </form>
@@ -185,7 +186,7 @@
             <span class="eyebrow">Raw data</span>
             <h2 id="raw-modal-title">Raw data</h2>
           </div>
-          <button class="icon-close" type="button" data-raw-close aria-label="Close">x</button>
+          <button class="icon-close" type="button" data-raw-close aria-label="Close"><span class="close-glyph" aria-hidden="true"></span></button>
         </header>
         <pre data-raw-output></pre>
         <footer>

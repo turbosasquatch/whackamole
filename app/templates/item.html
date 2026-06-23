@@ -54,7 +54,7 @@
         <button class="button secondary" type="submit">Ignore</button>
       </form>
       {% if item.effective_status != "rejected" %}
-        <a class="button danger" href="/items/{{ item.id }}#reporting">Rejected</a>
+        <a class="button danger" href="/items/{{ item.id }}#reporting">Mark rejected</a>
       {% endif %}
       <a class="button secondary" href="{{ next_item_url }}">Next Item</a>
     </div>
@@ -65,7 +65,7 @@
       <span class="eyebrow">Decision</span>
       <strong>{{ item.decision_label }}</strong>
       <p>{{ item.decision_notice or item.reason or item.display_status.detail or "No decision reason recorded yet." }}</p>
-      <p class="muted">Last checked {{ item.last_checked_at | datetime }}</p>
+      <p class="muted">Last checked <time datetime="{{ item.last_checked_at | datetime_iso }}" data-local-datetime>{{ item.last_checked_at | datetime }}</time></p>
       <div class="coverage-badges">
         {% for tracker in item.tracker_coverage %}
           <span class="coverage-badge {{ tracker.state }} {% if tracker.state == 'not-valid' %}missing-default{% endif %}">{{ tracker.label }}</span>
@@ -82,15 +82,15 @@
 
   <section class="tabs-shell" data-tabs>
     <div class="tab-list" role="tablist" aria-label="Item sections">
-      <button class="active" type="button" data-tab-target="overview">Overview</button>
-      <button type="button" data-tab-target="rename">Rename</button>
-      <button type="button" data-tab-target="mediainfo">Media Info</button>
-      <button type="button" data-tab-target="upload-assistant">Upload Assistant</button>
-      <button type="button" data-tab-target="discovarr">Discovarr</button>
-      <button type="button" data-tab-target="reporting">Reporting</button>
+      <button id="tab-overview" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" tabindex="0" data-tab-target="overview">Overview</button>
+      <button id="tab-rename" type="button" role="tab" aria-selected="false" aria-controls="panel-rename" tabindex="-1" data-tab-target="rename">Rename</button>
+      <button id="tab-mediainfo" type="button" role="tab" aria-selected="false" aria-controls="panel-mediainfo" tabindex="-1" data-tab-target="mediainfo">Media Info</button>
+      <button id="tab-upload-assistant" type="button" role="tab" aria-selected="false" aria-controls="panel-upload-assistant" tabindex="-1" data-tab-target="upload-assistant">Upload Assistant</button>
+      <button id="tab-discovarr" type="button" role="tab" aria-selected="false" aria-controls="panel-discovarr" tabindex="-1" data-tab-target="discovarr">Discovarr</button>
+      <button id="tab-reporting" type="button" role="tab" aria-selected="false" aria-controls="panel-reporting" tabindex="-1" data-tab-target="reporting">Reporting</button>
     </div>
 
-    <div class="tab-panel active" data-tab-panel="overview">
+    <div id="panel-overview" class="tab-panel active" role="tabpanel" aria-labelledby="tab-overview" data-tab-panel="overview">
       <div class="info-grid overview-summary-grid">
         <section>
           <h2>Checks Summary</h2>
@@ -148,7 +148,7 @@
       </div>
     </div>
 
-    <div class="tab-panel" data-tab-panel="rename">
+    <div id="panel-rename" class="tab-panel" role="tabpanel" aria-labelledby="tab-rename" data-tab-panel="rename" hidden>
       <section class="details-panel rename-panel">
         <div class="panel-heading">
           <div>
@@ -296,7 +296,7 @@
       </section>
     </div>
 
-    <div class="tab-panel" data-tab-panel="mediainfo">
+    <div id="panel-mediainfo" class="tab-panel" role="tabpanel" aria-labelledby="tab-mediainfo" data-tab-panel="mediainfo" hidden>
       <section class="details-panel">
         <div class="panel-heading">
           <div>
@@ -353,7 +353,7 @@
 
     </div>
 
-    <div class="tab-panel" data-tab-panel="upload-assistant">
+    <div id="panel-upload-assistant" class="tab-panel" role="tabpanel" aria-labelledby="tab-upload-assistant" data-tab-panel="upload-assistant" hidden>
       <section
         class="details-panel upload-console"
         data-upload-console
@@ -384,7 +384,7 @@
           </label>
           <label>
             <span>Additional Arguments</span>
-            <input data-upload-args value="{{ ua_console.args or '' }}" placeholder="--trackers dp,ulcx --service AMZN">
+            <input data-upload-args value="{{ ua_console.args or '' }}" autocomplete="off" spellcheck="false" placeholder="--trackers dp,ulcx --service AMZN&hellip;">
           </label>
         </div>
 
@@ -423,13 +423,13 @@
         </div>
 
         <form class="upload-console-input" data-upload-input-form>
-          <input data-upload-input placeholder="Type input and press Enter" autocomplete="off" {% if not ua_busy_this_item %}disabled{% endif %}>
+          <input data-upload-input placeholder="Type input and press Enter" autocomplete="off" spellcheck="false" {% if not ua_busy_this_item %}disabled{% endif %}>
           <button class="button" type="submit" data-upload-send {% if not ua_busy_this_item %}disabled{% endif %}>Send</button>
         </form>
       </section>
     </div>
 
-    <div class="tab-panel" data-tab-panel="discovarr">
+    <div id="panel-discovarr" class="tab-panel" role="tabpanel" aria-labelledby="tab-discovarr" data-tab-panel="discovarr" hidden>
       <section class="details-panel">
         <div class="panel-heading">
           <div>
@@ -509,7 +509,7 @@
       </section>
     </div>
 
-    <div class="tab-panel" data-tab-panel="reporting">
+    <div id="panel-reporting" class="tab-panel" role="tabpanel" aria-labelledby="tab-reporting" data-tab-panel="reporting" hidden>
       <section class="details-panel">
         <div class="panel-heading">
           <div>
@@ -529,7 +529,7 @@
           </label>
           <label>
             Notes
-            <textarea name="notes" rows="5" placeholder="What looks wrong?"></textarea>
+            <textarea name="notes" rows="5" placeholder="Describe the issue&hellip;"></textarea>
           </label>
           <button class="button" type="submit">Flag Error</button>
         </form>
@@ -540,13 +540,13 @@
           <div class="panel-heading">
             <div>
               <span class="eyebrow">Moderation</span>
-              <h2>Rejected</h2>
+              <h2>Reject item</h2>
             </div>
           </div>
           <form class="report-form" method="post" action="/items/{{ item.id }}/reject">
             <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
             <label>
-              Rejected Stage
+              Rejection stage
               <select name="stage">
                 {% for stage in reporting_stages %}
                   <option value="{{ stage }}" {% if stage == "Tracker Moderation" %}selected{% endif %}>{{ stage }}</option>
@@ -554,10 +554,10 @@
               </select>
             </label>
             <label>
-              Rejected Reason
-              <textarea name="notes" rows="5" required placeholder="What did moderation reject?"></textarea>
+              Rejection reason
+              <textarea name="notes" rows="5" required placeholder="Describe the moderation rejection&hellip;"></textarea>
             </label>
-            <button class="button danger" type="submit">Rejected</button>
+            <button class="button danger" type="submit">Mark rejected</button>
           </form>
         </section>
       {% endif %}
@@ -569,7 +569,7 @@
             <article class="report-card">
               <div>
                 <strong>{{ report.stage }}</strong>
-                <time>{{ report.created_at | datetime }}</time>
+                <time datetime="{{ report.created_at | datetime_iso }}" data-local-datetime>{{ report.created_at | datetime }}</time>
                 <p>{{ report.notes or "-" }}</p>
               </div>
               <div class="button-row">
@@ -581,7 +581,7 @@
                   <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
                   <button class="button small" type="submit">Resolve</button>
                 </form>
-                <form method="post" action="/reports/{{ report.id }}/delete">
+                <form method="post" action="/reports/{{ report.id }}/delete" data-confirm="Delete this {{ report.stage }} report? This cannot be undone.">
                   <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
                   <button class="button small danger" type="submit">Delete</button>
                 </form>
@@ -600,7 +600,7 @@
             <article class="report-card attempted">
               <div>
                 <strong>{{ report.stage }}</strong>
-                <time>{{ report.updated_at | datetime }}</time>
+                <time datetime="{{ report.updated_at | datetime_iso }}" data-local-datetime>{{ report.updated_at | datetime }}</time>
                 <p>{{ report.notes or "-" }}</p>
               </div>
               <div class="button-row">
@@ -608,7 +608,7 @@
                   <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
                   <button class="button small" type="submit">Resolve</button>
                 </form>
-                <form method="post" action="/reports/{{ report.id }}/delete">
+                <form method="post" action="/reports/{{ report.id }}/delete" data-confirm="Delete this {{ report.stage }} report? This cannot be undone.">
                   <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
                   <button class="button small danger" type="submit">Delete</button>
                 </form>

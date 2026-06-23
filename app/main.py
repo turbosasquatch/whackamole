@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
@@ -82,6 +83,22 @@ DASHBOARD_TABS = [
     ("ignored", "Ignored", ["ignored"]),
     ("all", "All", []),
 ]
+SIDEBAR_NAV_ORDER = [
+    "candidates",
+    "manual",
+    "reports",
+    "imports",
+    "active",
+    "errors",
+    "blocked",
+    "rejected",
+    "covered",
+    "skipped",
+    "baseline",
+    "inventory",
+    "ignored",
+    "all",
+]
 IMPORT_PAGE_SIZE = 50
 IMPORT_VIEW_STATUSES = {
     "queue": ["pending", "running"],
@@ -140,6 +157,12 @@ def _format_datetime(value: Optional[int]) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(int(value)))
 
 
+def _format_datetime_iso(value: Optional[int]) -> str:
+    if not value:
+        return ""
+    return datetime.fromtimestamp(int(value)).astimezone().isoformat(timespec="seconds")
+
+
 def _format_bytes(value: Optional[int]) -> str:
     amount = float(value or 0)
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
@@ -158,6 +181,7 @@ def _format_json(value: Any) -> str:
 
 
 templates.env.filters["datetime"] = _format_datetime
+templates.env.filters["datetime_iso"] = _format_datetime_iso
 templates.env.filters["bytes"] = _format_bytes
 templates.env.filters["json_pretty"] = _format_json
 
@@ -1983,7 +2007,31 @@ def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = 
     queue = service.get("queue") if isinstance(service.get("queue"), dict) else {}
     imports = service.get("imports") if isinstance(service.get("imports"), dict) else {}
     report_counts = service.get("reports") if isinstance(service.get("reports"), dict) else {}
-    for key, label, statuses in DASHBOARD_TABS:
+    dashboard_tabs = {key: (label, statuses) for key, label, statuses in DASHBOARD_TABS}
+    for key in SIDEBAR_NAV_ORDER:
+        if key == "reports":
+            rows.append(
+                {
+                    "key": "reports",
+                    "label": "Reports",
+                    "total": int(report_counts.get("open") or 0),
+                    "href": "/reports",
+                    "selected": view == "reports",
+                }
+            )
+            continue
+        if key == "imports":
+            rows.append(
+                {
+                    "key": "imports",
+                    "label": "Import Queue",
+                    "total": int(imports.get("active") or 0),
+                    "href": "/imports?view=queue&page=1",
+                    "selected": view == "imports",
+                }
+            )
+            continue
+        label, statuses = dashboard_tabs[key]
         if key == "active":
             total = int(queue.get("active") or 0)
         elif statuses:
@@ -1999,24 +2047,6 @@ def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = 
                 "selected": key == view,
             }
         )
-    rows.append(
-        {
-            "key": "imports",
-            "label": "Queued Imports",
-            "total": int(imports.get("active") or 0),
-            "href": "/imports",
-            "selected": view == "imports",
-        }
-    )
-    rows.append(
-        {
-            "key": "reports",
-            "label": "Reports",
-            "total": int(report_counts.get("open") or 0),
-            "href": "/reports",
-            "selected": view == "reports",
-        }
-    )
     return rows
 
 
@@ -2332,6 +2362,15 @@ async def dashboard(
         item["active_import"] = dict(active_import) if active_import is not None else {}
     service_snapshot = request.app.state.service.snapshot()
     counts = _effective_status_counts(request.app.state.db, request.app.state.db.status_counts())
+    clear_search_url = _dashboard_url(
+        selected,
+        1,
+        filter_media,
+        filter_missing,
+        filter_valid_for,
+        filter_reasons,
+        filter_hide_any,
+    )
     context = {
         **_shell_context(request, section="dashboard", view=selected, q=search_query, service_snapshot=service_snapshot, counts=counts),
         "request": request,
@@ -2384,6 +2423,7 @@ async def dashboard(
             else "",
         },
         "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query),
+        "clear_search_url": clear_search_url,
         "problem_view": selected in {"blocked", "manual", "rejected", "errors"},
     }
     return templates.TemplateResponse(request, "dashboard.html", context)

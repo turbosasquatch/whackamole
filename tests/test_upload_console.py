@@ -446,6 +446,84 @@ def test_mobile_import_cards_use_two_column_fact_grid():
     assert ".imports-table-wrap {\n    display: none;" in styles
 
 
+def test_ui_guideline_static_styles_cover_motion_touch_and_tokens():
+    styles = Path("app/static/style.css").read_text()
+    base = Path("app/templates/base.html").read_text()
+
+    assert "--muted: #475569;" in styles
+    assert "--panel" not in styles
+    assert "--border" not in styles
+    assert "prefers-reduced-motion: reduce" in styles
+    assert "touch-action: manipulation;" in styles
+    assert "-webkit-tap-highlight-color: rgba(37, 99, 235, 0.16);" in styles
+    assert "overscroll-behavior: contain;" in styles
+    assert "font-variant-numeric: tabular-nums;" in styles
+    assert "@media (pointer: coarse), (max-width: 860px)" in styles
+    assert "min-height: 44px;" in styles
+    assert ".search-modal {\n  background: var(--surface);" in styles
+    assert ".content-shell:focus,\n.content-shell:target" in styles
+    assert "outline: 3px solid rgba(37, 99, 235, 0.22);" in styles
+    assert ".content-shell:focus {\n  outline: none;" not in styles
+    assert ".close-glyph::before" in styles
+    assert ".close-glyph::after" in styles
+    assert ".button:active:not(:disabled)" in styles
+    assert ".settings-tabs a:active" in styles
+    assert ".tab-list button[aria-selected=\"true\"]" in styles
+    assert 'class="skip-link" href="#main-content"' in base
+    assert 'id="main-content" class="content-shell" tabindex="-1"' in base
+    assert ">x</button>" not in base
+    assert 'aria-label="Close search"><span class="close-glyph" aria-hidden="true"></span></button>' in base
+
+
+def test_ui_guideline_static_scripts_sync_tabs_counts_and_confirmations():
+    script = Path("app/static/app.js").read_text()
+
+    assert "new Intl.DateTimeFormat(undefined, { dateStyle: \"medium\", timeStyle: \"short\" })" in script
+    assert "function formatLocalDateTimes(root = document)" in script
+    assert 'root.querySelectorAll("[data-local-datetime]")' in script
+    assert "formatLocalDateTimes(list)" in script
+    assert 'form[data-confirm]' in script
+    assert "window.confirm(message)" in script
+    assert "event.stopImmediatePropagation()" in script
+    assert 'button.setAttribute("aria-selected", active ? "true" : "false")' in script
+    assert "button.tabIndex = active ? 0 : -1" in script
+    assert 'event.key === "ArrowRight"' in script
+    assert 'event.key === "Home"' in script
+    assert "window.history.pushState" in script
+    assert 'window.addEventListener("hashchange", syncFromLocation)' in script
+    assert 'window.addEventListener("popstate", syncFromLocation)' in script
+    assert "const reports = service.reports || {};" in script
+    assert "reports: reports.open || 0" in script
+
+
+def test_destructive_actions_have_confirmations_and_settings_inputs_are_semantic():
+    imports_template = Path("app/templates/imports.html").read_text()
+    item_template = Path("app/templates/item.html").read_text()
+    config_template = Path("app/templates/config.html").read_text()
+    base_template = Path("app/templates/base.html").read_text()
+    dashboard_template = Path("app/templates/dashboard.html").read_text()
+    reports_template = Path("app/templates/reports.html").read_text()
+
+    assert "data-confirm=\"Remove {{ import.item_name }} from the import queue?" in imports_template
+    assert 'action="/reports/{{ report.id }}/delete" data-confirm=' in item_template
+    assert 'href="{{ clear_search_url }}" aria-label="Clear search"' in base_template
+    assert '<time datetime="{{ item.updated_at | datetime_iso }}" data-local-datetime>' in dashboard_template
+    assert '<time datetime="{{ import.created_at | datetime_iso }}" data-local-datetime>' in imports_template
+    assert '<time datetime="{{ group.oldest_at | datetime_iso }}" data-local-datetime>' in reports_template
+    assert '<time datetime="{{ error.last_seen_at | datetime_iso }}" data-local-datetime>' in base_template
+    assert '<time datetime="{{ report.created_at | datetime_iso }}" data-local-datetime>' in item_template
+    assert "Reject item" in item_template
+    assert "Rejection stage" in item_template
+    assert "Rejection reason" in item_template
+    assert ">Mark rejected</button>" in item_template
+    for field in ["qui_url", "ua_url", "sonarr_url", "radarr_url", "easycross_url", "profilarr_url"]:
+        pattern = rf'name="{field}" type="url" inputmode="url" autocomplete="url" spellcheck="false"'
+        assert re.search(pattern, config_template)
+    assert 'name="path_mappings" rows="5" autocomplete="off" spellcheck="false"' in config_template
+    assert 'name="exclude_category_terms" value="{{ exclude_category_terms }}" autocomplete="off" spellcheck="false"' in config_template
+    assert 'name="policy_{{ policy.tracker | lower }}_banned" value="{{ policy.banned }}" autocomplete="off" spellcheck="false"' in config_template
+
+
 def test_upload_console_full_snapshots_are_not_terminal_replacements():
     script = Path("app/static/app.js").read_text()
 

@@ -37,6 +37,32 @@
     }[char]));
   }
 
+  const localDateTimeFormatter = (() => {
+    try {
+      if (!window.Intl || !Intl.DateTimeFormat) return null;
+      return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+    } catch {
+      return null;
+    }
+  })();
+
+  function formatLocalDateTimes(root = document) {
+    if (!localDateTimeFormatter || !root.querySelectorAll) return;
+    root.querySelectorAll("[data-local-datetime]").forEach((node) => {
+      const value = node.getAttribute("datetime");
+      if (!value) return;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return;
+      const fallback = node.textContent || "";
+      node.textContent = localDateTimeFormatter.format(parsed);
+      if (fallback && !node.title) {
+        node.title = fallback;
+      }
+    });
+  }
+
+  formatLocalDateTimes();
+
   function setSidebar(collapsed) {
     if (!shell) return;
     shell.classList.toggle("sidebar-collapsed", collapsed);
@@ -133,6 +159,16 @@
     if (target instanceof Node && !notificationMenu.contains(target)) {
       notificationPopout.hidden = true;
     }
+  });
+
+  document.querySelectorAll("form[data-confirm]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      const message = form.dataset.confirm || "Continue with this action?";
+      if (!window.confirm(message)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    });
   });
 
   document.querySelectorAll("form[data-submit-tick]").forEach((form) => {
@@ -291,19 +327,65 @@
   document.querySelectorAll("[data-tabs]").forEach((tabs) => {
     const buttons = Array.from(tabs.querySelectorAll("[data-tab-target]"));
     const panels = Array.from(tabs.querySelectorAll("[data-tab-panel]"));
-    const activate = (name) => {
-      buttons.forEach((button) => button.classList.toggle("active", button.dataset.tabTarget === name));
-      panels.forEach((panel) => panel.classList.toggle("active", panel.dataset.tabPanel === name));
+    if (!buttons.length || !panels.length) return;
+
+    const knownTab = (name) => buttons.some((button) => button.dataset.tabTarget === name);
+    const tabFromHash = () => window.location.hash.replace("#", "");
+    const activate = (name, options = {}) => {
+      if (!knownTab(name)) return;
+      buttons.forEach((button) => {
+        const active = button.dataset.tabTarget === name;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+        button.tabIndex = active ? 0 : -1;
+        if (active && options.focus) {
+          button.focus();
+        }
+      });
+      panels.forEach((panel) => {
+        const active = panel.dataset.tabPanel === name;
+        panel.classList.toggle("active", active);
+        panel.hidden = !active;
+      });
+      if (options.syncHash && window.history && tabFromHash() !== name) {
+        window.history.pushState(null, "", `#${name}`);
+      }
     };
 
     buttons.forEach((button) => {
-      button.addEventListener("click", () => activate(button.dataset.tabTarget));
+      button.addEventListener("click", () => activate(button.dataset.tabTarget, { syncHash: true }));
+      button.addEventListener("keydown", (event) => {
+        const currentIndex = buttons.indexOf(button);
+        let nextIndex = currentIndex;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+          nextIndex = (currentIndex + 1) % buttons.length;
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+          nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+        } else if (event.key === "Home") {
+          nextIndex = 0;
+        } else if (event.key === "End") {
+          nextIndex = buttons.length - 1;
+        } else {
+          return;
+        }
+        event.preventDefault();
+        activate(buttons[nextIndex].dataset.tabTarget, { focus: true, syncHash: true });
+      });
     });
 
-    const requested = window.location.hash.replace("#", "");
-    if (requested && buttons.some((button) => button.dataset.tabTarget === requested)) {
+    const requested = tabFromHash();
+    if (knownTab(requested)) {
       activate(requested);
     }
+
+    const syncFromLocation = () => {
+      const requestedTab = tabFromHash();
+      if (knownTab(requestedTab)) {
+        activate(requestedTab);
+      }
+    };
+    window.addEventListener("hashchange", syncFromLocation);
+    window.addEventListener("popstate", syncFromLocation);
   });
 
   const modal = document.querySelector("[data-raw-modal]");
@@ -701,6 +783,12 @@
     return new Date(timestamp * 1000).toLocaleString();
   }
 
+  function formatEventDateTimeIso(value) {
+    const timestamp = Number(value || 0);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+    return new Date(timestamp * 1000).toISOString();
+  }
+
   function renderNotifications(events) {
     const rows = Array.isArray(events) ? events : [];
     const count = rows.length;
@@ -720,12 +808,13 @@
         const repeat = Number(event && event.count ? event.count : 0);
         return [
           "<li>",
-          `<time>${escapeHtml(formatEventTime(event && event.last_seen_at))}</time>`,
+          `<time datetime="${escapeHtml(formatEventDateTimeIso(event && event.last_seen_at))}" data-local-datetime>${escapeHtml(formatEventTime(event && event.last_seen_at))}</time>`,
           `<span>${escapeHtml(event && event.message)}</span>`,
           repeat > 1 ? `<em>x${escapeHtml(repeat)}</em>` : "",
           "</li>",
         ].join("");
       }).join("");
+      formatLocalDateTimes(list);
     });
   }
 
@@ -739,6 +828,7 @@
         const service = payload.service || {};
         const queue = service.queue || {};
         const imports = service.imports || {};
+        const reports = service.reports || {};
         const viewCounts = {
           active: queue.active || 0,
           candidates: counts.candidate || 0,
@@ -751,6 +841,7 @@
           baseline: counts.baseline || 0,
           inventory: counts.inventory || 0,
           ignored: counts.ignored || 0,
+          reports: reports.open || 0,
           imports: imports.active || 0,
           all: Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0),
         };

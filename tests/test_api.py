@@ -217,6 +217,45 @@ def _seed_item(client: TestClient) -> int:
     return item_id
 
 
+def test_sidebar_prioritizes_constant_triage_views(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_item(client)
+
+        response = client.get("/dashboard?view=candidates")
+
+        assert response.status_code == 200
+        labels = ["Candidates", "Review", "Reports", "Import Queue", "Active"]
+        positions = [response.text.index(f"<span>{label}</span>") for label in labels]
+        assert positions == sorted(positions)
+        assert 'href="/imports?view=queue&amp;page=1"' in response.text
+        assert 'data-count-view="imports"' in response.text
+        assert 'data-count-view="reports"' in response.text
+
+
+def test_item_detail_tabs_expose_accessible_tab_markup(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+
+        response = client.get(f"/items/{item_id}")
+
+        assert response.status_code == 200
+        assert 'role="tablist" aria-label="Item sections"' in response.text
+        assert response.text.count('role="tab"') == 6
+        assert response.text.count('role="tabpanel"') == 6
+        for tab in ["overview", "rename", "mediainfo", "upload-assistant", "discovarr", "reporting"]:
+            assert f'id="tab-{tab}"' in response.text
+            assert f'aria-controls="panel-{tab}"' in response.text
+            assert f'id="panel-{tab}"' in response.text
+            assert f'aria-labelledby="tab-{tab}"' in response.text
+            assert f'data-tab-target="{tab}"' in response.text
+            assert f'data-tab-panel="{tab}"' in response.text
+        assert 'id="tab-overview" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" tabindex="0"' in response.text
+        for tab in ["rename", "mediainfo", "upload-assistant", "discovarr", "reporting"]:
+            assert f'id="tab-{tab}" type="button" role="tab" aria-selected="false" aria-controls="panel-{tab}" tabindex="-1"' in response.text
+        assert 'id="panel-overview" class="tab-panel active" role="tabpanel" aria-labelledby="tab-overview"' in response.text
+        assert 'id="panel-reporting" class="tab-panel" role="tabpanel" aria-labelledby="tab-reporting" data-tab-panel="reporting" hidden' in response.text
+
+
 def test_item_page_separates_title_and_confirmed_mediainfo_tags(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         item_id = _seed_item(client)
@@ -569,6 +608,21 @@ def test_dashboard_search_and_filtered_recheck_preserve_query(tmp_path, monkeypa
         assert "q=Example.Show" in response.headers["location"]
         assert db.get_item(item_id)["status"] == "queued"
         assert db.get_item(other_id)["status"] == "candidate"
+
+
+def test_dashboard_clear_search_preserves_filters_without_query(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_item(client)
+
+        page = client.get("/dashboard?view=candidates&media=episode&missing=DP&valid_for=IHD&q=Example.Show&page=2")
+        first_page = client.get("/dashboard?view=candidates&q=Example.Show")
+
+        expected_href = "/dashboard?view=candidates&amp;page=1&amp;media=episode&amp;missing=DP&amp;valid_for=IHD"
+        assert page.status_code == 200
+        assert page.text.count(f'href="{expected_href}"') == 2
+        assert "q=Example.Show" in page.text
+        assert f'href="{expected_href}&amp;q=' not in page.text
+        assert 'data-local-datetime' in first_page.text
 
 
 def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_path, monkeypatch):
@@ -1305,9 +1359,12 @@ def test_rejected_action_moves_candidate_item_and_creates_report(tmp_path, monke
         row = db.get_item(item_id)
 
         assert page.status_code == 200
-        assert f'href="/items/{item_id}#reporting">Rejected</a>' in page.text
+        assert f'href="/items/{item_id}#reporting">Mark rejected</a>' in page.text
         assert f'action="/items/{item_id}/reject"' in page.text
-        assert "Rejected Reason" in page.text
+        assert "Reject item" in page.text
+        assert "Rejection stage" in page.text
+        assert "Rejection reason" in page.text
+        assert ">Mark rejected</button>" in page.text
         assert response.status_code == 303
         assert row["status"] == "rejected"
         assert row["verdict"] == "moderation_rejected"

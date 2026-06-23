@@ -28,7 +28,7 @@
           </div>
           <p>{{ group.notes or "-" }}</p>
           <p class="muted">
-            Oldest {{ group.oldest_at | datetime }} · Newest {{ group.newest_at | datetime }}
+            Oldest <time datetime="{{ group.oldest_at | datetime_iso }}" data-local-datetime>{{ group.oldest_at | datetime }}</time> · Newest <time datetime="{{ group.newest_at | datetime_iso }}" data-local-datetime>{{ group.newest_at | datetime }}</time>
           </p>
           <div class="report-item-links">
             {% for item in group["items"] %}

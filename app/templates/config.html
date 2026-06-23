@@ -41,7 +41,7 @@
     <div class="form-grid">
       <label>
         URL
-        <input name="qui_url" value="{{ cfg.qui.url }}" placeholder="http://unraid-ip:7476">
+        <input name="qui_url" type="url" inputmode="url" autocomplete="url" spellcheck="false" value="{{ cfg.qui.url }}" placeholder="http://unraid-ip:7476&hellip;">
       </label>
       <label>
         Instance ID
@@ -71,7 +71,7 @@
       </label>
       <label>
         Binary path
-        <input name="mediainfo_binary_path" value="{{ cfg.mediainfo.binary_path }}" placeholder="mediainfo">
+        <input name="mediainfo_binary_path" value="{{ cfg.mediainfo.binary_path }}" autocomplete="off" spellcheck="false" placeholder="mediainfo">
       </label>
       <label>
         Timeout seconds
@@ -85,11 +85,11 @@
     <div class="form-grid">
       <label>
         URL
-        <input name="ua_url" value="{{ cfg.upload_assistant.url }}" placeholder="http://unraid-ip:5000">
+        <input name="ua_url" type="url" inputmode="url" autocomplete="url" spellcheck="false" value="{{ cfg.upload_assistant.url }}" placeholder="http://unraid-ip:5000&hellip;">
       </label>
       <label>
         UA temp path
-        <input name="ua_tmp_path" value="{{ cfg.upload_assistant.tmp_path }}">
+        <input name="ua_tmp_path" value="{{ cfg.upload_assistant.tmp_path }}" autocomplete="off" spellcheck="false">
       </label>
       <label>
         Request timeout seconds
@@ -110,7 +110,7 @@
     <h2>Paths</h2>
     <label>
       Path mappings
-      <textarea name="path_mappings" rows="5">{{ path_mappings }}</textarea>
+      <textarea name="path_mappings" rows="5" autocomplete="off" spellcheck="false">{{ path_mappings }}</textarea>
     </label>
   </section>
 
@@ -133,11 +133,11 @@
     <div class="form-grid">
       <label>
         Excluded category terms
-        <input name="exclude_category_terms" value="{{ exclude_category_terms }}">
+        <input name="exclude_category_terms" value="{{ exclude_category_terms }}" autocomplete="off" spellcheck="false">
       </label>
       <label>
         Excluded tag terms
-        <input name="exclude_tag_terms" value="{{ exclude_tag_terms }}">
+        <input name="exclude_tag_terms" value="{{ exclude_tag_terms }}" autocomplete="off" spellcheck="false">
       </label>
       <label class="checkbox">
         <input name="process_existing_on_first_run" type="checkbox" {% if cfg.watch.process_existing_on_first_run %}checked{% endif %}>
@@ -191,7 +191,7 @@
       </label>
       <label>
         Error backoff minutes
-        <input name="error_backoff_minutes" value="{{ error_backoff_minutes }}">
+        <input name="error_backoff_minutes" value="{{ error_backoff_minutes }}" autocomplete="off" spellcheck="false">
       </label>
     </div>
   </section>
@@ -205,7 +205,7 @@
       </label>
       <label>
         Timezone
-        <input name="maintenance_timezone" value="{{ cfg.maintenance.timezone }}" placeholder="Europe/London">
+        <input name="maintenance_timezone" value="{{ cfg.maintenance.timezone }}" autocomplete="off" spellcheck="false" placeholder="Europe/London">
       </label>
       <label>
         Maintenance start time
@@ -227,7 +227,7 @@
     <div class="form-grid">
       <label>
         Sonarr URL
-        <input name="sonarr_url" value="{{ cfg.sonarr.url }}">
+        <input name="sonarr_url" type="url" inputmode="url" autocomplete="url" spellcheck="false" value="{{ cfg.sonarr.url }}">
       </label>
       <label>
         Sonarr API key {% if secrets.sonarr_api_key %}<span class="saved">saved</span>{% endif %}
@@ -239,7 +239,7 @@
       </label>
       <label>
         Radarr URL
-        <input name="radarr_url" value="{{ cfg.radarr.url }}">
+        <input name="radarr_url" type="url" inputmode="url" autocomplete="url" spellcheck="false" value="{{ cfg.radarr.url }}">
       </label>
       <label>
         Radarr API key {% if secrets.radarr_api_key %}<span class="saved">saved</span>{% endif %}
@@ -251,7 +251,7 @@
       </label>
       <label>
         EasyCross URL
-        <input name="easycross_url" value="{{ cfg.easycross.url }}">
+        <input name="easycross_url" type="url" inputmode="url" autocomplete="url" spellcheck="false" value="{{ cfg.easycross.url }}">
       </label>
       <label>
         EasyCross API key {% if secrets.easycross_api_key %}<span class="saved">saved</span>{% endif %}
@@ -263,7 +263,7 @@
       </label>
       <label>
         Profilarr URL
-        <input name="profilarr_url" value="{{ cfg.profilarr.url }}" placeholder="http://192.168.1.16:6868">
+        <input name="profilarr_url" type="url" inputmode="url" autocomplete="url" spellcheck="false" value="{{ cfg.profilarr.url }}" placeholder="http://192.168.1.16:6868&hellip;">
       </label>
       <label>
         Profilarr API key {% if secrets.profilarr_api_key %}<span class="saved">saved</span>{% endif %}
@@ -284,11 +284,11 @@
           <h3>{{ policy.tracker }}</h3>
           <label>
             Banned release groups
-            <input name="policy_{{ policy.tracker | lower }}_banned" value="{{ policy.banned }}" placeholder="GROUP1, GROUP2">
+            <input name="policy_{{ policy.tracker | lower }}_banned" value="{{ policy.banned }}" autocomplete="off" spellcheck="false" placeholder="GROUP1, GROUP2&hellip;">
           </label>
           <label>
             Ranked release groups
-            <input name="policy_{{ policy.tracker | lower }}_ranked" value="{{ policy.ranked }}" placeholder="BESTGRP, GOODGRP, OKGRP">
+            <input name="policy_{{ policy.tracker | lower }}_ranked" value="{{ policy.ranked }}" autocomplete="off" spellcheck="false" placeholder="BESTGRP, GOODGRP, OKGRP&hellip;">
           </label>
         </div>
       {% endfor %}

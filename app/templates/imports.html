@@ -47,14 +47,14 @@
           <tr>
             <td data-label="Item"><a class="item-title" href="/items/{{ import.item_id }}#upload-assistant">{{ import.item_name }}</a></td>
             <td data-label="Status"><span class="import-state {{ import.status }}">{{ import.status }}</span></td>
-            <td data-label="Queued">{{ import.created_at | datetime }}</td>
-            <td data-label="Updated">{{ import.updated_at | datetime }}</td>
+            <td data-label="Queued"><time datetime="{{ import.created_at | datetime_iso }}" data-local-datetime>{{ import.created_at | datetime }}</time></td>
+            <td data-label="Updated"><time datetime="{{ import.updated_at | datetime_iso }}" data-local-datetime>{{ import.updated_at | datetime }}</time></td>
             <td data-label="Path" class="path-cell">{{ import.path }}</td>
             <td data-label="Arguments" class="path-cell">{{ import.args }}</td>
             <td data-label="Message">{{ import.message or "-" }}</td>
             <td data-label="Actions" class="import-actions">
               {% if import.status in ["pending", "error"] %}
-                <form method="post" action="/imports/{{ import.id }}/cancel">
+                <form method="post" action="/imports/{{ import.id }}/cancel" data-confirm="Remove {{ import.item_name }} from the import queue? It will not run unless queued again.">
                   <input type="hidden" name="view" value="{{ import_view }}">
                   <input type="hidden" name="page" value="{{ pagination.page }}">
                   <button class="button small secondary" type="submit">Remove</button>
@@ -82,11 +82,11 @@
           </div>
           <div class="import-card-fact">
             <span>Queued</span>
-            <strong>{{ import.created_at | datetime }}</strong>
+            <strong><time datetime="{{ import.created_at | datetime_iso }}" data-local-datetime>{{ import.created_at | datetime }}</time></strong>
           </div>
           <div class="import-card-fact">
             <span>Updated</span>
-            <strong>{{ import.updated_at | datetime }}</strong>
+            <strong><time datetime="{{ import.updated_at | datetime_iso }}" data-local-datetime>{{ import.updated_at | datetime }}</time></strong>
           </div>
           <div class="import-card-fact">
             <span>Path</span>
@@ -103,7 +103,7 @@
         </div>
         {% if import.status in ["pending", "error"] %}
           <footer class="import-card-actions">
-            <form method="post" action="/imports/{{ import.id }}/cancel">
+            <form method="post" action="/imports/{{ import.id }}/cancel" data-confirm="Remove {{ import.item_name }} from the import queue? It will not run unless queued again.">
               <input type="hidden" name="view" value="{{ import_view }}">
               <input type="hidden" name="page" value="{{ pagination.page }}">
               <button class="button small secondary" type="submit">Remove</button>
