@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 from pathlib import Path
 
@@ -532,6 +533,19 @@ def test_upload_console_full_snapshots_are_not_terminal_replacements():
     assert 'if (replace) output.innerHTML = "";' not in script
 
 
+def test_upload_console_frontend_start_paths_report_visible_feedback():
+    script = Path("app/static/app.js").read_text()
+
+    assert "Upload Assistant console could not initialize." in script
+    assert "missingControls.join" in script
+    assert "Upload Assistant cannot start for this item right now." in script
+    assert "Upload Assistant is already running." in script
+    assert "Upload Assistant execute URL is missing." in script
+    assert "Upload Assistant stream ended without output." in script
+    assert "const handleLine = (line)" in script
+    assert "appendLine(errorMessage(error), \"error\")" in script
+
+
 def test_submit_buttons_have_tick_feedback_script():
     script = Path("app/static/app.js").read_text()
 
@@ -759,6 +773,38 @@ def test_upload_console_execute_returns_409_when_check_lock_is_busy(tmp_path, mo
 
         assert response.status_code == 409
         assert response.json()["error"] == "Check running"
+
+
+def test_upload_console_execute_stream_emits_start_output_and_finish(tmp_path, monkeypatch):
+    class FakeUploadAssistantClient:
+        def __init__(self, _config, _token):
+            pass
+
+        async def execute_upload_stream(self, path, args, session_id):
+            yield sse_payload("system", f"ua output {path} {args} {session_id}")
+
+    monkeypatch.setattr("app.ua_execution.UploadAssistantClient", FakeUploadAssistantClient)
+
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.upload_assistant.url = "http://ua"
+        client.app.state.config_manager.save(cfg)
+        client.app.state.secrets.set("ua_bearer_token", "token")
+        item_id = _seed_candidate(client)
+
+        response = client.post(f"/api/items/{item_id}/upload-assistant/execute", json={"args": "--trackers dp"})
+
+        assert response.status_code == 200
+        assert response.headers["x-ua-session-id"].startswith(f"whackamole-item-{item_id}-")
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        event_text = [str(event.get("data") or "") for event in events]
+        assert f'Executing Upload Assistant for "/ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP"' in event_text
+        assert any("ua output /ua/movies/Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP --trackers dp" in text for text in event_text)
+        assert "Upload Assistant session finished." in event_text
 
 
 def test_upload_console_session_releases_lock_on_completion(tmp_path, monkeypatch):

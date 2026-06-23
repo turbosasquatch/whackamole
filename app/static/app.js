@@ -496,7 +496,38 @@
     let followingLatest = true;
     let running = Boolean(sessionId);
 
-    if (!output || !argsInput || !executeButton || !clearButton || !killButton || !inputForm || !inputField || !sendButton) {
+    const errorMessage = (error) => error && error.message ? error.message : String(error || "Unknown error");
+    const disableControls = () => {
+      [argsInput, executeButton, autorunButton, queueButton, clearButton, killButton, inputField, sendButton].forEach((node) => {
+        if (node) node.disabled = true;
+      });
+    };
+    const appendInitError = (message) => {
+      if (output) {
+        const line = document.createElement("div");
+        line.className = "console-line error";
+        line.textContent = message;
+        output.appendChild(line);
+        return;
+      }
+      const warning = document.createElement("p");
+      warning.className = "upload-console-warning";
+      warning.textContent = message;
+      consoleRoot.appendChild(warning);
+    };
+
+    const missingControls = [];
+    if (!output) missingControls.push("output");
+    if (!argsInput) missingControls.push("arguments input");
+    if (!executeButton) missingControls.push("execute button");
+    if (!clearButton) missingControls.push("clear button");
+    if (!killButton) missingControls.push("kill button");
+    if (!inputForm) missingControls.push("input form");
+    if (!inputField) missingControls.push("input field");
+    if (!sendButton) missingControls.push("send button");
+    if (missingControls.length) {
+      appendInitError(`Upload Assistant console could not initialize. Missing: ${missingControls.join(", ")}.`);
+      disableControls();
       return;
     }
 
@@ -600,27 +631,29 @@
       }
       const decoder = new TextDecoder();
       let buffer = "";
+      let receivedEvent = false;
+      const handleLine = (line) => {
+        if (!line.startsWith("data: ")) return;
+        receivedEvent = true;
+        try {
+          processEvent(JSON.parse(line.slice(6)));
+        } catch {
+          appendLine(line.slice(6), "system");
+        }
+      };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split("\n");
         buffer = parts.pop() || "";
-        parts.forEach((line) => {
-          if (!line.startsWith("data: ")) return;
-          try {
-            processEvent(JSON.parse(line.slice(6)));
-          } catch {
-            appendLine(line.slice(6), "system");
-          }
-        });
+        parts.forEach(handleLine);
       }
       if (buffer.startsWith("data: ")) {
-        try {
-          processEvent(JSON.parse(buffer.slice(6)));
-        } catch {
-          appendLine(buffer.slice(6), "system");
-        }
+        handleLine(buffer);
+      }
+      if (!receivedEvent) {
+        appendLine("Upload Assistant stream ended without output.", "error");
       }
     };
     const openStream = async (url, options = {}) => {
@@ -640,7 +673,7 @@
         await consumeStream(response);
       } catch (error) {
         if (!streamController || !streamController.signal.aborted) {
-          appendLine(error.message || String(error), "error");
+          appendLine(errorMessage(error), "error");
         }
       } finally {
         streamController = null;
@@ -653,16 +686,32 @@
       return `${trimmed} --unattended`.trim();
     };
     const startUpload = (args) => {
-      if (!canExecute || running) return;
-      output.innerHTML = "";
-      lastFullSnapshotText = "";
-      appendLine("Starting Upload Assistant...");
-      setRunning(true, "Running");
-      openStream(consoleRoot.dataset.executeUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args }),
-      });
+      try {
+        if (running) {
+          appendLine("Upload Assistant is already running.", "system");
+          return;
+        }
+        if (!canExecute) {
+          appendLine("Upload Assistant cannot start for this item right now.", "error");
+          return;
+        }
+        if (!consoleRoot.dataset.executeUrl) {
+          appendLine("Upload Assistant execute URL is missing.", "error");
+          return;
+        }
+        output.innerHTML = "";
+        lastFullSnapshotText = "";
+        appendLine("Starting Upload Assistant...");
+        setRunning(true, "Running");
+        openStream(consoleRoot.dataset.executeUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ args }),
+        });
+      } catch (error) {
+        appendLine(errorMessage(error), "error");
+        setRunning(false, "Idle");
+      }
     };
 
     output.addEventListener("scroll", () => {
@@ -703,7 +752,7 @@
           appendLine(`Queued unattended import #${payload.id}.`, "system");
           setButtonTick(queueButton, "Upload queued");
         } catch (error) {
-          appendLine(error.message || String(error), "error");
+          appendLine(errorMessage(error), "error");
         } finally {
           queueButton.disabled = !canQueue;
         }
@@ -727,7 +776,7 @@
           body: JSON.stringify({ session_id: sessionId }),
         });
       } catch (error) {
-        appendLine(error.message || String(error), "error");
+        appendLine(errorMessage(error), "error");
       }
       if (streamController) streamController.abort();
       output.innerHTML = "";
@@ -755,7 +804,7 @@
           appendLine(payload.error || `Input failed with ${response.status}`, "error");
         }
       } catch (error) {
-        appendLine(error.message || String(error), "error");
+        appendLine(errorMessage(error), "error");
       }
     });
 
