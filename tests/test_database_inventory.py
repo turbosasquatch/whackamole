@@ -72,7 +72,7 @@ def test_coverage_lookup_is_limited_to_requested_group_keys(tmp_path):
     assert [tracker["key"] for tracker in coverage[source["inventory_group_key"]]] == ["DP"]
 
 
-def test_prune_missing_inventory_removes_deleted_coverage_rows(tmp_path):
+def test_mark_missing_from_inventory_skips_deleted_coverage_rows(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     _insert(db, "source", "Example.Show.S01E01.1080p.WEB-DL-GRP")
     _insert(
@@ -87,14 +87,68 @@ def test_prune_missing_inventory_removes_deleted_coverage_rows(tmp_path):
     _insert(db, "candidate", "Candidate.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
     source = db.list_items(["baseline"], limit=1)[0]
 
-    removed = db.prune_missing_inventory(1, ["source", "candidate"])
+    result = db.mark_missing_from_inventory(1, ["source", "candidate"])
     coverage = db.coverage_for_group_keys([source["inventory_group_key"]])
     rows = {row["hash"]: row for row in db.list_items([], limit=20)}
 
-    assert removed == 1
+    assert result == {"items": 1, "reports": 0}
     assert coverage[source["inventory_group_key"]] == []
-    assert "dp-cross" not in rows
+    assert rows["dp-cross"]["status"] == "skipped"
+    assert rows["dp-cross"]["verdict"] == "torrent_missing"
     assert rows["candidate"]["status"] == "candidate"
+
+
+def test_mark_missing_from_inventory_skips_all_reconcile_statuses_and_resolves_reports(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    statuses = [
+        "baseline",
+        "queued",
+        "deferred",
+        "checking",
+        "retry",
+        "candidate",
+        "manual_review",
+        "blocked",
+        "covered",
+        "error",
+        "inventory",
+        "skipped",
+    ]
+    for status in statuses:
+        _insert(db, status, f"Missing.Show.{status}.S01E01.1080p.WEB-DL-GRP", status=status)
+    _insert(db, "ignored", "Ignored.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    ignored_id = int(next(row["id"] for row in db.list_items(["candidate"], limit=20) if row["hash"] == "ignored"))
+    db.ignore(ignored_id, "User ignored")
+    error_id = int(next(row["id"] for row in db.list_items(["error"], limit=20) if row["hash"] == "error"))
+    db.update_status(
+        error_id,
+        "error",
+        "mediainfo_unavailable",
+        "Old MediaInfo error",
+        check_results={"media": {"reason": "Old MediaInfo error"}},
+    )
+    active_report = db.create_report(error_id, "Missing.Show.error.S01E01.1080p.WEB-DL-GRP", "MediaInfo", "bad")
+    attempted_report = db.create_report(error_id, "Missing.Show.error.S01E01.1080p.WEB-DL-GRP", "MediaInfo", "bad again")
+    db.mark_report_attempted(attempted_report)
+
+    result = db.mark_missing_from_inventory(1, [])
+    rows = {row["hash"]: row for row in db.list_items([], limit=50)}
+    checks = json.loads(rows["error"]["check_results"])
+
+    assert result == {"items": len(statuses), "reports": 2}
+    for status in statuses:
+        assert rows[status]["status"] == "skipped"
+        assert rows[status]["verdict"] == "torrent_missing"
+        assert rows[status]["reason"] == "Torrent is no longer present in QUI inventory."
+        assert rows[status]["next_check_at"] is None
+        assert rows[status]["check_stage"] == "done"
+    assert rows["ignored"]["status"] == "ignored"
+    assert rows["ignored"]["ignored_reason"] == "User ignored"
+    assert checks["media"]["reason"] == "Old MediaInfo error"
+    assert checks["inventory_reconcile"]["status"] == "missing"
+    assert checks["decision"]["winning_rule_id"] == "inventory.torrent_missing"
+    assert db.get_report(active_report)["state"] == "resolved"
+    assert db.get_report(attempted_report)["state"] == "resolved"
 
 
 def test_requeue_covered_with_missing_coverage(tmp_path):

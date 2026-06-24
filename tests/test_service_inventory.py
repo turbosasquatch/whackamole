@@ -490,7 +490,7 @@ def test_poll_resolves_existing_candidate_from_current_inventory(tmp_path, monke
     assert row["reason"] == "Covered in QUI: IHD"
 
 
-def test_full_reconcile_removes_deleted_inventory_and_requeues_lost_coverage(tmp_path, monkeypatch):
+def test_full_reconcile_skips_deleted_inventory_and_requeues_lost_coverage(tmp_path, monkeypatch):
     DeletedCoverageQuiClient.calls = []
     monkeypatch.setattr("app.service.QuiClient", DeletedCoverageQuiClient)
     manager = ConfigManager(str(tmp_path))
@@ -550,7 +550,8 @@ def test_full_reconcile_removes_deleted_inventory_and_requeues_lost_coverage(tmp
     row = db.get_item(item_id)
 
     assert DeletedCoverageQuiClient.calls == [0]
-    assert "dp-cross" not in rows
+    assert rows["dp-cross"]["status"] == "skipped"
+    assert rows["dp-cross"]["verdict"] == "torrent_missing"
     assert row["status"] == "queued"
     assert "DP" in row["reason"]
 

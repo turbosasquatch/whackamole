@@ -579,7 +579,6 @@ class WhackamoleService:
         max_pages = _max_qui_poll_pages(cfg)
         fetched = 0
         seen_hashes = set()
-        seen_completed_hashes = set()
         poll_truncated = False
         while page < max_pages:
             data = await client.list_torrents_page(page=page, limit=limit)
@@ -601,7 +600,6 @@ class WhackamoleService:
                     continue
                 if not is_completed_torrent(torrent):
                     continue
-                seen_completed_hashes.add(torrent_hash)
                 content_path = torrent.get("content_path") or torrent.get("contentPath")
                 if not content_path:
                     continue
@@ -667,7 +665,7 @@ class WhackamoleService:
             self.db.set_kv("inventory_done", "true")
         if full_crawl and not poll_truncated:
             self.db.set_kv("inventory_full_crawl_v2_done", "true")
-            self.db.prune_missing_inventory(cfg.qui.instance_id, seen_completed_hashes)
+            self.db.mark_missing_from_inventory(cfg.qui.instance_id, seen_hashes)
             self.db.requeue_covered_with_missing_coverage()
             self.db.set_kv("inventory_reconcile_completed_at", str(int(time.time())))
         elif full_crawl and poll_truncated and full_inventory_done:

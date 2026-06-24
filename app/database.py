@@ -21,6 +21,21 @@ from app.rules import (
 
 REPORT_STATES = {"active", "attempted", "resolved", "deleted"}
 COVERAGE_RESOLUTION_STATUSES = ("candidate", "manual_review", "blocked", "skipped", "error")
+MISSING_INVENTORY_REASON = "Torrent is no longer present in QUI inventory."
+MISSING_INVENTORY_STATUSES = (
+    "baseline",
+    "queued",
+    "deferred",
+    "checking",
+    "retry",
+    "candidate",
+    "manual_review",
+    "blocked",
+    "covered",
+    "error",
+    "inventory",
+    "skipped",
+)
 
 
 _DASHBOARD_COLUMNS = """
@@ -379,6 +394,70 @@ class Database:
                     (instance_id,),
                 )
             return int(cursor.rowcount or 0)
+
+    def mark_missing_from_inventory(self, instance_id: int, seen_hashes: Iterable[str]) -> Dict[str, int]:
+        values = [str(value) for value in dict.fromkeys(seen_hashes) if str(value)]
+        status_placeholders = ",".join("?" for _ in MISSING_INVENTORY_STATUSES)
+        params: List[Any] = [instance_id, *MISSING_INVENTORY_STATUSES]
+        missing_clause = ""
+        if values:
+            hash_placeholders = ",".join("?" for _ in values)
+            missing_clause = f"AND hash NOT IN ({hash_placeholders})"
+            params.extend(values)
+
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, check_results
+                FROM items
+                WHERE instance_id = ?
+                  AND status IN ({status_placeholders})
+                  {missing_clause}
+                """,
+                params,
+            ).fetchall()
+            if not rows:
+                return {"items": 0, "reports": 0}
+
+            now = int(time.time())
+            item_ids = [int(row["id"]) for row in rows]
+            updates = [
+                (
+                    MISSING_INVENTORY_REASON,
+                    json.dumps(_missing_inventory_check_results(row["check_results"], MISSING_INVENTORY_REASON, now)),
+                    now,
+                    int(row["id"]),
+                )
+                for row in rows
+            ]
+            conn.executemany(
+                """
+                UPDATE items
+                SET status = 'skipped',
+                    verdict = 'torrent_missing',
+                    reason = ?,
+                    check_results = ?,
+                    check_stage = 'done',
+                    next_check_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                updates,
+            )
+
+            item_placeholders = ",".join("?" for _ in item_ids)
+            report_cursor = conn.execute(
+                f"""
+                UPDATE item_reports
+                SET state = 'resolved',
+                    updated_at = ?,
+                    resolved_at = ?
+                WHERE state IN ('active', 'attempted')
+                  AND item_id IN ({item_placeholders})
+                """,
+                [now, now, *item_ids],
+            )
+            return {"items": len(updates), "reports": int(report_cursor.rowcount or 0)}
 
     def requeue_covered_with_missing_coverage(self) -> Dict[str, int]:
         with self.connect() as conn:
@@ -2021,6 +2100,47 @@ def _lost_coverage_check_results(
             "reason": reason,
             "lost_trackers": lost_trackers,
             "at": lost_at,
+        }
+    )
+    payload["diagnostics"] = {
+        "stages": stages,
+        "last_error": diagnostics.get("last_error") if isinstance(diagnostics.get("last_error"), dict) else {},
+    }
+    return payload
+
+
+def _missing_inventory_check_results(value: Any, reason: str, missing_at: int) -> Dict[str, Any]:
+    payload = _json_dict(value)
+    payload.setdefault("version", 1)
+    payload["inventory_reconcile"] = {
+        "status": "missing",
+        "reason": reason,
+        "missing_at": missing_at,
+    }
+    payload["decision"] = {
+        "status": "skipped",
+        "verdict": "torrent_missing",
+        "reason": reason,
+        "effect": "skip",
+        "severity": "info",
+        "winning_rule_id": "inventory.torrent_missing",
+        "ruleset_version": RULESET_VERSION,
+        "replayable": True,
+        "retryable": False,
+    }
+    payload["rules"] = []
+    payload["ruleset_version"] = RULESET_VERSION
+
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+    stages = diagnostics.get("stages") if isinstance(diagnostics.get("stages"), list) else []
+    stages = list(stages)
+    stages.append(
+        {
+            "stage": "inventory",
+            "status": "skipped",
+            "verdict": "torrent_missing",
+            "reason": reason,
+            "at": missing_at,
         }
     )
     payload["diagnostics"] = {
