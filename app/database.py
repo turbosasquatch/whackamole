@@ -20,6 +20,7 @@ from app.rules import (
 
 
 REPORT_STATES = {"active", "attempted", "resolved", "deleted"}
+COVERAGE_RESOLUTION_STATUSES = ("candidate", "manual_review", "blocked", "skipped", "error")
 
 
 _DASHBOARD_COLUMNS = """
@@ -770,8 +771,12 @@ class Database:
         }
 
     def resolve_covered_candidates(self) -> Dict[str, int]:
+        placeholders = ",".join("?" for _ in COVERAGE_RESOLUTION_STATUSES)
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM items WHERE status = 'candidate'").fetchall()
+            rows = conn.execute(
+                f"SELECT * FROM items WHERE status IN ({placeholders})",
+                COVERAGE_RESOLUTION_STATUSES,
+            ).fetchall()
         if not rows:
             return {"items": 0, "trackers": 0}
 
@@ -1956,6 +1961,19 @@ def _covered_check_results(
         "resolved_trackers": covered_trackers,
         "resolved_at": resolved_at,
     }
+    payload["decision"] = {
+        "status": "covered",
+        "verdict": "covered",
+        "reason": reason,
+        "effect": "none",
+        "severity": "info",
+        "winning_rule_id": "coverage.resolved",
+        "ruleset_version": RULESET_VERSION,
+        "replayable": True,
+        "retryable": False,
+    }
+    payload["rules"] = []
+    payload["ruleset_version"] = RULESET_VERSION
 
     diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
     stages = diagnostics.get("stages") if isinstance(diagnostics.get("stages"), list) else []

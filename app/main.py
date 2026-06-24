@@ -73,7 +73,7 @@ DASHBOARD_VIEWS = {
     "ignored": ["ignored"],
     "all": [],
 }
-FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "rejected", "blocked", "skipped", "manual"}
+FILTERABLE_VIEWS = {"baseline", "candidates", "covered", "rejected", "blocked", "skipped", "manual", "errors"}
 DASHBOARD_TABS = [
     ("active", "Active", ["queued", "deferred", "checking", "retry"]),
     ("candidates", "Candidates", ["candidate"]),
@@ -2893,6 +2893,7 @@ async def recheck_filtered_items(
         "covered": "covered",
         "rejected": "rejected",
         "blocked": "blocked",
+        "errors": "error",
         "manual": "manual review",
     }[selected]
     reason = (

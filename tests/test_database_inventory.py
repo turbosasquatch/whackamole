@@ -257,6 +257,105 @@ def test_resolve_covered_candidates_falls_back_to_passed_trackers(tmp_path):
     assert '"covered": ["IHD"]' in row["tracker_results"]
 
 
+def test_resolve_covered_candidates_updates_manual_review_when_target_is_now_covered(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    local = "Adolescence.S01.2025.2160p.NF.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-HHWEB"
+    _insert(db, "manual", local, status="manual_review")
+    item_id = int(db.list_items(["manual_review"], limit=1)[0]["id"])
+    db.update_status(
+        item_id,
+        "manual_review",
+        "renamed_release_warning",
+        "Arr found a same-group release on IHD in the same scope with a different release title.",
+        tracker_results={"passed": ["IHD"], "covered": [], "dupe": ["DP", "ULCX"], "skipped": [], "error": []},
+        arr_results={
+            "status": "candidate",
+            "reason": "Valid upload candidate on: IHD",
+            "decisions": [{"tracker": "IHD", "status": "candidate", "reason": "ok"}],
+        },
+        check_results={
+            "version": 1,
+            "decision": {
+                "status": "manual_review",
+                "verdict": "renamed_release_warning",
+                "reason": "Arr found a same-group release on IHD in the same scope with a different release title.",
+                "effect": "review",
+                "severity": "warning",
+                "winning_rule_id": "review.rename_check",
+            },
+            "rename_detection": {
+                "status": "manual_review",
+                "confidence": "high",
+                "reason": "Arr found a same-group release on IHD in the same scope with a different release title.",
+                "evidence": [{"kind": "same_group_arr_title_mismatch", "tracker": "IHD"}],
+            },
+        },
+    )
+    _insert(
+        db,
+        "ihd-upload",
+        local,
+        status="inventory",
+        category="uploads",
+        tags="upload",
+        path_prefix="/media/torrents/uploads/IHD",
+    )
+
+    resolved = db.resolve_covered_candidates()
+    row = db.get_item(item_id)
+    tracker_results = json.loads(row["tracker_results"])
+    arr_results = json.loads(row["arr_results"])
+    check_results = json.loads(row["check_results"])
+
+    assert resolved == {"items": 1, "trackers": 1}
+    assert row["status"] == "covered"
+    assert row["verdict"] == "covered"
+    assert tracker_results["passed"] == []
+    assert tracker_results["covered"] == ["IHD"]
+    assert arr_results["decisions"][0]["status"] == "covered"
+    assert check_results["coverage_resolution"]["resolved_trackers"] == ["IHD"]
+    assert check_results["decision"]["status"] == "covered"
+    assert check_results["decision"]["winning_rule_id"] == "coverage.resolved"
+    assert check_results["rename_detection"]["status"] == "manual_review"
+
+
+def test_resolve_covered_candidates_keeps_manual_review_until_all_targets_are_covered(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "manual", "Partial.Show.S01E01.1080p.WEB-DL-GRP", status="manual_review")
+    item_id = int(db.list_items(["manual_review"], limit=1)[0]["id"])
+    db.update_status(
+        item_id,
+        "manual_review",
+        "renamed_release_warning",
+        "Review before upload.",
+        tracker_results={"passed": ["IHD", "ULCX"], "covered": [], "dupe": [], "skipped": [], "error": []},
+        arr_results={
+            "status": "candidate",
+            "reason": "Valid upload candidate on: IHD, ULCX",
+            "decisions": [
+                {"tracker": "IHD", "status": "candidate", "reason": "ok"},
+                {"tracker": "ULCX", "status": "candidate", "reason": "ok"},
+            ],
+        },
+    )
+    _insert(
+        db,
+        "ihd-upload",
+        "Partial.Show.S01E01.1080p.WEB-DL-GRP",
+        status="inventory",
+        category="uploads",
+        tags="upload",
+        path_prefix="/media/torrents/uploads/IHD",
+    )
+
+    resolved = db.resolve_covered_candidates()
+    row = db.get_item(item_id)
+
+    assert resolved == {"items": 0, "trackers": 0}
+    assert row["status"] == "manual_review"
+    assert json.loads(row["tracker_results"])["passed"] == ["IHD", "ULCX"]
+
+
 def test_reapply_release_group_policy_updates_candidate_without_recheck(tmp_path):
     db = Database(str(tmp_path / "whackamole.db"))
     _insert(db, "candidate", "Policy.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")

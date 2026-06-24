@@ -1008,6 +1008,41 @@ def test_filtered_recheck_endpoint_requeues_candidate_view(tmp_path, monkeypatch
         assert row["reason"] == "Bulk recheck requested from candidate filtered set"
 
 
+def test_filtered_recheck_endpoint_requeues_errors_view(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        db.insert_discovered(
+            1,
+            {
+                "hash": "errored-filter",
+                "name": "Errored.Show.S01E01.1080p.WEB-DL-GRP",
+                "category": "tv",
+                "tags": "",
+                "content_path": "/media/torrents/tv/Errored.Show.S01E01.1080p.WEB-DL-GRP",
+                "progress": 1,
+            },
+            status="error",
+            baseline=False,
+        )
+        item_id = int(db.list_items(["error"], limit=1)[0]["id"])
+
+        page = client.get("/dashboard?view=errors")
+        response = client.post(
+            "/items/recheck-filtered",
+            data={"view": "errors", "media": "episode"},
+            follow_redirects=False,
+        )
+        row = db.get_item(item_id)
+
+        assert page.status_code == 200
+        assert 'name="view" value="errors"' in page.text
+        assert 'type="submit" >Run check on found set</button>' in page.text
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/dashboard?view=errors")
+        assert row["status"] == "queued"
+        assert row["reason"] == "Bulk recheck requested from error filtered set"
+
+
 def test_items_api_filters_by_multi_media_missing_and_valid_for(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
