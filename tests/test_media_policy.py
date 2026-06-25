@@ -489,6 +489,89 @@ def test_mediainfo_provider_disagreement_treats_aac_and_he_aac_as_same_family():
     assert not any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
 
 
+def test_mediainfo_provider_channel_disagreement_uses_primary_audio_title_confirmation():
+    release = "Tunnelen.2019.1080p.BluRay.DD+7.1.x264-LoRD"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "804", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6", "Title": "DD+Plus 7.1 ch"},
+                    {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "804", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "8"},
+                    {"@type": "Text", "Format": "UTF-8", "Language": "en"},
+                ],
+            }
+        ],
+    )
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert merged["status"] == "passed"
+    assert merged["verdict"] == "mediainfo_passed"
+    assert any(issue["key"] == "audio_channels_mismatch" for issue in merged["resolved_mediainfo_issues"])
+    assert not any(issue["key"] == "audio_channels_mismatch" for issue in merged["issues"])
+    assert not any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
+    assert "7.1" in merged["media_tags"]
+    assert {tag["label"]: tag["state"] for tag in merged["title_tag_matches"]}["7.1"] == "match"
+
+
+def test_mediainfo_provider_channel_disagreement_requires_review_without_primary_audio_title_confirmation():
+    release = "Movie.2024.1080p.BluRay.DD+7.1.x264-GRP"
+    files = [{"index": 0, "name": f"{release}/{release}.mkv", "size": 1000}]
+    qui = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "6"},
+                ],
+            }
+        ],
+    )
+    local = analyze_mediainfo(
+        item_name=release,
+        files=files,
+        mediainfo_payloads=[
+            {
+                "fileIndex": 0,
+                "relativePath": f"{release}/{release}.mkv",
+                "streams": [
+                    {"@type": "Video", "Format": "AVC", "Width": "1920", "Height": "1080", "ScanType": "Progressive"},
+                    {"@type": "Audio", "Format": "E-AC-3", "Channels": "8"},
+                ],
+            }
+        ],
+    )
+
+    merged = merge_mediainfo_provider_results(qui, local)
+
+    assert merged["status"] == "manual_review"
+    assert any(issue["key"] == "mediainfo_provider_disagreement" for issue in merged["issues"])
+
+
 def test_video_file_payloads_ignore_nfo_files():
     files = [
         {"name": "Release/one.nfo"},

@@ -5,7 +5,12 @@ from pathlib import PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from app.check_results import empty_check_results, merge_check_results
-from app.media_identity import analyze_media_payloads, extract_release_group, media_display_fields_from_files
+from app.media_identity import (
+    analyze_media_payloads,
+    extract_release_group,
+    media_display_fields_from_files,
+    parse_release_traits,
+)
 
 
 VIDEO_EXTENSIONS = {".avi", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
@@ -199,6 +204,11 @@ def _issue_confirmed_by_media_sources(
         objects = _merged_audio_objects(supplemental_matches)
         message = str(issue.get("message") or "")
         return any(audio_object in objects and audio_object in message for audio_object in objects)
+    if key == "audio_channels_mismatch":
+        expected = _issue_expected_audio_channels(issue)
+        return bool(expected) and any(
+            _channels_equal(_file_trait_value(item, "audio_channels"), expected) for item in supplemental_matches
+        )
     return False
 
 
@@ -230,6 +240,22 @@ def _merged_audio_objects(files: Sequence[Mapping[str, Any]]) -> set[str]:
     return objects
 
 
+def _issue_expected_audio_channels(issue: Mapping[str, Any]) -> float:
+    message = str(issue.get("message") or "")
+    match = re.search(r"Name says\s+(\d+(?:\.\d+)?)", message)
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return 0.0
+
+
+def _file_trait_value(file_result: Mapping[str, Any], field: str) -> Any:
+    traits = file_result.get("traits") if isinstance(file_result.get("traits"), Mapping) else {}
+    return traits.get(field)
+
+
 def _provider_disagreement_issues(
     primary: Mapping[str, Any],
     supplemental: Mapping[str, Any],
@@ -246,6 +272,7 @@ def _provider_disagreement_issues(
         if isinstance(item, Mapping)
     } if isinstance(supplemental.get("mediainfo_files"), list) else {}
     issues: List[Dict[str, Any]] = []
+    expected_channels = _result_expected_audio_channels(primary) or _result_expected_audio_channels(supplemental)
     for index, primary_file in primary_files.items():
         supplemental_file = supplemental_files.get(index)
         if not supplemental_file:
@@ -261,6 +288,12 @@ def _provider_disagreement_issues(
             left = primary_traits.get(field)
             right = supplemental_traits.get(field)
             if left and right and left != right:
+                if (
+                    field == "audio_channels"
+                    and _channels_equal(right, expected_channels)
+                    and _audio_title_confirms_channels(primary_file, right)
+                ):
+                    continue
                 disagreements.append(f"{label}: QUI={left}, {supplemental_label}={right}")
         left_audio = str(primary_traits.get("audio_format") or "")
         right_audio = str(supplemental_traits.get("audio_format") or "")
@@ -292,6 +325,7 @@ def _provider_disagreement_labels(primary: Mapping[str, Any], supplemental: Mapp
         if isinstance(item, Mapping)
     } if isinstance(supplemental.get("mediainfo_files"), list) else {}
     labels: List[str] = []
+    expected_channels = _result_expected_audio_channels(primary) or _result_expected_audio_channels(supplemental)
     for index, primary_file in primary_files.items():
         supplemental_file = supplemental_files.get(index)
         if not supplemental_file:
@@ -302,6 +336,12 @@ def _provider_disagreement_labels(primary: Mapping[str, Any], supplemental: Mapp
             left = primary_traits.get(field)
             right = supplemental_traits.get(field)
             if left and right and left != right:
+                if (
+                    field == "audio_channels"
+                    and _channels_equal(right, expected_channels)
+                    and _audio_title_confirms_channels(primary_file, right)
+                ):
+                    continue
                 labels.extend([_provider_display_label(field, left), _provider_display_label(field, right)])
         left_audio = str(primary_traits.get("audio_format") or "")
         right_audio = str(supplemental_traits.get("audio_format") or "")
@@ -329,6 +369,38 @@ def _dedupe_labels(values: Sequence[str]) -> List[str]:
         seen.add(label)
         labels.append(label)
     return labels
+
+
+def _result_expected_audio_channels(result: Mapping[str, Any]) -> float:
+    local_traits = result.get("local_traits") if isinstance(result.get("local_traits"), Mapping) else {}
+    value = local_traits.get("audio_channels")
+    if value:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+    return parse_release_traits(str(result.get("release_title") or result.get("torrent_root") or "")).audio_channels
+
+
+def _audio_title_confirms_channels(file_result: Mapping[str, Any], expected: Any) -> bool:
+    if not expected:
+        return False
+    audios = file_result.get("audio") if isinstance(file_result.get("audio"), list) else []
+    default_audio = file_result.get("default_audio") if isinstance(file_result.get("default_audio"), Mapping) else {}
+    for audio in [*audios, default_audio]:
+        if not isinstance(audio, Mapping):
+            continue
+        title = str(audio.get("title") or audio.get("Title") or "").strip()
+        if title and _channels_equal(parse_release_traits(title).audio_channels, expected):
+            return True
+    return False
+
+
+def _channels_equal(left: Any, right: Any) -> bool:
+    try:
+        return abs(float(left) - float(right)) < 0.01
+    except (TypeError, ValueError):
+        return False
 
 
 def _audio_provider_family(value: str) -> str:
