@@ -1460,6 +1460,45 @@ def test_reports_page_groups_duplicates_and_sidebar_counts_open_reports(tmp_path
         assert "Prompt hung" in page.text
 
 
+def test_reports_page_splits_active_tracker_moderation_and_rejected_views(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        db = client.app.state.db
+        db.create_report(item_id, "Example Item", "MediaInfo", "Audio tags look wrong")
+        db.create_report(item_id, "Example Item", "Tracker Moderation", "Renamed file")
+        db.insert_discovered(
+            2,
+            {
+                "hash": "rejected123",
+                "name": "Rejected.Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
+                "category": "movies",
+                "tags": "upload",
+                "content_path": "/media/torrents/movies/rejected.mkv",
+                "size": 123456789,
+            },
+            status="queued",
+            baseline=False,
+        )
+        rejected_item_id = next(
+            int(row["id"]) for row in db.list_items([], limit=10) if row["name"].startswith("Rejected.Movie")
+        )
+        db.reject_item(rejected_item_id, "Upload Assistant", "Rejected by moderator")
+
+        active = client.get("/reports")
+        tracker = client.get("/reports?state=tracker_moderation")
+        rejected = client.get("/reports?state=rejected")
+
+        assert active.status_code == 200
+        assert 'href="/reports?state=tracker_moderation"' in active.text
+        assert 'href="/reports?state=rejected"' in active.text
+        assert "Audio tags look wrong" in active.text
+        assert "Renamed file" not in active.text
+        assert "Rejected by moderator" not in active.text
+        assert "Renamed file" in tracker.text
+        assert "Audio tags look wrong" not in tracker.text
+        assert "Rejected by moderator" in rejected.text
+
+
 def test_report_group_attempt_form_marks_duplicates_attempted(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         item_id = _seed_item(client)

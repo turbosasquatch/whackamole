@@ -152,9 +152,12 @@ REPORTING_STAGES = [
 ]
 REPORT_TABS = [
     {"key": "active", "label": "Active"},
+    {"key": "tracker_moderation", "label": "Tracker Moderation"},
+    {"key": "rejected", "label": "Rejected"},
     {"key": "attempted", "label": "Attempted"},
     {"key": "resolved", "label": "Resolved"},
 ]
+REPORT_VIEW_KEYS = {tab["key"] for tab in REPORT_TABS}
 
 def _format_datetime(value: Optional[int]) -> str:
     if not value:
@@ -1387,6 +1390,39 @@ def _sanitize_report_state(value: str, default: str = "active") -> str:
     return text if text in REPORT_STATES else default
 
 
+def _sanitize_report_view(value: str, default: str = "active") -> str:
+    text = str(value or "").strip().lower()
+    return text if text in REPORT_VIEW_KEYS else default
+
+
+def _report_query_for_view(view: str) -> Dict[str, Any]:
+    if view == "tracker_moderation":
+        return {"state": "active", "stage": "Tracker Moderation"}
+    if view == "rejected":
+        return {"state": "active", "item_status": "rejected"}
+    if view == "active":
+        return {"state": "active", "exclude_stage": "Tracker Moderation", "exclude_item_status": "rejected"}
+    return {"state": view if view in REPORT_STATES else "active"}
+
+
+def _report_tab_counts(db: Database) -> Dict[str, int]:
+    counts = db.report_counts()
+    return {
+        "active": db.report_count(**_report_query_for_view("active")),
+        "tracker_moderation": db.report_count(**_report_query_for_view("tracker_moderation")),
+        "rejected": db.report_count(**_report_query_for_view("rejected")),
+        "attempted": int(counts.get("attempted") or 0),
+        "resolved": int(counts.get("resolved") or 0),
+    }
+
+
+def _report_tab_label(key: str) -> str:
+    for tab in REPORT_TABS:
+        if tab["key"] == key:
+            return str(tab["label"])
+    return key.replace("_", " ").title()
+
+
 def _sanitize_report_stage(value: str) -> str:
     text = str(value or "").strip()
     return text if text in REPORTING_STAGES else "Other"
@@ -2472,9 +2508,12 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
 
 @app.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request, state_filter: str = Query("active", alias="state")) -> HTMLResponse:
-    state_value = _sanitize_report_state(state_filter)
-    reports = [_report_payload(report) for report in request.app.state.db.list_reports(state=state_value, limit=500)]
-    counts = request.app.state.db.report_counts()
+    state_value = _sanitize_report_view(state_filter)
+    reports = [
+        _report_payload(report)
+        for report in request.app.state.db.list_reports(**_report_query_for_view(state_value), limit=500)
+    ]
+    counts = _report_tab_counts(request.app.state.db)
     return templates.TemplateResponse(
         request,
         "reports.html",
@@ -2482,6 +2521,7 @@ async def reports_page(request: Request, state_filter: str = Query("active", ali
             **_shell_context(request, section="reports", view="reports"),
             "request": request,
             "report_state": state_value,
+            "report_empty_label": _report_tab_label(state_value).lower(),
             "report_tabs": REPORT_TABS,
             "report_counts": counts,
             "report_groups": _report_groups(reports),

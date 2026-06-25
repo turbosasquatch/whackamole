@@ -1308,6 +1308,15 @@ tr:last-child td {
   gap: 0.75rem;
 }
 
+.reports-heading > div {
+  width: 100%;
+}
+
+.report-tabs {
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
 .report-tabs .button {
   gap: 0.45rem;
 }

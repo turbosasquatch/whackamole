@@ -1627,25 +1627,86 @@ class Database:
             )
             return int(cur.lastrowid)
 
-    def list_reports(self, state: str = "active", item_id: Optional[int] = None, limit: int = 200) -> List[sqlite3.Row]:
+    def list_reports(
+        self,
+        state: str = "active",
+        item_id: Optional[int] = None,
+        limit: int = 200,
+        stage: Optional[str] = None,
+        exclude_stage: Optional[str] = None,
+        item_status: Optional[str] = None,
+        exclude_item_status: Optional[str] = None,
+    ) -> List[sqlite3.Row]:
         state = state if state in REPORT_STATES else "active"
-        clauses = ["state = ?"]
+        clauses = ["item_reports.state = ?"]
         params: List[Any] = [state]
         if item_id is not None:
-            clauses.append("item_id = ?")
+            clauses.append("item_reports.item_id = ?")
             params.append(int(item_id))
+        if stage is not None:
+            clauses.append("item_reports.stage = ?")
+            params.append(str(stage))
+        if exclude_stage is not None:
+            clauses.append("item_reports.stage != ?")
+            params.append(str(exclude_stage))
+        if item_status is not None:
+            clauses.append("items.status = ?")
+            params.append(str(item_status))
+        if exclude_item_status is not None:
+            clauses.append("(items.status IS NULL OR items.status != ?)")
+            params.append(str(exclude_item_status))
         params.append(int(limit))
         with self.connect() as conn:
             return conn.execute(
                 f"""
-                SELECT *
+                SELECT item_reports.*
                 FROM item_reports
+                LEFT JOIN items ON items.id = item_reports.item_id
                 WHERE {' AND '.join(clauses)}
-                ORDER BY updated_at DESC, id DESC
+                ORDER BY item_reports.updated_at DESC, item_reports.id DESC
                 LIMIT ?
                 """,
                 params,
             ).fetchall()
+
+    def report_count(
+        self,
+        state: str = "active",
+        item_id: Optional[int] = None,
+        stage: Optional[str] = None,
+        exclude_stage: Optional[str] = None,
+        item_status: Optional[str] = None,
+        exclude_item_status: Optional[str] = None,
+    ) -> int:
+        state = state if state in REPORT_STATES else "active"
+        clauses = ["item_reports.state = ?"]
+        params: List[Any] = [state]
+        if item_id is not None:
+            clauses.append("item_reports.item_id = ?")
+            params.append(int(item_id))
+        if stage is not None:
+            clauses.append("item_reports.stage = ?")
+            params.append(str(stage))
+        if exclude_stage is not None:
+            clauses.append("item_reports.stage != ?")
+            params.append(str(exclude_stage))
+        if item_status is not None:
+            clauses.append("items.status = ?")
+            params.append(str(item_status))
+        if exclude_item_status is not None:
+            clauses.append("(items.status IS NULL OR items.status != ?)")
+            params.append(str(exclude_item_status))
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM item_reports
+                LEFT JOIN items ON items.id = item_reports.item_id
+                WHERE {' AND '.join(clauses)}
+                """,
+                params,
+            ).fetchone()
+        return int(row["count"] or 0) if row is not None else 0
 
     def report_counts(self, item_id: Optional[int] = None) -> Dict[str, int]:
         params: List[Any] = []

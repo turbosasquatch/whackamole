@@ -3,18 +3,18 @@
 {% block page_label %}Reports{% endblock %}
 {% block content %}
 <section class="details-panel reports-panel">
-  <div class="panel-heading">
+  <div class="panel-heading reports-heading">
     <div>
       <span class="eyebrow">Report Triage</span>
       <h2>Reported Issues</h2>
-    </div>
-    <div class="button-row report-tabs">
-      {% for tab in report_tabs %}
-        <a class="button small {% if report_state != tab.key %}secondary{% endif %}" href="/reports?state={{ tab.key }}">
-          {{ tab.label }}
-          <span class="button-count">{{ report_counts[tab.key] }}</span>
-        </a>
-      {% endfor %}
+      <div class="button-row report-tabs" aria-label="Report views">
+        {% for tab in report_tabs %}
+          <a class="button small {% if report_state != tab.key %}secondary{% endif %}" href="/reports?state={{ tab.key }}"{% if report_state == tab.key %} aria-current="page"{% endif %}>
+            {{ tab.label }}
+            <span class="button-count">{{ report_counts[tab.key] }}</span>
+          </a>
+        {% endfor %}
+      </div>
     </div>
   </div>
 
@@ -55,7 +55,7 @@
         </div>
       </article>
     {% else %}
-      <p class="muted">No {{ report_state }} reports.</p>
+      <p class="muted">No {{ report_empty_label }} reports.</p>
     {% endfor %}
   </div>
 </section>
