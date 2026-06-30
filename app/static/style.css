@@ -2852,6 +2852,21 @@ dd {
     min-width: 0;
   }
 
+  .topbar-title {
+    min-width: 0;
+  }
+
+  .topbar-title > span {
+    display: none;
+  }
+
+  .topbar-title strong,
+  .topbar-title span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .topbar-actions {
     flex: 0 0 auto;
     flex-wrap: nowrap;
@@ -3072,11 +3087,12 @@ dd {
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     display: grid;
-    gap: 8px;
+    gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin: 0;
     max-width: 100%;
     min-width: 0;
-    padding: 14px;
+    padding: 12px;
   }
 
   .media-list-table td {
@@ -3088,21 +3104,40 @@ dd {
     text-align: left;
   }
 
-  .media-list-table td[data-label="Title"],
+  .media-list-table td[data-label="Title"] {
+    display: block;
+    grid-column: 1 / 2;
+    grid-row: 1;
+  }
+
+  .media-list-table td[data-label="Status"] {
+    display: block;
+    grid-column: 2 / 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .media-list-table td[data-label="Flags"],
+  .media-list-table td[data-label="Decision Notice"],
+  .media-list-table td[data-label="Coverage"],
   .media-list-table td[data-label="Actions"],
   .media-list-table td.empty {
     grid-column: 1 / -1;
   }
 
+  .media-list-table td[data-label="Flags"],
+  .media-list-table td[data-label="Coverage"],
+  .media-list-table td[data-label="Actions"] {
+    display: block;
+  }
+
   .media-list-table td[data-label="Title"]::before,
+  .media-list-table td[data-label="Status"]::before,
+  .media-list-table td[data-label="Flags"]::before,
+  .media-list-table td[data-label="Coverage"]::before,
   .media-list-table td[data-label="Actions"]::before,
   .media-list-table td.empty::before {
     content: none;
-  }
-
-  .media-list-table td[data-label="Title"] {
-    border-bottom: 1px solid var(--line);
-    padding-bottom: 10px !important;
   }
 
   .media-list-table .item-title {
@@ -3122,6 +3157,32 @@ dd {
   .media-list-table .coverage-badges {
     flex-wrap: wrap;
     overflow: visible;
+  }
+
+  .media-list-table td[data-label="Source"],
+  .media-list-table td[data-label="Category"],
+  .media-list-table td[data-label="Size"],
+  .media-list-table td[data-label="Updated"] {
+    color: var(--muted);
+    display: block;
+    font-size: var(--text-sm);
+  }
+
+  .media-list-table td[data-label="Source"]::before,
+  .media-list-table td[data-label="Category"]::before,
+  .media-list-table td[data-label="Size"]::before,
+  .media-list-table td[data-label="Updated"]::before {
+    content: none;
+  }
+
+  .media-list-table td[data-label="Category"]::before,
+  .media-list-table td[data-label="Updated"]::before {
+    content: "\00b7 ";
+    color: var(--muted);
+  }
+
+  .media-list-table .row-actions {
+    justify-content: flex-end;
   }
 
   .item-hero .hero-actions {
