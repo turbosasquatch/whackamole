@@ -124,7 +124,7 @@
     <p class="mobile-list-count">Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total }}</p>
 
     <div class="table-wrap media-table" aria-label="Media table">
-      <table data-resizable-table="{% if problem_view %}media-problem{% else %}media-standard{% endif %}">
+      <table class="responsive-table media-list-table" data-resizable-table="{% if problem_view %}media-problem{% else %}media-standard{% endif %}">
         <colgroup>
           <col data-column-key="title">
           <col data-column-key="flags">
@@ -152,16 +152,17 @@
             <th data-column-key="category">Category</th>
             <th data-column-key="size">Size</th>
             <th data-column-key="updated">Updated</th>
-            <th data-column-key="actions">Upload</th>
+            <th data-column-key="actions">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for item in items %}
+            {% set active_import = item.active_import or {} %}
             <tr>
-              <td>
+              <td data-label="Title">
                 <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
               </td>
-              <td>
+              <td data-label="Flags">
                 <div class="flag-stack">
                   {% for flag in item.alert_tags %}
                     <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
@@ -170,11 +171,11 @@
                   {% endfor %}
                 </div>
               </td>
-              <td><span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span></td>
+              <td data-label="Status"><span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span></td>
               {% if problem_view %}
-              <td><span class="muted clamp">{{ item.decision_notice or "-" }}</span></td>
+              <td data-label="Decision Notice"><span class="muted clamp">{{ item.decision_notice or "-" }}</span></td>
               {% endif %}
-              <td>
+              <td data-label="Coverage">
                 <div class="coverage-badges">
                   {% for tracker in item.tracker_coverage %}
                     <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
@@ -183,28 +184,31 @@
                   {% endfor %}
                 </div>
               </td>
-              <td>{{ item.source_label }}</td>
-              <td>
-                {{ item.category or "-" }}
-              </td>
-              <td>{{ item.size | bytes }}</td>
-              <td><time datetime="{{ item.updated_at | datetime_iso }}" data-local-datetime>{{ item.updated_at | datetime }}</time></td>
-              <td>
-                {% set active_import = item.active_import or {} %}
-                <form
-                  method="post"
-                  action="/items/{{ item.id }}/upload-assistant/queue"
-                  data-submit-tick="Upload queued"
-                  data-submit-error-label="Retry"
-                  data-queue-upload-form
-                  data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
-                  data-queued-import-id="{{ active_import.id or '' }}"
-                >
-                  <input type="hidden" name="return_to" value="{{ current_url }}">
-                  <button class="button small success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
-                    {% if active_import %}Queued{% else %}Upload{% endif %}
-                  </button>
-                </form>
+              <td data-label="Source">{{ item.source_label }}</td>
+              <td data-label="Category">{{ item.category or "-" }}</td>
+              <td data-label="Size">{{ item.size | bytes }}</td>
+              <td data-label="Updated"><time datetime="{{ item.updated_at | datetime_iso }}" data-local-datetime>{{ item.updated_at | datetime }}</time></td>
+              <td data-label="Actions">
+                <div class="row-actions">
+                  <form
+                    method="post"
+                    action="/items/{{ item.id }}/upload-assistant/queue"
+                    data-submit-tick="Upload queued"
+                    data-submit-error-label="Retry"
+                    data-queue-upload-form
+                    data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
+                    data-queued-import-id="{{ active_import.id or '' }}"
+                  >
+                    <input type="hidden" name="return_to" value="{{ current_url }}">
+                    <button class="button small success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
+                      {% if active_import %}Queued{% else %}Upload{% endif %}
+                    </button>
+                  </form>
+                  <form method="post" action="/items/{{ item.id }}/ignore" data-ignore-item-form data-submit-tick="Ignored" data-submit-error-label="Retry">
+                    <input type="hidden" name="return_to" value="{{ current_url }}">
+                    <button class="button small secondary" type="submit" data-submit-tick-button>Ignore</button>
+                  </form>
+                </div>
               </td>
             </tr>
           {% else %}
@@ -217,58 +221,6 @@
           {% endfor %}
         </tbody>
       </table>
-    </div>
-
-    <div class="media-cards" aria-label="Media cards">
-      {% for item in items %}
-        <article class="media-card">
-          <header>
-            <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
-            <span class="pill status-{{ item.display_status.group }}">{{ item.display_status.label }}</span>
-          </header>
-          <div class="flag-stack">
-            {% for flag in item.alert_tags %}
-              <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
-            {% endfor %}
-          </div>
-          {% if problem_view %}
-            {% if item.decision_notice %}<p class="muted">{{ item.decision_notice }}</p>{% endif %}
-          {% endif %}
-          <footer class="card-tracker-row">
-            <div class="coverage-badges">
-              {% for tracker in item.tracker_coverage %}
-                <span class="coverage-badge {% if tracker.state == 'not-valid' %}missing-default {% endif %}{{ tracker.state }}">{{ tracker.label }}</span>
-              {% endfor %}
-            </div>
-            {% set active_import = item.active_import or {} %}
-            <div class="card-actions">
-              <form method="post" action="/items/{{ item.id }}/ignore" data-ignore-item-form data-submit-tick="Ignored" data-submit-error-label="Retry">
-                <input type="hidden" name="return_to" value="{{ current_url }}">
-                <button class="button small secondary" type="submit" data-submit-tick-button>Ignore</button>
-              </form>
-              <form
-                method="post"
-                action="/items/{{ item.id }}/upload-assistant/queue"
-                data-submit-tick="Upload queued"
-                data-submit-error-label="Retry"
-                data-queue-upload-form
-                data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
-                data-queued-import-id="{{ active_import.id or '' }}"
-              >
-                  <input type="hidden" name="return_to" value="{{ current_url }}">
-                  <button class="button small success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
-                    {% if active_import %}Queued{% else %}Upload{% endif %}
-                  </button>
-              </form>
-            </div>
-          </footer>
-        </article>
-      {% else %}
-        <section class="empty-card">
-          <strong>No items in this view.</strong>
-          <span>Try another status, clear search, or loosen the coverage filters.</span>
-        </section>
-      {% endfor %}
     </div>
 
     {% if pagination.prev_url or pagination.next_url %}

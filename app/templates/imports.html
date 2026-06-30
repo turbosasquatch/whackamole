@@ -71,51 +71,6 @@
     </table>
   </div>
 
-  <div class="imports-cards" aria-label="Queued import cards">
-    {% for import in imports %}
-      <article class="import-card">
-        <a class="item-title" href="/items/{{ import.item_id }}#upload-assistant">{{ import.item_name }}</a>
-        <div class="import-card-facts">
-          <div class="import-card-fact">
-            <span>Status</span>
-            <strong><span class="import-state {{ import.status }}">{{ import.status }}</span></strong>
-          </div>
-          <div class="import-card-fact">
-            <span>Queued</span>
-            <strong><time datetime="{{ import.created_at | datetime_iso }}" data-local-datetime>{{ import.created_at | datetime }}</time></strong>
-          </div>
-          <div class="import-card-fact">
-            <span>Updated</span>
-            <strong><time datetime="{{ import.updated_at | datetime_iso }}" data-local-datetime>{{ import.updated_at | datetime }}</time></strong>
-          </div>
-          <div class="import-card-fact">
-            <span>Path</span>
-            <strong>{{ import.path }}</strong>
-          </div>
-          <div class="import-card-fact">
-            <span>Arguments</span>
-            <strong>{{ import.args }}</strong>
-          </div>
-          <div class="import-card-fact">
-            <span>Message</span>
-            <strong>{{ import.message or "-" }}</strong>
-          </div>
-        </div>
-        {% if import.status in ["pending", "error"] %}
-          <footer class="import-card-actions">
-            <form method="post" action="/imports/{{ import.id }}/cancel" data-confirm="Remove {{ import.item_name }} from the import queue? It will not run unless queued again.">
-              <input type="hidden" name="view" value="{{ import_view }}">
-              <input type="hidden" name="page" value="{{ pagination.page }}">
-              <button class="button small secondary" type="submit">Remove</button>
-            </form>
-          </footer>
-        {% endif %}
-      </article>
-    {% else %}
-      <section class="empty-card">No imports in this tab.</section>
-    {% endfor %}
-  </div>
-
   {% if pagination.show %}
     <nav class="pagination" aria-label="Import pagination">
       {% if pagination.prev_url %}

@@ -760,7 +760,7 @@ def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monke
         page = client.get("/dashboard?view=candidates")
 
         assert page.status_code == 200
-        assert '<th data-column-key="actions">Upload</th>' in page.text
+        assert '<th data-column-key="actions">Actions</th>' in page.text
         assert f'data-queued-import-id="{import_id}"' in page.text
         assert "Queued" in page.text
         assert "disabled" in page.text

@@ -4,8 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul13">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul15" defer></script>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+          var theme = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          if (theme === "dark") {
+            document.documentElement.setAttribute("data-theme", "dark");
+          }
+        } catch (error) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul14">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul16" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -105,6 +116,10 @@
               <button class="button secondary small mobile-search-toggle" type="button" data-search-open>Search</button>
             {% endif %}
             {% block topbar_actions %}{% endblock %}
+            <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
+              <span class="theme-toggle-icon theme-toggle-icon-light" aria-hidden="true">&#9728;</span>
+              <span class="theme-toggle-icon theme-toggle-icon-dark" aria-hidden="true">&#9789;</span>
+            </button>
             {% if service is defined %}
               {% set service_errors = service.service_errors or [] %}
               <div class="notification-menu" data-notification-menu>

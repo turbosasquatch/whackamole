@@ -429,22 +429,39 @@ def test_notification_polling_updates_service_events():
     assert "Service errors" not in template
 
 
-def test_mobile_import_cards_use_two_column_fact_grid():
+def test_mobile_imports_use_single_responsive_table_not_duplicate_cards():
     styles = Path("app/static/style.css").read_text()
     template = Path("app/templates/imports.html").read_text()
 
-    assert "imports-cards" in template
-    assert "import-card-facts" in template
-    assert ".imports-panel {\n  display: grid;\n  gap: 12px;" in styles
+    # Imports renders one responsive table; the duplicate mobile card markup is gone.
+    assert "imports-cards" not in template
+    assert "import-card-facts" not in template
+    # Each cell carries the label the responsive CSS surfaces when the table stacks.
+    assert 'data-label="Path"' in template
+    assert 'data-label="Status"' in template
+    assert 'data-label="Arguments"' in template
+    # The imports table still collapses into stacked cards on narrow screens.
     assert ".import-tabs" in styles
     assert ".import-tabs .button" in styles
-    assert "gap: 0.45rem;" in styles
     assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in styles
-    assert ".import-card" in styles
-    assert "padding: 14px;" in styles
-    assert ".import-card-facts" in styles
+    assert ".imports-table tr {" in styles
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
-    assert ".imports-table-wrap {\n    display: none;" in styles
+    # The table itself stays visible and stacks via responsive CSS (no card duplicate to swap to).
+    assert ".imports-table-wrap {\n    display: none;" not in styles
+
+
+def test_dashboard_renders_single_responsive_table_with_mobile_labels():
+    template = Path("app/templates/dashboard.html").read_text()
+
+    # The dashboard no longer authors a separate mobile card block that can drift.
+    assert "media-cards" not in template
+    assert "media-card" not in template
+    # The single table is responsive and labels every cell so mobile keeps every field.
+    assert "responsive-table media-list-table" in template
+    for label in ["Title", "Status", "Coverage", "Source", "Category", "Size", "Updated"]:
+        assert f'data-label="{label}"' in template
+    # Source in particular must be present on every viewport (the reported bug).
+    assert 'data-label="Source">{{ item.source_label }}</td>' in template
 
 
 def test_ui_guideline_static_styles_cover_motion_touch_and_tokens():

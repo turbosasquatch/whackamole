@@ -63,6 +63,23 @@
 
   formatLocalDateTimes();
 
+  function setTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    storage.setItem("theme", theme);
+    document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+      button.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+    });
+  }
+
+  document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+    const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    button.setAttribute("aria-pressed", current === "dark" ? "true" : "false");
+    button.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      setTheme(next);
+    });
+  });
+
   function setSidebar(collapsed) {
     if (!shell) return;
     shell.classList.toggle("sidebar-collapsed", collapsed);
