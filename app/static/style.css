@@ -3228,6 +3228,7 @@ dd {
   .media-list-table td[data-label="Updated"]::before {
     content: "\00b7 ";
     color: var(--muted);
+    display: inline;
   }
 
   .media-list-table .row-actions {
