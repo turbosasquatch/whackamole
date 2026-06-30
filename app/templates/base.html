@@ -15,8 +15,8 @@
         } catch (error) {}
       })();
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul15">
-    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul16" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=ui-overhaul17">
+    <script src="{{ url_for('static', path='app.js') }}?v=ui-overhaul18" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -46,6 +46,15 @@
         <div class="sidebar-footer">
           <a class="sidebar-link {% if section == 'settings' %}active{% endif %}" href="/config">Settings</a>
           {% if service is defined %}
+            <button
+              class="sidebar-toggle-row"
+              type="button"
+              data-auto-upload-toggle
+              aria-pressed="{{ 'true' if service.auto_upload_enabled else 'false' }}"
+            >
+              <span>Auto Upload</span>
+              <span class="switch" aria-hidden="true"></span>
+            </button>
             <form
               class="sidebar-maintenance"
               method="post"

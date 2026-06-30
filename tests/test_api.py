@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from starlette.middleware.gzip import GZipMiddleware
 
 import app.main as main_module
+import app.upload_console as upload_console_module
 from app.main import app
 
 
@@ -89,7 +90,7 @@ def test_dashboard_check_results_does_not_scan_raw_mediainfo_payloads(monkeypatc
     def fail_raw_scan(*args, **kwargs):
         raise AssertionError("dashboard check parsing should not recursively scan raw MediaInfo")
 
-    monkeypatch.setattr(main_module, "_collect_source_provider_fields", fail_raw_scan)
+    monkeypatch.setattr(upload_console_module, "_collect_source_provider_fields", fail_raw_scan)
     payload = {
         "media": {
             "status": "passed",

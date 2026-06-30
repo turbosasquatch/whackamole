@@ -1,0 +1,56 @@
+config_version: 3
+host: 0.0.0.0
+port: 8383
+qui:
+  url: ''
+  instance_id: 1
+  page_limit: 200
+upload_assistant:
+  url: ''
+  tmp_path: /ua-tmp
+  request_timeout_seconds: 3600
+path_mappings:
+- source: /media/torrents
+  target: /data/torrents
+watch:
+  exclude_category_terms:
+  - cross
+  exclude_tag_terms:
+  - cross-seed
+  process_existing_on_first_run: false
+safety:
+  poll_interval_seconds: 60
+  max_queue_size: 250
+  max_concurrent_ua_jobs: 1
+  min_seconds_between_ua_jobs: 120
+  arr_search_timeout_seconds: 300
+  recheck_cooldown_hours: 24
+  max_error_retries: 3
+  error_backoff_minutes:
+  - 15
+  - 60
+  - 360
+maintenance:
+  enabled: true
+  timezone: Europe/London
+  start_time: 05:00
+  lead_minutes: 30
+  resume_signal: qui_down_up
+sonarr:
+  url: ''
+radarr:
+  url: ''
+easycross:
+  url: ''
+profilarr:
+  url: ''
+tracker_policies:
+  DP:
+    banned_release_groups: []
+    ranked_release_groups: []
+  ULCX:
+    banned_release_groups: []
+    ranked_release_groups: []
+  IHD:
+    banned_release_groups: []
+    ranked_release_groups: []

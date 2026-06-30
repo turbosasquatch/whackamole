@@ -150,3 +150,54 @@ def test_fetch_reported_items_pulls_open_reports_and_items():
     assert report["items"][1]["item_id"] == 11
     assert [item["id"] for item in report["items"][1]["reports"]] == [3]
     assert report["summary"]["fetch_errors"] == 0
+
+
+def test_fetch_reported_items_uses_fallback_when_primary_unreachable():
+    primary_url = "http://primary.test"
+    fallback_url = "http://fallback.test"
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if str(request.url).startswith(primary_url):
+            raise httpx.ConnectError("primary unavailable", request=request)
+        if str(request.url) == f"{fallback_url}/api/reports?state=active&limit=500":
+            return httpx.Response(
+                200,
+                json={
+                    "reports": [
+                        {"id": 1, "item_id": 10, "stage": "Rules", "notes": "Fallback item", "state": "active"},
+                    ],
+                    "state": "active",
+                    "count": 1,
+                },
+            )
+        if str(request.url) == f"{fallback_url}/api/reports?state=attempted&limit=500":
+            return httpx.Response(200, json={"reports": [], "state": "attempted", "count": 0})
+        if str(request.url) == f"{fallback_url}/api/items/10":
+            return httpx.Response(
+                200,
+                json={
+                    "id": 10,
+                    "name": "Fallback.Movie.2026.1080p.WEB-DL-GRP",
+                    "status": "candidate",
+                    "verdict": "candidate",
+                    "reason": "Valid upload candidate on: DP",
+                    "tracker_results": {"passed": ["DP"], "covered": [], "dupe": [], "skipped": [], "error": []},
+                    "checks": {"arr": {"status": "candidate", "decisions": [{"tracker": "DP", "status": "candidate"}]}},
+                },
+            )
+        return httpx.Response(404, json={"detail": "not mocked"})
+
+    transport = httpx.MockTransport(handler)
+    report = fetch_reported_items(
+        base_url=primary_url,
+        fallback_url=fallback_url,
+        token="token",
+        client_factory=lambda **kwargs: httpx.Client(transport=transport, **kwargs),
+    )
+
+    assert seen[0] == f"{primary_url}/api/reports?state=active&limit=500"
+    assert f"{fallback_url}/api/items/10" in seen
+    assert report["base_url"] == fallback_url
+    assert report["item_count"] == 1

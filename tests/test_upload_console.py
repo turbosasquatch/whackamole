@@ -10,6 +10,7 @@ from app.database import Database
 from app.main import app
 from app.service import WhackamoleService
 from app.ua_execution import UaExecutionCoordinator, UaExecutionOwner, UploadConsoleManager, sse_payload
+from app.upload_console import resolve_path_and_args
 
 
 def _client(tmp_path, monkeypatch):
@@ -1110,6 +1111,61 @@ def test_mobile_notification_popout_uses_fixed_viewport_positioning():
     assert ".notification-popout" in styles
     assert "position: fixed;" in styles
     assert "max-height: calc(100dvh - 92px);" in styles
+
+
+def test_resolve_path_and_args_builds_trackers_and_service_flag():
+    item = {
+        "name": "Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP",
+        "status": "candidate",
+        "mapped_path": "/media/torrents/shows/Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP",
+        "content_path": "/media/torrents/shows/Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP",
+        "discovarr_local_traits": {},
+    }
+    tracker_groups = {"passed": ["dp"]}
+    arr_result = {"decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}]}
+    check_results = {"media": {}}
+
+    path, args = resolve_path_and_args(item, tracker_groups, arr_result, check_results)
+
+    assert path == item["mapped_path"]
+    assert "--trackers dp" in args
+    assert "--unattended" in args
+
+
+def test_resolve_path_and_args_is_idempotent_when_unattended_already_present():
+    item = {
+        "name": "Movie.2026.1080p.BluRay.x264-GRP",
+        "status": "candidate",
+        "mapped_path": "/media/torrents/movies/Movie.2026.1080p.BluRay.x264-GRP",
+        "content_path": "/media/torrents/movies/Movie.2026.1080p.BluRay.x264-GRP",
+        "discovarr_local_traits": {},
+    }
+    tracker_groups = {"passed": []}
+    arr_result = {}
+    check_results = {"release_group_policy": {"candidate_trackers": ["DP"]}, "media": {}}
+
+    _, args = resolve_path_and_args(item, tracker_groups, arr_result, check_results)
+
+    assert args.count("--unattended") == 1
+
+
+def test_auto_upload_setting_get_and_post_roundtrip(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        response = client.get("/api/settings/auto-upload")
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False}
+
+        response = client.post("/api/settings/auto-upload", json={"enabled": True})
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "enabled": True}
+        assert client.app.state.db.get_kv("auto_upload_enabled") == "true"
+
+        response = client.get("/api/settings/auto-upload")
+        assert response.json() == {"enabled": True}
+
+        response = client.post("/api/settings/auto-upload", json={"enabled": False})
+        assert response.json() == {"success": True, "enabled": False}
+        assert client.app.state.db.get_kv("auto_upload_enabled") == "false"
 
 
 class AppConfigManagerStub:

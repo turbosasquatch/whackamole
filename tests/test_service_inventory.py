@@ -1531,3 +1531,135 @@ def test_rename_check_reviews_double_dot_episode_title_without_srrdb(tmp_path, m
     assert row["verdict"] == "renamed_release_warning"
     assert checks["rename_detection"]["status"] == "manual_review"
     assert any(item["kind"] == "empty_title_token" for item in checks["rename_detection"]["evidence"])
+
+
+def _setup_candidate_check(tmp_path, monkeypatch, release_title="Example.Show.S01E01.1080p.WEB-DL.DDP2.0.H.264-GRP"):
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_title}/{release_title}.mkv", "size": 1000},
+    ]
+    MediaQuiClient.mediainfo = {
+        "fileIndex": 0,
+        "streams": [
+            {"@type": "Video", "Format": "AVC", "Height": "1080", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "E-AC-3", "Channels": "2"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = None
+    PassingUploadAssistantClient.calls = 0
+    FakeSrrdbClient.calls = []
+    FakeSrrdbClient.payload = {}
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+    monkeypatch.setattr("app.service.SrrdbClient", FakeSrrdbClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+    return manager, secrets, db, item_id
+
+
+def test_auto_upload_enabled_queues_candidate_with_unattended_args(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    secrets.set("ua_bearer_token", "token")
+    db.set_kv("auto_upload_enabled", "true")
+
+    run_calls = []
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+
+        async def fake_run_queued_import():
+            run_calls.append(True)
+
+        service.run_queued_import = fake_run_queued_import
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "candidate"
+    rows = db.list_imports()
+    assert len(rows) == 1
+    assert rows[0]["item_id"] == item_id
+    assert "--unattended" in rows[0]["args"]
+    assert run_calls == [True]
+
+
+def test_auto_upload_disabled_does_not_queue(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    secrets.set("ua_bearer_token", "token")
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "candidate"
+    assert db.list_imports() == []
+
+
+def test_auto_upload_skips_when_ua_not_configured(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    db.set_kv("auto_upload_enabled", "true")
+    # Note: ua_bearer_token deliberately left unset.
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "candidate"
+    assert db.list_imports() == []
+
+
+def test_auto_upload_does_not_duplicate_when_import_already_active(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    secrets.set("ua_bearer_token", "token")
+    db.set_kv("auto_upload_enabled", "true")
+    db.enqueue_import(item_id=item_id, item_name="existing", path="/media/existing", args="--unattended")
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+
+        async def fail_run_queued_import():
+            raise AssertionError("should not trigger a second run when an import is already active")
+
+        service.run_queued_import = fail_run_queued_import
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "candidate"
+    rows = db.list_imports()
+    assert len(rows) == 1
+
+
+def test_auto_upload_toggle_alone_does_not_sweep_existing_candidates(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    secrets.set("ua_bearer_token", "token")
+    db.update_status(item_id, "candidate", "candidate", "Valid upload candidate on: DP")
+
+    db.set_kv("auto_upload_enabled", "true")
+
+    row = db.get_item(item_id)
+    assert row["status"] == "candidate"
+    assert db.list_imports() == []

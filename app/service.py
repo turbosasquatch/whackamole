@@ -44,6 +44,7 @@ from app.rules import apply_decision_payload, evaluate_decision
 from app.srrdb import apply_srrdb_result, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
+from app.upload_console import resolve_path_and_args
 
 
 INVENTORY_RECONCILE_INTERVAL_SECONDS = 15 * 60
@@ -775,6 +776,7 @@ class WhackamoleService:
             "service_errors": self.db.service_error_history(),
             "baseline_done": self.db.get_kv("baseline_done") == "true",
             "inventory_done": self.db.get_kv("inventory_done") == "true",
+            "auto_upload_enabled": self.db.get_kv("auto_upload_enabled") == "true",
             "inventory_count": self.db.count_items([]),
             "queue": self.db.queue_counts(),
             "imports": self.db.queued_import_counts(),
@@ -1585,6 +1587,39 @@ class WhackamoleService:
             next_check_at=next_check_at,
             increment_attempt=True,
         )
+
+        if decision.status == "candidate":
+            await self._maybe_auto_queue_upload(
+                item_id, item, mapped_path, reduction.tracker_results, arr_results, check_results
+            )
+
+    async def _maybe_auto_queue_upload(
+        self,
+        item_id: int,
+        item: Mapping[str, Any],
+        mapped_path: str,
+        tracker_groups: Dict[str, Any],
+        arr_results: Dict[str, Any],
+        check_results: Dict[str, Any],
+    ) -> None:
+        if self.db.get_kv("auto_upload_enabled") != "true":
+            return
+        cfg = self.config_manager.load()
+        if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
+            return
+        if self.db.active_import_for_item(item_id) is not None:
+            return
+        row = {**dict(item), "mapped_path": mapped_path}
+        path, args = resolve_path_and_args(row, tracker_groups, arr_results, check_results)
+        if not path:
+            return
+        self.db.enqueue_import(
+            item_id=item_id,
+            item_name=str(item["name"] or f"Item {item_id}"),
+            path=path,
+            args=args,
+        )
+        await self.request_queued_import_run()
 
     def _next_error_check(self, attempt_count: int, retry_after: Optional[str]) -> int:
         cfg = self.config_manager.load()

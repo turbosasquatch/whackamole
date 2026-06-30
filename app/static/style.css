@@ -376,6 +376,55 @@ td,
   width: 100%;
 }
 
+.sidebar-toggle-row {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ink);
+  display: flex;
+  font: inherit;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 7px 10px;
+  transition: background-color 0.16s ease;
+}
+
+.sidebar-toggle-row:hover {
+  background: var(--surface-soft);
+}
+
+.sidebar-toggle-row .switch {
+  background: var(--line-strong);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  height: 18px;
+  position: relative;
+  transition: background-color 0.16s ease;
+  width: 32px;
+}
+
+.sidebar-toggle-row .switch::after {
+  background: #fff;
+  border-radius: 50%;
+  content: "";
+  height: 14px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 0.16s ease;
+  width: 14px;
+}
+
+.sidebar-toggle-row[aria-pressed="true"] .switch {
+  background: var(--primary);
+}
+
+.sidebar-toggle-row[aria-pressed="true"] .switch::after {
+  transform: translateX(14px);
+}
+
 .app-main {
   display: flex;
   flex-direction: column;

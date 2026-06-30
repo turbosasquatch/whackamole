@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -17,6 +16,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.rules import RULESET_VERSION, evaluate_decision
+from tools.live_api import DEFAULT_LIVE_ENV_PATH, live_api_settings
 
 
 DEFAULT_BASE_URL = "http://100.72.6.46:9393"
@@ -32,6 +32,7 @@ class ReplaySource:
 def fetch_reported_items(
     *,
     base_url: str,
+    fallback_url: str = "",
     token: str,
     report_state: str = "open",
     report_limit: int = 500,
@@ -40,6 +41,41 @@ def fetch_reported_items(
     client_factory: Any = httpx.Client,
 ) -> Dict[str, Any]:
     base_url = base_url.rstrip("/")
+    fallback_url = fallback_url.rstrip("/")
+    try:
+        return _fetch_reported_items_from_base(
+            base_url=base_url,
+            token=token,
+            report_state=report_state,
+            report_limit=report_limit,
+            item_ids=item_ids,
+            timeout=timeout,
+            client_factory=client_factory,
+        )
+    except httpx.TransportError:
+        if not fallback_url or fallback_url == base_url:
+            raise
+        return _fetch_reported_items_from_base(
+            base_url=fallback_url,
+            token=token,
+            report_state=report_state,
+            report_limit=report_limit,
+            item_ids=item_ids,
+            timeout=timeout,
+            client_factory=client_factory,
+        )
+
+
+def _fetch_reported_items_from_base(
+    *,
+    base_url: str,
+    token: str,
+    report_state: str,
+    report_limit: int,
+    item_ids: Optional[Iterable[int]],
+    timeout: float,
+    client_factory: Any,
+) -> Dict[str, Any]:
     report_limit = min(max(1, int(report_limit)), 500)
     explicit_ids = [int(value) for value in (item_ids or [])]
 
@@ -179,29 +215,54 @@ def print_summary(report: Mapping[str, Any], output_path: Path) -> None:
     print(f"Report written: {output_path}")
 
 
+def print_verbose_items(report: Mapping[str, Any]) -> None:
+    for item in report.get("items", []) if isinstance(report.get("items"), list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        replayed = _dict_value(item.get("replayed"))
+        current = _dict_value(item.get("current"))
+        print(
+            "  "
+            f"{int(item.get('item_id') or 0)} | "
+            f"{str(item.get('outcome') or '')} | "
+            f"{str(current.get('status') or '-')} -> {str(replayed.get('status') or '-')} | "
+            f"{str(item.get('name') or '')}"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Replay live Whackamole report items against local rule code.")
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"Live Whackamole base URL. Default: {DEFAULT_BASE_URL}")
+    parser.add_argument("--base-url", default="", help=f"Live Whackamole base URL. Defaults to env file, then {DEFAULT_BASE_URL}")
+    parser.add_argument("--fallback-url", default="", help="Fallback live Whackamole base URL. Defaults to env file.")
     parser.add_argument("--token-env", default="WHACKAMOLE_API_TOKEN", help="Environment variable containing the API token.")
+    parser.add_argument("--env-file", type=Path, default=DEFAULT_LIVE_ENV_PATH, help="Local env file to load.")
     parser.add_argument("--report-state", default="open", help="Report state to pull. 'open' fetches active and attempted. Default: open")
     parser.add_argument("--report-limit", type=int, default=500, help="Maximum reports to pull, capped at 500.")
     parser.add_argument("--item-id", action="append", type=int, default=[], help="Extra item id to fetch even if it has no report.")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help=f"JSON report path. Default: {DEFAULT_OUTPUT}")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds.")
+    parser.add_argument("--verbose", action="store_true", help="Print per-item replay summaries.")
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    token = os.getenv(args.token_env, "").strip()
-    if not token:
-        print(f"Missing API token. Set {args.token_env}.", file=sys.stderr)
+    settings = live_api_settings(
+        base_url=args.base_url,
+        fallback_url=args.fallback_url,
+        token_env=args.token_env,
+        env_path=args.env_file,
+        default_base_url=DEFAULT_BASE_URL,
+    )
+    if not settings.token:
+        print(f"Missing API token. Set {args.token_env} or {args.env_file}.", file=sys.stderr)
         return 2
 
     try:
         report = fetch_reported_items(
-            base_url=args.base_url,
-            token=token,
+            base_url=settings.base_url,
+            fallback_url=settings.fallback_url,
+            token=settings.token,
             report_state=args.report_state,
             report_limit=args.report_limit,
             item_ids=args.item_id,
@@ -216,6 +277,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     output_path = write_report(report, args.output)
     print_summary(report, output_path)
+    if args.verbose:
+        print_verbose_items(report)
     return 1 if int(_dict_value(report.get("summary")).get("fetch_errors") or 0) else 0
 
 

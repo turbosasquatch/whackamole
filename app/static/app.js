@@ -80,6 +80,27 @@
     });
   });
 
+  document.querySelectorAll("[data-auto-upload-toggle]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const next = button.getAttribute("aria-pressed") !== "true";
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/settings/auto-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: next }),
+        });
+        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+        const payload = await response.json();
+        button.setAttribute("aria-pressed", payload.enabled ? "true" : "false");
+      } catch (error) {
+        // leave aria-pressed unchanged on failure
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
   function setSidebar(collapsed) {
     if (!shell) return;
     shell.classList.toggle("sidebar-collapsed", collapsed);
