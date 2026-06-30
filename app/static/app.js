@@ -295,6 +295,7 @@
   });
 
   document.querySelectorAll("[data-resizable-table]").forEach((table) => {
+    if (window.matchMedia("(max-width: 860px)").matches) return;
     const key = `whackamole.table.${table.dataset.resizableTable}.widths`;
     const headers = Array.from(table.querySelectorAll("th[data-column-key]"));
     const columns = new Map(Array.from(table.querySelectorAll("col[data-column-key]")).map((column) => [column.dataset.columnKey, column]));

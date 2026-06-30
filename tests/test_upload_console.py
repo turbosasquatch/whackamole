@@ -457,9 +457,10 @@ def test_dashboard_renders_single_responsive_table_with_mobile_labels():
     # The dashboard no longer authors a separate mobile card block that can drift.
     assert "media-cards" not in template
     assert "media-card" not in template
-    # The single table is responsive and labels every cell so mobile keeps every field.
-    assert "responsive-table media-list-table" in template
-    for label in ["Title", "Status", "Coverage", "Source", "Category", "Size", "Updated"]:
+    # The media table gets its own dedicated mobile card treatment (not the shared
+    # .responsive-table label/value stacking, which fought its grid layout).
+    assert 'class="media-list-table"' in template
+    for label in ["Title", "Status", "Coverage", "Source", "Size"]:
         assert f'data-label="{label}"' in template
     # Source in particular must be present on every viewport (the reported bug).
     assert 'data-label="Source">{{ item.source_label }}</td>' in template
@@ -520,13 +521,11 @@ def test_destructive_actions_have_confirmations_and_settings_inputs_are_semantic
     item_template = Path("app/templates/item.html").read_text()
     config_template = Path("app/templates/config.html").read_text()
     base_template = Path("app/templates/base.html").read_text()
-    dashboard_template = Path("app/templates/dashboard.html").read_text()
     reports_template = Path("app/templates/reports.html").read_text()
 
     assert "data-confirm=\"Remove {{ import.item_name }} from the import queue?" in imports_template
     assert 'action="/reports/{{ report.id }}/delete" data-confirm=' in item_template
     assert 'href="{{ clear_search_url }}" aria-label="Clear search"' in base_template
-    assert '<time datetime="{{ item.updated_at | datetime_iso }}" data-local-datetime>' in dashboard_template
     assert '<time datetime="{{ import.created_at | datetime_iso }}" data-local-datetime>' in imports_template
     assert '<time datetime="{{ group.oldest_at | datetime_iso }}" data-local-datetime>' in reports_template
     assert '<time datetime="{{ error.last_seen_at | datetime_iso }}" data-local-datetime>' in base_template

@@ -124,7 +124,7 @@
     <p class="mobile-list-count">Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total }}</p>
 
     <div class="table-wrap media-table" aria-label="Media table">
-      <table class="responsive-table media-list-table" data-resizable-table="{% if problem_view %}media-problem{% else %}media-standard{% endif %}">
+      <table class="media-list-table" data-resizable-table="{% if problem_view %}media-problem{% else %}media-standard{% endif %}">
         <colgroup>
           <col data-column-key="title">
           <col data-column-key="flags">
@@ -134,9 +134,7 @@
           {% endif %}
           <col data-column-key="coverage">
           <col data-column-key="source">
-          <col data-column-key="category">
           <col data-column-key="size">
-          <col data-column-key="updated">
           <col data-column-key="actions">
         </colgroup>
         <thead>
@@ -149,9 +147,7 @@
             {% endif %}
             <th data-column-key="coverage">Coverage</th>
             <th data-column-key="source">Source</th>
-            <th data-column-key="category">Category</th>
             <th data-column-key="size">Size</th>
-            <th data-column-key="updated">Updated</th>
             <th data-column-key="actions">Actions</th>
           </tr>
         </thead>
@@ -185,9 +181,7 @@
                 </div>
               </td>
               <td data-label="Source">{{ item.source_label }}</td>
-              <td data-label="Category">{{ item.category or "-" }}</td>
               <td data-label="Size">{{ item.size | bytes }}</td>
-              <td data-label="Updated"><time datetime="{{ item.updated_at | datetime_iso }}" data-local-datetime>{{ item.updated_at | datetime }}</time></td>
               <td data-label="Actions">
                 <div class="row-actions">
                   <form

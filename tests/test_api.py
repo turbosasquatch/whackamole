@@ -623,7 +623,8 @@ def test_dashboard_clear_search_preserves_filters_without_query(tmp_path, monkey
         assert page.text.count(f'href="{expected_href}"') == 2
         assert "q=Example.Show" in page.text
         assert f'href="{expected_href}&amp;q=' not in page.text
-        assert 'data-local-datetime' in first_page.text
+        assert first_page.status_code == 200
+        assert "Example.Show" in first_page.text
 
 
 def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_path, monkeypatch):
