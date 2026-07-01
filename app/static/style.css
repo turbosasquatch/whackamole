@@ -272,7 +272,7 @@ textarea {
 
 .sidebar-nav {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   overflow-y: auto;
   padding: 8px 10px;
 }
@@ -281,14 +281,26 @@ textarea {
 .filter-view-list a,
 .sidebar-link {
   align-items: center;
-  border-radius: 7px;
+  border-radius: 10px;
   color: var(--ink);
   display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  min-height: 34px;
-  padding: 7px 10px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 12px;
   transition: background-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease, filter 0.16s ease;
+}
+
+.sidebar-nav a span {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sidebar-nav-icon {
+  color: var(--muted);
+  flex: 0 0 auto;
+  height: 18px;
+  width: 18px;
 }
 
 .sidebar-nav a:hover,
@@ -298,23 +310,39 @@ textarea {
   text-decoration: none;
 }
 
+.sidebar-nav a[data-tone="error"] .sidebar-nav-icon { color: var(--red); }
+.sidebar-nav a[data-tone="warn"] .sidebar-nav-icon { color: var(--amber); }
+.sidebar-nav a[data-tone="success"] .sidebar-nav-icon { color: var(--green); }
+
 .sidebar-nav a.active,
 .filter-view-list a.active,
 .sidebar-link.active {
-  background: var(--ink);
-  color: #fff;
+  background: var(--badge-blue-bg);
+  color: var(--primary-dark);
+}
+
+.sidebar-nav a.active .sidebar-nav-icon,
+.filter-view-list a.active .sidebar-nav-icon {
+  color: var(--primary);
 }
 
 .sidebar-nav strong,
 .filter-view-list strong {
-  background: rgba(100, 116, 139, 0.14);
+  background: var(--surface-strong);
   border-radius: 999px;
+  color: var(--muted);
+  flex: 0 0 auto;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  font-weight: 800;
   min-width: 26px;
-  padding: 2px 7px;
+  padding: 3px 7px;
   text-align: center;
 }
+
+.sidebar-nav strong.error { background: var(--red-bg); color: var(--red); }
+.sidebar-nav strong.warn { background: var(--amber-bg); color: var(--amber); }
+.sidebar-nav strong.success { background: var(--green-bg); color: var(--green); }
 
 .button-count,
 .compact-count,
@@ -329,7 +357,8 @@ td,
 
 .sidebar-nav a.active strong,
 .filter-view-list a.active strong {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--primary);
+  color: #fff;
 }
 
 .sidebar-footer {
@@ -342,11 +371,34 @@ td,
 
 .sidebar-status {
   align-items: center;
+  border-radius: 999px;
   color: var(--muted);
   display: flex;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 800;
   gap: 8px;
-  padding: 0 10px 6px;
+  justify-content: center;
+  padding: 9px 10px;
+}
+
+.sidebar-status:has(.state-dot.ok) {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.sidebar-status:has(.state-dot.warn) {
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+
+.sidebar-status:has(.state-dot.run) {
+  background: var(--badge-blue-bg);
+  color: var(--primary-dark);
+}
+
+.sidebar-status:has(.state-dot.bad) {
+  background: var(--red-bg);
+  color: var(--red);
 }
 
 .state-dot {
@@ -964,6 +1016,7 @@ a:focus-visible {
 }
 
 .filter-panel {
+  align-content: start;
   display: grid;
   gap: 8px;
   height: 100%;
@@ -1012,6 +1065,10 @@ a:focus-visible {
 .file-list {
   display: grid;
   gap: 9px;
+}
+
+.filter-form {
+  align-content: start;
 }
 
 .baseline-filters fieldset {
@@ -1115,6 +1172,7 @@ label {
 .filter-accordion-label {
   font-size: 14px;
   font-weight: 800;
+  line-height: 1;
 }
 
 .filter-accordion-count {
