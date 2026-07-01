@@ -764,7 +764,7 @@ def test_candidate_dashboard_marks_items_already_in_upload_queue(tmp_path, monke
         assert page.status_code == 200
         assert '<th data-column-key="actions">Actions</th>' in page.text
         assert f'data-queued-import-id="{import_id}"' in page.text
-        assert "Queued" in page.text
+        assert 'aria-label="Upload queued"' in page.text
         assert "disabled" in page.text
 
 

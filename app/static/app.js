@@ -211,7 +211,7 @@
 
   document.querySelectorAll("form[data-submit-tick]").forEach((form) => {
     form.addEventListener("submit", () => {
-      if (form.matches("[data-queue-upload-form], [data-ignore-item-form]")) return;
+      if (form.matches("[data-queue-upload-form], [data-ignore-item-form], [data-recheck-item-form]")) return;
       const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
       setButtonTick(button, form.dataset.submitTick || "Done");
     });
@@ -219,8 +219,8 @@
 
   document.querySelectorAll("form[data-queue-upload-form]").forEach((form) => {
     const initialButton = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
-    if (initialButton && !initialButton.dataset.originalLabel) {
-      initialButton.dataset.originalLabel = initialButton.textContent.trim();
+    if (initialButton && !initialButton.dataset.originalHtml) {
+      initialButton.dataset.originalHtml = initialButton.innerHTML;
     }
     if (form.dataset.queuedImportId && initialButton) {
       setButtonTick(initialButton, form.dataset.submitTick || "Upload queued");
@@ -231,7 +231,6 @@
       const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
       if (!queueUrl || !button || !window.fetch) return;
       event.preventDefault();
-      const originalLabel = button.dataset.originalLabel || button.textContent.trim() || "Upload";
       button.disabled = true;
       try {
         const response = await fetch(queueUrl, {
@@ -250,7 +249,9 @@
       } catch (error) {
         const message = error.message || "Queue failed";
         button.disabled = false;
-        button.textContent = form.dataset.submitErrorLabel || originalLabel || "Retry";
+        if (button.dataset.originalHtml) {
+          button.innerHTML = button.dataset.originalHtml;
+        }
         button.title = message;
         button.setAttribute("aria-label", message);
       }
@@ -259,17 +260,14 @@
 
   document.querySelectorAll("form[data-ignore-item-form]").forEach((form) => {
     const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
-    if (button && !button.dataset.originalLabel) {
-      button.dataset.originalLabel = button.textContent.trim();
+    if (button && !button.dataset.originalHtml) {
+      button.dataset.originalHtml = button.innerHTML;
     }
     form.addEventListener("submit", async (event) => {
       if (!button || !window.fetch || !window.FormData) return;
       event.preventDefault();
-      const originalLabel = button.dataset.originalLabel || button.textContent.trim() || "Ignore";
       button.disabled = true;
-      button.textContent = "Ignoring";
-      button.removeAttribute("title");
-      button.removeAttribute("aria-label");
+      button.setAttribute("aria-label", "Ignoring");
       try {
         const response = await fetch(form.action, {
           method: "POST",
@@ -278,16 +276,49 @@
         if (!response.ok) {
           throw new Error(`Ignore failed with ${response.status}`);
         }
-        const card = form.closest(".media-card");
-        if (card) {
-          card.remove();
+        const row = form.closest("tr");
+        if (row) {
+          row.remove();
         } else {
           setButtonTick(button, form.dataset.submitTick || "Ignored");
         }
       } catch (error) {
         const message = error.message || "Ignore failed";
         button.disabled = false;
-        button.textContent = form.dataset.submitErrorLabel || originalLabel || "Retry";
+        if (button.dataset.originalHtml) {
+          button.innerHTML = button.dataset.originalHtml;
+        }
+        button.title = message;
+        button.setAttribute("aria-label", message);
+      }
+    });
+  });
+
+  document.querySelectorAll("form[data-recheck-item-form]").forEach((form) => {
+    const button = form.querySelector("[data-submit-tick-button]") || form.querySelector('button[type="submit"]');
+    if (button && !button.dataset.originalHtml) {
+      button.dataset.originalHtml = button.innerHTML;
+    }
+    form.addEventListener("submit", async (event) => {
+      if (!button || !window.fetch || !window.FormData) return;
+      event.preventDefault();
+      button.disabled = true;
+      button.setAttribute("aria-label", "Rechecking");
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: new FormData(form),
+        });
+        if (!response.ok) {
+          throw new Error(`Recheck failed with ${response.status}`);
+        }
+        setButtonTick(button, form.dataset.submitTick || "Recheck triggered");
+      } catch (error) {
+        const message = error.message || "Recheck failed";
+        button.disabled = false;
+        if (button.dataset.originalHtml) {
+          button.innerHTML = button.dataset.originalHtml;
+        }
         button.title = message;
         button.setAttribute("aria-label", message);
       }

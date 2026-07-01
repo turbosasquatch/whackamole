@@ -578,7 +578,7 @@ def test_queue_button_errors_do_not_replace_label_with_full_message():
     script = Path("app/static/app.js").read_text()
 
     assert "button.textContent = error.message" not in script
-    assert "form.dataset.submitErrorLabel" in script
+    assert "button.innerHTML = button.dataset.originalHtml" in script
     assert "button.title = message" in script
 
 

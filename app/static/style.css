@@ -1994,6 +1994,45 @@ tr:last-child td {
   display: inline-flex;
 }
 
+.row-actions-divider {
+  align-self: stretch;
+  background: var(--line);
+  flex: 0 0 1px;
+  margin: 2px 2px;
+  width: 1px;
+}
+
+.button.icon {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+  height: 38px;
+  padding: 0;
+  width: 38px;
+}
+
+.button.icon:hover {
+  background: var(--surface-soft);
+}
+
+.button.icon svg {
+  height: 18px;
+  pointer-events: none;
+  width: 18px;
+}
+
+.button.icon.upload {
+  color: var(--primary);
+}
+
+.button.icon.block {
+  color: var(--muted);
+}
+
+.button.icon.recheck {
+  color: var(--success);
+}
+
 .empty-state {
   color: var(--muted);
   padding: 28px;
