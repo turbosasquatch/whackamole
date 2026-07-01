@@ -450,7 +450,7 @@
             <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw QUI MediaInfo" data-raw-kind="json" data-raw-source="raw-mediainfo">Raw QUI MediaInfo</button>
             <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Local MediaInfo" data-raw-kind="json" data-raw-source="raw-local-mediainfo">Raw Local MediaInfo</button>
           </div>
-          <details class="media-raw-toggle mobile-item-only" open>
+          <details class="media-raw-toggle mobile-item-only">
             <summary>Raw {{ icon("chevron", "accordion-chevron") }}</summary>
             <div class="media-raw-actions">
               <h3>Raw Data</h3>
@@ -691,7 +691,7 @@
     <div id="panel-reporting" class="tab-panel" role="tabpanel" aria-labelledby="tab-reporting" data-tab-panel="reporting" hidden>
       <div class="mobile-reporting mobile-item-only">
         <span class="eyebrow">Reporting</span>
-        <details class="reporting-accordion report-issue" open>
+        <details class="reporting-accordion report-issue">
           <summary>{{ icon("flag") }}<strong>Report an issue</strong>{{ icon("chevron", "accordion-chevron") }}</summary>
           <form class="report-form" method="post" action="/items/{{ item.id }}/reports">
             <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">

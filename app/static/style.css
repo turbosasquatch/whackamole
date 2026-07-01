@@ -536,6 +536,12 @@ td,
   width: 36px;
 }
 
+.notification-button svg {
+  height: 18px;
+  pointer-events: none;
+  width: 18px;
+}
+
 .notification-button strong {
   align-items: center;
   background: var(--red);
@@ -652,9 +658,14 @@ td,
   width: 16px;
 }
 
+.icon-button svg {
+  height: 18px;
+  pointer-events: none;
+  width: 18px;
+}
+
 .theme-toggle {
   flex-direction: row;
-  font-size: 17px;
   line-height: 1;
 }
 
@@ -667,7 +678,7 @@ td,
 }
 
 :root[data-theme="dark"] .theme-toggle-icon-dark {
-  display: block;
+  display: inline-block;
 }
 
 .close-glyph {
@@ -3880,7 +3891,8 @@ dd {
   .tab-list > button {
     border-radius: 0;
     flex: 0 0 auto;
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 800;
     min-height: 48px;
     padding: 8px 14px;
     white-space: nowrap;
@@ -4299,14 +4311,14 @@ dd {
     border-top: 1px solid var(--line);
     left: 0;
     margin-top: 18px;
-    padding-top: 20px;
+    padding: 20px 0 24px;
     position: absolute;
     right: 0;
     top: 100%;
   }
 
   #panel-mediainfo .panel-heading {
-    margin-bottom: 116px;
+    margin-bottom: 142px;
     position: relative;
   }
 
