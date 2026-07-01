@@ -3921,9 +3921,9 @@ dd {
 
   .tab-list > button {
     flex: 0 0 auto;
-    font-size: 13px;
-    min-height: 40px;
-    padding: 8px 12px;
+    font-size: 16px;
+    min-height: 44px;
+    padding: 10px 18px;
     white-space: nowrap;
   }
 
@@ -4784,9 +4784,8 @@ dd {
   }
 
   .tab-list > button {
-    font-size: 12px;
-    padding-left: 8px;
-    padding-right: 8px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
   .item-hero {
