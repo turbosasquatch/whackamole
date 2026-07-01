@@ -25,17 +25,8 @@
   {% for option in reason_filter_options if "rejected" in option.applies_to and option.key in dashboard_filters.reasons %}{% set rejected_ns.count = rejected_ns.count + 1 %}{% endfor %}
   <aside class="filter-panel" data-filter-panel aria-label="Dashboard filters">
     <div class="panel-heading filter-panel-heading">
-      <div>
-        <span class="eyebrow">{{ dashboard_filters.label | title }}</span>
-        <p class="compact-count">{{ dashboard_filters.filtered_total }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }} · showing {{ pagination.start }}-{{ pagination.end }}</p>
-      </div>
-      <div class="filter-panel-heading-actions">
-        <a class="filter-clear-all" href="{{ reset_url }}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 18 15"/></svg>
-          <span>Clear all</span>
-        </a>
-        <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters"><span class="close-glyph" aria-hidden="true"></span></button>
-      </div>
+      <p class="compact-count">{{ dashboard_filters.filtered_total }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }} · showing {{ pagination.start }}-{{ pagination.end }}</p>
+      <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters"><span class="close-glyph" aria-hidden="true"></span></button>
     </div>
 
     <form class="filter-form" method="get" action="/dashboard">

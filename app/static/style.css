@@ -1094,44 +1094,6 @@ label {
   gap: 6px;
 }
 
-.checkbox {
-  align-items: center;
-  display: flex;
-  font-weight: 600;
-  gap: 8px;
-  justify-content: space-between;
-  min-height: 28px;
-}
-
-.checkbox input {
-  min-height: auto;
-  width: auto;
-}
-
-.checkbox.disabled {
-  color: var(--muted);
-}
-
-.filter-panel-heading-actions {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-}
-
-.filter-clear-all {
-  align-items: center;
-  color: var(--primary);
-  display: inline-flex;
-  font-size: 13px;
-  font-weight: 800;
-  gap: 5px;
-}
-
-.filter-clear-all svg {
-  height: 15px;
-  width: 15px;
-}
-
 .filter-accordion {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -3061,25 +3023,34 @@ dd {
 }
 
 .settings-tabs {
-  display: flex;
-  gap: 6px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  gap: 2px;
   margin: -4px 0 12px;
+  padding: 4px;
 }
 
 .settings-tabs a {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
-  padding: 8px 12px;
-  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease, filter 0.16s ease;
+  padding: 8px 16px;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.settings-tabs a:hover {
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .settings-tabs a.active {
   background: var(--primary);
-  border-color: var(--primary);
+  color: #fff;
+}
+
+.settings-tabs a.active:hover {
   color: #fff;
 }
 
@@ -3170,6 +3141,115 @@ dd {
   margin: 0;
 }
 
+.checkbox-grid {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.field-toggle {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-weight: 600;
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 36px;
+  position: relative;
+}
+
+.field-toggle input {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
+.toggle-track {
+  background: var(--line-strong);
+  border-radius: var(--radius-pill);
+  flex: 0 0 auto;
+  height: 20px;
+  position: relative;
+  transition: background-color 0.16s ease;
+  width: 36px;
+}
+
+.toggle-track::after {
+  background: #fff;
+  border-radius: 50%;
+  content: "";
+  height: 16px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 0.16s ease;
+  width: 16px;
+}
+
+.field-toggle input:checked + .toggle-track {
+  background: var(--primary);
+}
+
+.field-toggle input:checked + .toggle-track::after {
+  transform: translateX(16px);
+}
+
+.field-toggle input:focus-visible + .toggle-track {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+}
+
+.field-toggle:has(input:disabled) {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.field-toggle input:disabled + .toggle-track {
+  opacity: 0.5;
+}
+
+.field-success {
+  border-color: var(--green) !important;
+}
+
+.input-unit {
+  display: flex;
+}
+
+.input-unit input {
+  border-radius: 8px 0 0 8px;
+  border-right: 0;
+}
+
+.input-unit span {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 0 8px 8px 0;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.status-indicator {
+  align-items: center;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.maintenance-guard-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
 .field-note {
   align-content: start;
   color: #334155;
@@ -3206,7 +3286,19 @@ dd {
   border-radius: 8px;
   display: grid;
   gap: 4px;
-  padding: 12px;
+  padding: 12px 12px 12px 30px;
+  position: relative;
+}
+
+.probe::before {
+  background: currentColor;
+  border-radius: 50%;
+  content: "";
+  height: 8px;
+  left: 12px;
+  position: absolute;
+  top: 16px;
+  width: 8px;
 }
 
 .probe.ok {
@@ -3250,7 +3342,8 @@ dd {
   }
 
   .form-grid,
-  .policy-grid {
+  .policy-grid,
+  .checkbox-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -3409,6 +3502,7 @@ dd {
   .overview-summary-grid,
   .form-grid,
   .policy-grid,
+  .checkbox-grid,
   .probe-grid,
   .rules-vocabulary {
     grid-template-columns: 1fr;
@@ -4059,15 +4153,6 @@ dd {
     min-height: 44px;
     min-width: 44px;
     width: 44px;
-  }
-
-  .checkbox {
-    min-height: 44px;
-  }
-
-  .checkbox input {
-    min-height: 20px;
-    min-width: 20px;
   }
 
   .filter-accordion summary,

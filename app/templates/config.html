@@ -53,11 +53,12 @@
       </label>
       <label>
         API key {% if secrets.qui_api_key %}<span class="saved">saved</span>{% endif %}
-        <input name="qui_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.qui_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+        <input name="qui_api_key" type="password" autocomplete="new-password" class="{% if secrets.qui_api_key %}field-success{% endif %}" placeholder="{% if secrets.qui_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_qui_api_key" type="checkbox">
-        Clear saved QUI key
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved QUI key</span>
       </label>
     </div>
   </section>
@@ -65,17 +66,21 @@
   <section>
     <h2>Local MediaInfo</h2>
     <div class="form-grid">
-      <label class="checkbox">
+      <label class="field-toggle">
+        <span>Use local MediaInfo CLI as a secondary source</span>
         <input name="mediainfo_enabled" type="checkbox" {% if cfg.mediainfo.enabled %}checked{% endif %}>
-        Use local MediaInfo CLI as a secondary source
+        <span class="toggle-track" aria-hidden="true"></span>
       </label>
       <label>
         Binary path
         <input name="mediainfo_binary_path" value="{{ cfg.mediainfo.binary_path }}" autocomplete="off" spellcheck="false" placeholder="mediainfo">
       </label>
       <label>
-        Timeout seconds
-        <input name="mediainfo_timeout_seconds" type="number" min="1" value="{{ cfg.mediainfo.timeout_seconds }}">
+        Timeout
+        <div class="input-unit">
+          <input name="mediainfo_timeout_seconds" type="number" min="1" value="{{ cfg.mediainfo.timeout_seconds }}">
+          <span>seconds</span>
+        </div>
       </label>
     </div>
   </section>
@@ -92,16 +97,20 @@
         <input name="ua_tmp_path" value="{{ cfg.upload_assistant.tmp_path }}" autocomplete="off" spellcheck="false">
       </label>
       <label>
-        Request timeout seconds
-        <input name="ua_timeout" type="number" min="60" value="{{ cfg.upload_assistant.request_timeout_seconds }}">
+        Request timeout
+        <div class="input-unit">
+          <input name="ua_timeout" type="number" min="60" value="{{ cfg.upload_assistant.request_timeout_seconds }}">
+          <span>seconds</span>
+        </div>
       </label>
       <label>
         Bearer token {% if secrets.ua_bearer_token %}<span class="saved">saved</span>{% endif %}
-        <input name="ua_bearer_token" type="password" autocomplete="new-password" placeholder="{% if secrets.ua_bearer_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
+        <input name="ua_bearer_token" type="password" autocomplete="new-password" class="{% if secrets.ua_bearer_token %}field-success{% endif %}" placeholder="{% if secrets.ua_bearer_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_ua_bearer_token" type="checkbox">
-        Clear saved UA token
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved UA token</span>
       </label>
     </div>
   </section>
@@ -119,11 +128,12 @@
     <div class="form-grid">
       <label>
         API bearer token {% if secrets.whackamole_api_token %}<span class="saved">saved</span>{% endif %}
-        <input name="whackamole_api_token" type="password" autocomplete="new-password" placeholder="{% if secrets.whackamole_api_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
+        <input name="whackamole_api_token" type="password" autocomplete="new-password" class="{% if secrets.whackamole_api_token %}field-success{% endif %}" placeholder="{% if secrets.whackamole_api_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_whackamole_api_token" type="checkbox">
-        Clear saved Whackamole API token
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved Whackamole API token</span>
       </label>
     </div>
   </section>
@@ -133,11 +143,12 @@
     <div class="form-grid">
       <label>
         Discord webhook URL {% if secrets.discord_webhook_url %}<span class="saved">saved</span>{% endif %}
-        <input name="discord_webhook_url" type="password" autocomplete="new-password" placeholder="{% if secrets.discord_webhook_url %}Leave blank to keep saved webhook{% else %}Paste webhook URL{% endif %}">
+        <input name="discord_webhook_url" type="password" autocomplete="new-password" class="{% if secrets.discord_webhook_url %}field-success{% endif %}" placeholder="{% if secrets.discord_webhook_url %}Leave blank to keep saved webhook{% else %}Paste webhook URL{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_discord_webhook_url" type="checkbox">
-        Clear saved Discord webhook
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved Discord webhook</span>
       </label>
     </div>
   </section>
@@ -153,9 +164,10 @@
         Excluded tag terms
         <input name="exclude_tag_terms" value="{{ exclude_tag_terms }}" autocomplete="off" spellcheck="false">
       </label>
-      <label class="checkbox">
+      <label class="field-toggle">
+        <span>Process existing torrents on first run</span>
         <input name="process_existing_on_first_run" type="checkbox" {% if cfg.watch.process_existing_on_first_run %}checked{% endif %}>
-        Process existing torrents on first run
+        <span class="toggle-track" aria-hidden="true"></span>
       </label>
     </div>
   </section>
@@ -164,8 +176,11 @@
     <h2>Safety</h2>
     <div class="form-grid">
       <label>
-        Poll interval seconds
-        <input name="poll_interval_seconds" type="number" min="15" value="{{ cfg.safety.poll_interval_seconds }}">
+        Poll interval
+        <div class="input-unit">
+          <input name="poll_interval_seconds" type="number" min="15" value="{{ cfg.safety.poll_interval_seconds }}">
+          <span>seconds</span>
+        </div>
       </label>
       <label>
         Max queue size
@@ -176,8 +191,11 @@
         <input name="max_concurrent_ua_jobs" type="number" min="1" value="{{ cfg.safety.max_concurrent_ua_jobs }}">
       </label>
       <label>
-        Seconds between UA jobs
-        <input name="min_seconds_between_ua_jobs" type="number" min="0" value="{{ cfg.safety.min_seconds_between_ua_jobs }}">
+        Between UA jobs
+        <div class="input-unit">
+          <input name="min_seconds_between_ua_jobs" type="number" min="0" value="{{ cfg.safety.min_seconds_between_ua_jobs }}">
+          <span>seconds</span>
+        </div>
       </label>
       <label>
         Max QUI poll pages
@@ -188,16 +206,25 @@
         <input name="max_mediainfo_files_per_check" type="number" min="1" value="{{ cfg.safety.max_mediainfo_files_per_check }}">
       </label>
       <label>
-        Arr search timeout seconds
-        <input name="arr_search_timeout_seconds" type="number" min="5" value="{{ cfg.safety.arr_search_timeout_seconds }}">
+        Arr search timeout
+        <div class="input-unit">
+          <input name="arr_search_timeout_seconds" type="number" min="5" value="{{ cfg.safety.arr_search_timeout_seconds }}">
+          <span>seconds</span>
+        </div>
       </label>
       <label>
-        Arr metadata cache seconds
-        <input name="arr_metadata_cache_seconds" type="number" min="0" value="{{ cfg.safety.arr_metadata_cache_seconds }}">
+        Arr metadata cache
+        <div class="input-unit">
+          <input name="arr_metadata_cache_seconds" type="number" min="0" value="{{ cfg.safety.arr_metadata_cache_seconds }}">
+          <span>seconds</span>
+        </div>
       </label>
       <label>
-        Manual recheck cooldown hours
-        <input name="recheck_cooldown_hours" type="number" min="1" value="{{ cfg.safety.recheck_cooldown_hours }}">
+        Manual recheck cooldown
+        <div class="input-unit">
+          <input name="recheck_cooldown_hours" type="number" min="1" value="{{ cfg.safety.recheck_cooldown_hours }}">
+          <span>hours</span>
+        </div>
       </label>
       <label>
         Max error retries
@@ -211,11 +238,28 @@
   </section>
 
   <section>
-    <h2>Maintenance Guard</h2>
+    <div class="panel-heading">
+      <h2>Maintenance Guard</h2>
+      {% if service is defined %}
+        <div class="maintenance-guard-actions">
+          <span class="status-indicator">
+            <span class="state-dot {{ 'warn' if service.maintenance.active else 'ok' }}"></span>
+            {{ "Paused" if service.maintenance.active else "Active" }}
+          </span>
+          <form method="post" action="{% if service.maintenance.active %}/maintenance/resume{% else %}/maintenance/pause{% endif %}">
+            <input type="hidden" name="return_to" value="/config">
+            <button class="button secondary small" type="submit">
+              {% if service.maintenance.active %}Resume maintenance{% else %}Pause maintenance{% endif %}
+            </button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
     <div class="form-grid">
-      <label class="checkbox">
+      <label class="field-toggle">
+        <span>Pause around mover maintenance</span>
         <input name="maintenance_enabled" type="checkbox" {% if cfg.maintenance.enabled %}checked{% endif %}>
-        Pause around mover maintenance
+        <span class="toggle-track" aria-hidden="true"></span>
       </label>
       <label>
         Timezone
@@ -226,8 +270,11 @@
         <input name="maintenance_start_time" type="time" value="{{ cfg.maintenance.start_time }}">
       </label>
       <label>
-        Lead minutes
-        <input name="maintenance_lead_minutes" type="number" min="0" value="{{ cfg.maintenance.lead_minutes }}">
+        Lead time
+        <div class="input-unit">
+          <input name="maintenance_lead_minutes" type="number" min="0" value="{{ cfg.maintenance.lead_minutes }}">
+          <span>minutes</span>
+        </div>
       </label>
       <div class="field-note">
         Resume signal
@@ -245,11 +292,12 @@
       </label>
       <label>
         Sonarr API key {% if secrets.sonarr_api_key %}<span class="saved">saved</span>{% endif %}
-        <input name="sonarr_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.sonarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+        <input name="sonarr_api_key" type="password" autocomplete="new-password" class="{% if secrets.sonarr_api_key %}field-success{% endif %}" placeholder="{% if secrets.sonarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_sonarr_api_key" type="checkbox">
-        Clear saved Sonarr key
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved Sonarr key</span>
       </label>
       <label>
         Radarr URL
@@ -257,11 +305,12 @@
       </label>
       <label>
         Radarr API key {% if secrets.radarr_api_key %}<span class="saved">saved</span>{% endif %}
-        <input name="radarr_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.radarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+        <input name="radarr_api_key" type="password" autocomplete="new-password" class="{% if secrets.radarr_api_key %}field-success{% endif %}" placeholder="{% if secrets.radarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_radarr_api_key" type="checkbox">
-        Clear saved Radarr key
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved Radarr key</span>
       </label>
       <label>
         EasyCross URL
@@ -269,11 +318,12 @@
       </label>
       <label>
         EasyCross API key {% if secrets.easycross_api_key %}<span class="saved">saved</span>{% endif %}
-        <input name="easycross_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.easycross_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+        <input name="easycross_api_key" type="password" autocomplete="new-password" class="{% if secrets.easycross_api_key %}field-success{% endif %}" placeholder="{% if secrets.easycross_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_easycross_api_key" type="checkbox">
-        Clear saved EasyCross key
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved EasyCross key</span>
       </label>
       <label>
         Profilarr URL
@@ -281,11 +331,12 @@
       </label>
       <label>
         Profilarr API key {% if secrets.profilarr_api_key %}<span class="saved">saved</span>{% endif %}
-        <input name="profilarr_api_key" type="password" autocomplete="new-password" placeholder="{% if secrets.profilarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
+        <input name="profilarr_api_key" type="password" autocomplete="new-password" class="{% if secrets.profilarr_api_key %}field-success{% endif %}" placeholder="{% if secrets.profilarr_api_key %}Leave blank to keep saved key{% else %}Paste key{% endif %}">
       </label>
-      <label class="checkbox">
+      <label class="filter-option">
         <input name="clear_profilarr_api_key" type="checkbox">
-        Clear saved Profilarr key
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Clear saved Profilarr key</span>
       </label>
     </div>
   </section>
@@ -313,14 +364,15 @@
     <h2>High Quality Trackers</h2>
     <div class="checkbox-grid">
       {% for tracker in tracker_options %}
-        <label class="checkbox">
+        <label class="filter-option">
           <input
             name="high_quality_trackers"
             value="{{ tracker.key }}"
             type="checkbox"
             {% if tracker.key in high_quality_trackers %}checked{% endif %}
           >
-          {{ tracker.label }}{% if tracker.label != tracker.key %} ({{ tracker.key }}){% endif %}
+          <span class="filter-option-box" aria-hidden="true"></span>
+          <span class="filter-option-label">{{ tracker.label }}{% if tracker.label != tracker.key %} ({{ tracker.key }}){% endif %}</span>
         </label>
       {% else %}
         <p class="muted">No trackers found yet.</p>
