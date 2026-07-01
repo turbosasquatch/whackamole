@@ -15,13 +15,27 @@
 {% endif %}
 
 <div class="dashboard-grid">
+  {% set filters_disabled = view not in filterable_views %}
+  {% set reset_url = "/dashboard?view=" ~ view ~ ("&q=" ~ (search_query | urlencode) if search_query else "") %}
+  {% set blocked_ns = namespace(count=0) %}
+  {% for option in reason_filter_options if "blocked" in option.applies_to and option.key in dashboard_filters.reasons %}{% set blocked_ns.count = blocked_ns.count + 1 %}{% endfor %}
+  {% set review_ns = namespace(count=0) %}
+  {% for option in reason_filter_options if "manual" in option.applies_to and option.key in dashboard_filters.reasons %}{% set review_ns.count = review_ns.count + 1 %}{% endfor %}
+  {% set rejected_ns = namespace(count=0) %}
+  {% for option in reason_filter_options if "rejected" in option.applies_to and option.key in dashboard_filters.reasons %}{% set rejected_ns.count = rejected_ns.count + 1 %}{% endfor %}
   <aside class="filter-panel" data-filter-panel aria-label="Dashboard filters">
-    <div class="panel-heading">
+    <div class="panel-heading filter-panel-heading">
       <div>
         <span class="eyebrow">{{ dashboard_filters.label | title }}</span>
         <p class="compact-count">{{ dashboard_filters.filtered_total }} item{{ "" if dashboard_filters.filtered_total == 1 else "s" }} · showing {{ pagination.start }}-{{ pagination.end }}</p>
       </div>
-      <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters"><span class="close-glyph" aria-hidden="true"></span></button>
+      <div class="filter-panel-heading-actions">
+        <a class="filter-clear-all" href="{{ reset_url }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 18 15"/></svg>
+          <span>Clear all</span>
+        </a>
+        <button class="icon-close mobile-only" type="button" data-filter-close aria-label="Close filters"><span class="close-glyph" aria-hidden="true"></span></button>
+      </div>
     </div>
 
     <form class="filter-form" method="get" action="/dashboard">
@@ -29,74 +43,127 @@
       {% if search_query %}
         <input type="hidden" name="q" value="{{ search_query }}">
       {% endif %}
-      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
-        <legend>Media type</legend>
-        {% for option in media_filter_options %}
-          <label class="checkbox">
-            <input name="media" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.media %}checked{% endif %}>
-            {{ option.label }}
-          </label>
-        {% endfor %}
-      </fieldset>
 
-      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
-        <legend>Missing tracker coverage</legend>
-        {% for tracker in primary_trackers %}
-          <label class="checkbox">
-            <input name="missing" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.missing %}checked{% endif %}>
-            {{ tracker }}
-          </label>
-        {% endfor %}
-      </fieldset>
+      <details class="filter-accordion" {% if dashboard_filters.media %}open{% endif %} {% if filters_disabled %}data-disabled{% endif %}>
+        <summary>
+          <span class="filter-accordion-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 10h4M3 15h4M17 10h4M17 15h4"/></svg></span>
+          <span class="filter-accordion-label">Media type</span>
+          <span class="filter-accordion-count">{{ dashboard_filters.media | length }}</span>
+          <span class="filter-accordion-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+        </summary>
+        <div class="filter-accordion-body">
+          {% for option in media_filter_options %}
+            <label class="filter-option">
+              <input name="media" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.media %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+              <span class="filter-option-box" aria-hidden="true"></span>
+              <span class="filter-option-label">{{ option.label }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
 
-      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
-        <legend>Decision valid for</legend>
-        {% for tracker in primary_trackers %}
-          <label class="checkbox">
-            <input name="valid_for" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.valid_for %}checked{% endif %}>
-            {{ tracker }}
-          </label>
-        {% endfor %}
-      </fieldset>
+      <details class="filter-accordion" {% if dashboard_filters.missing %}open{% endif %} {% if filters_disabled %}data-disabled{% endif %}>
+        <summary>
+          <span class="filter-accordion-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg></span>
+          <span class="filter-accordion-label">Missing tracker coverage</span>
+          <span class="filter-accordion-count">{{ dashboard_filters.missing | length }}</span>
+          <span class="filter-accordion-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+        </summary>
+        <div class="filter-accordion-body">
+          {% for tracker in primary_trackers %}
+            <label class="filter-option">
+              <input name="missing" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.missing %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+              <span class="filter-option-box" aria-hidden="true"></span>
+              <span class="filter-option-label">{{ tracker }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
 
-      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
-        <legend>Blocked reason</legend>
-        {% for option in reason_filter_options if "blocked" in option.applies_to %}
-          <label class="checkbox">
-            <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}>
-            {{ option.label }}
-          </label>
-        {% endfor %}
-      </fieldset>
+      <details class="filter-accordion" {% if dashboard_filters.valid_for %}open{% endif %} {% if filters_disabled %}data-disabled{% endif %}>
+        <summary>
+          <span class="filter-accordion-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 7.9 7.5 9.5 4.3-1.6 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <span class="filter-accordion-label">Decision valid for</span>
+          <span class="filter-accordion-count">{{ dashboard_filters.valid_for | length }}</span>
+          <span class="filter-accordion-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+        </summary>
+        <div class="filter-accordion-body">
+          {% for tracker in primary_trackers %}
+            <label class="filter-option">
+              <input name="valid_for" value="{{ tracker }}" type="checkbox" {% if tracker in dashboard_filters.valid_for %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+              <span class="filter-option-box" aria-hidden="true"></span>
+              <span class="filter-option-label">{{ tracker }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
 
-      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
-        <legend>Review reason</legend>
-        {% for option in reason_filter_options if "manual" in option.applies_to %}
-          <label class="checkbox">
-            <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}>
-            {{ option.label }}
-          </label>
-        {% endfor %}
-      </fieldset>
+      <details class="filter-accordion" {% if blocked_ns.count %}open{% endif %} {% if filters_disabled %}data-disabled{% endif %}>
+        <summary>
+          <span class="filter-accordion-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg></span>
+          <span class="filter-accordion-label">Blocked reason</span>
+          <span class="filter-accordion-count">{{ blocked_ns.count }}</span>
+          <span class="filter-accordion-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+        </summary>
+        <div class="filter-accordion-body">
+          {% for option in reason_filter_options if "blocked" in option.applies_to %}
+            <label class="filter-option">
+              <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+              <span class="filter-option-box" aria-hidden="true"></span>
+              <span class="filter-option-label">{{ option.label }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
 
-      <fieldset {% if view not in filterable_views %}disabled{% endif %}>
-        <legend>Rejected reason</legend>
-        {% for option in reason_filter_options if "rejected" in option.applies_to %}
-          <label class="checkbox">
-            <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}>
-            {{ option.label }}
-          </label>
-        {% endfor %}
-      </fieldset>
+      <details class="filter-accordion" {% if review_ns.count %}open{% endif %} {% if filters_disabled %}data-disabled{% endif %}>
+        <summary>
+          <span class="filter-accordion-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <span class="filter-accordion-label">Review reason</span>
+          <span class="filter-accordion-count">{{ review_ns.count }}</span>
+          <span class="filter-accordion-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+        </summary>
+        <div class="filter-accordion-body">
+          {% for option in reason_filter_options if "manual" in option.applies_to %}
+            <label class="filter-option">
+              <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+              <span class="filter-option-box" aria-hidden="true"></span>
+              <span class="filter-option-label">{{ option.label }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
 
-      <label class="checkbox {% if view not in filterable_views %}disabled{% endif %}">
-        <input name="hide_any_primary" value="true" type="checkbox" {% if dashboard_filters.hide_any_primary %}checked{% endif %} {% if view not in filterable_views %}disabled{% endif %}>
-        Hide rows with any primary tracker
+      <details class="filter-accordion" {% if rejected_ns.count %}open{% endif %} {% if filters_disabled %}data-disabled{% endif %}>
+        <summary>
+          <span class="filter-accordion-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg></span>
+          <span class="filter-accordion-label">Rejected reason</span>
+          <span class="filter-accordion-count">{{ rejected_ns.count }}</span>
+          <span class="filter-accordion-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+        </summary>
+        <div class="filter-accordion-body">
+          {% for option in reason_filter_options if "rejected" in option.applies_to %}
+            <label class="filter-option">
+              <input name="reason" value="{{ option.key }}" type="checkbox" {% if option.key in dashboard_filters.reasons %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+              <span class="filter-option-box" aria-hidden="true"></span>
+              <span class="filter-option-label">{{ option.label }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </details>
+
+      <label class="filter-option filter-hide-primary">
+        <input name="hide_any_primary" value="true" type="checkbox" {% if dashboard_filters.hide_any_primary %}checked{% endif %}{% if filters_disabled %} disabled{% endif %}>
+        <span class="filter-option-box" aria-hidden="true"></span>
+        <span class="filter-option-label">Hide rows with any primary tracker</span>
+        <span class="filter-help" title="Hide rows where any primary tracker already has coverage">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.6-1.4c.6.9.4 1.7-.3 2.3-.7.6-1.3 1-1.3 2.1"/><path d="M12 17h.01"/></svg>
+        </span>
       </label>
 
       <div class="filter-actions">
-        <button class="button small" type="submit">Apply</button>
-        <a class="button small secondary" href="/dashboard?view={{ view }}{% if search_query %}&q={{ search_query | urlencode }}{% endif %}">Reset filters</a>
+        <button class="button" type="submit">Apply filters</button>
+        <a class="button secondary" href="{{ reset_url }}">Reset filters</a>
       </div>
     </form>
 
@@ -120,7 +187,10 @@
       {% if dashboard_filters.hide_any_primary %}
         <input type="hidden" name="hide_any_primary" value="true">
       {% endif %}
-      <button class="button small secondary" type="submit" {% if view not in filterable_views %}disabled{% endif %}>Run check on found set</button>
+      <button class="button secondary run-check-button" type="submit"{% if filters_disabled %} disabled{% endif %}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z"/></svg>
+        <span>Run check on found set</span>
+      </button>
     </form>
   </aside>
 

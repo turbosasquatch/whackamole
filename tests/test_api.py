@@ -1066,7 +1066,8 @@ def test_filtered_recheck_endpoint_requeues_errors_view(tmp_path, monkeypatch):
 
         assert page.status_code == 200
         assert 'name="view" value="errors"' in page.text
-        assert 'type="submit" >Run check on found set</button>' in page.text
+        assert 'class="button secondary run-check-button" type="submit">' in page.text
+        assert "Run check on found set" in page.text
         assert response.status_code == 303
         assert response.headers["location"].startswith("/dashboard?view=errors")
         assert row["status"] == "queued"
