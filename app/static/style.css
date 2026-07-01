@@ -1535,8 +1535,11 @@ tr:last-child td {
   display: none;
 }
 
-.button.mobile-search-toggle {
-  display: none;
+.topbar-divider {
+  align-self: stretch;
+  background: var(--line);
+  margin: 4px 2px;
+  width: 1px;
 }
 
 .search-modal {
@@ -3159,23 +3162,20 @@ dd {
     margin-left: auto;
   }
 
-  .button.mobile-search-toggle {
-    display: inline-flex;
-  }
-
   .topbar-actions .button,
   .notification-button,
   .mobile-search-toggle {
     flex: 0 0 auto;
   }
 
-  .topbar-actions .button,
-  .mobile-search-toggle {
+  .topbar-actions .button {
     min-height: 34px;
     padding: 6px 9px;
   }
 
-  .notification-button {
+  .notification-button,
+  .mobile-search-toggle.icon-button,
+  .topbar-actions .icon-button {
     height: 34px;
     width: 34px;
   }
@@ -3198,6 +3198,10 @@ dd {
   }
 
   .media-pane .table-wrap.media-table {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
     overflow: visible;
     padding: 0 2px 12px;
   }
@@ -3226,11 +3230,11 @@ dd {
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
     display: grid;
-    gap: 8px 10px;
+    gap: 10px 12px;
     grid-template-columns: minmax(0, 1fr) auto;
     max-width: 100%;
     min-width: 0;
-    padding: 14px;
+    padding: 16px;
   }
 
   .media-list-table td {
@@ -3284,32 +3288,50 @@ dd {
 
   /* full-width rows below the header block, ordered so absent items (e.g. no Decision
      Notice in the standard view, or an empty Flags cell) leave no blank gap */
-  .media-list-table td[data-label="Coverage"],
   .media-list-table td[data-label="Decision Notice"],
   .media-list-table td[data-label="Flags"],
-  .media-list-table td[data-label="Actions"],
   .media-list-table td.empty {
     grid-column: 1 / -1;
   }
 
-  .media-list-table td[data-label="Coverage"] {
+  .media-list-table td[data-label="Decision Notice"] {
     order: 1;
   }
 
-  .media-list-table td[data-label="Decision Notice"] {
-    order: 2;
-  }
-
   .media-list-table td[data-label="Flags"] {
-    order: 3;
-  }
-
-  .media-list-table td[data-label="Actions"] {
-    order: 4;
+    order: 2;
   }
 
   .media-list-table td[data-label="Flags"]:not(:has(.flag-badge)) {
     display: none;
+  }
+
+  /* row 3: a full-width divider above the coverage/actions cluster */
+  .media-list-table tr:not(:has(td.empty))::before {
+    background: var(--line);
+    content: "";
+    grid-column: 1 / -1;
+    height: 1px;
+    order: 3;
+  }
+
+  /* row 4: coverage badges (left, wraps) sharing a row with the action icons (right) */
+  .media-list-table td[data-label="Coverage"] {
+    grid-column: 1;
+    order: 4;
+  }
+
+  .media-list-table td[data-label="Actions"] {
+    align-self: stretch;
+    border-left: 1px solid var(--line);
+    grid-column: 2;
+    order: 4;
+    padding-left: 12px !important;
+  }
+
+  .media-list-table td[data-label="Actions"] .row-actions {
+    align-items: center;
+    height: 100%;
   }
 
   .media-list-table td[data-label]::before {
@@ -3322,8 +3344,24 @@ dd {
     overflow: visible;
   }
 
+  .media-list-table .pill,
+  .media-list-table .coverage-badge {
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+
   .media-list-table .row-actions {
     justify-content: flex-end;
+  }
+
+  .media-list-table .row-actions .button.icon {
+    height: 40px;
+    width: 40px;
+  }
+
+  .media-list-table .row-actions .button.icon svg {
+    height: 20px;
+    width: 20px;
   }
 
   .item-hero .hero-actions {
@@ -3754,16 +3792,6 @@ dd {
     padding-top: 26px;
   }
 
-  .item-hero .hero-actions::before {
-    color: var(--muted);
-    content: "Actions";
-    font-size: 12px;
-    font-weight: 900;
-    grid-column: 1 / -1;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-  }
-
   .item-hero .hero-actions form,
   .item-hero .hero-actions a,
   .item-hero .hero-actions button {
@@ -3835,18 +3863,27 @@ dd {
     align-items: stretch;
     background: var(--surface);
     border-bottom: 1px solid var(--line);
+    flex-wrap: nowrap;
     gap: 0;
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: hidden;
     padding: 0 4px;
     position: relative;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .tab-list::-webkit-scrollbar {
+    display: none;
   }
 
   .tab-list > button {
     border-radius: 0;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     font-size: 13px;
     min-height: 48px;
-    padding: 8px 9px;
+    padding: 8px 14px;
+    white-space: nowrap;
   }
 
   .tab-list > button.active,
@@ -3855,14 +3892,8 @@ dd {
     box-shadow: inset 0 -3px 0 var(--primary);
   }
 
-  .tab-list > .overflow-tab {
-    display: none;
-  }
-
   .mobile-tab-more {
-    display: block !important;
-    flex: 0 0 48px;
-    position: relative;
+    display: none !important;
   }
 
   .mobile-tab-more-toggle {
@@ -4166,6 +4197,13 @@ dd {
     justify-content: center;
   }
 
+  .rename-summary .check-state {
+    max-width: 100%;
+    min-width: 0;
+    padding: 5px 6px;
+    white-space: normal;
+  }
+
   .rename-reason-card {
     border: 1px solid var(--line);
     border-radius: 9px;
@@ -4176,13 +4214,12 @@ dd {
 
   .rename-mobile-accordions {
     display: grid !important;
-    gap: 0;
+    gap: 12px;
   }
 
   .item-accordion {
     border: 1px solid var(--line);
     border-radius: 10px;
-    margin-top: -1px;
     overflow: hidden;
   }
 
@@ -4302,7 +4339,7 @@ dd {
   }
 
   .media-tag-block {
-    gap: 16px;
+    gap: 12px 16px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     margin: 0 0 22px;
   }

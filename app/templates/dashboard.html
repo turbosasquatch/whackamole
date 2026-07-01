@@ -2,8 +2,12 @@
 {% block title %}Dashboard · Whackamole{% endblock %}
 {% block page_label %}{{ dashboard_filters.label | title }}{% endblock %}
 {% block topbar_actions %}
-  <button class="button secondary small mobile-only" type="button" data-filter-toggle>Filters</button>
-  <a class="button secondary small" href="{{ current_url }}">Refresh</a>
+  <button class="icon-button mobile-only" type="button" data-filter-toggle aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4"/></svg>
+  </button>
+  <a class="icon-button" href="{{ current_url }}" aria-label="Refresh">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 18 15"/></svg>
+  </a>
 {% endblock %}
 {% block content %}
 {% if message %}
@@ -204,7 +208,6 @@
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></svg>
                     </button>
                   </form>
-                  {% if problem_view %}
                   <span class="row-actions-divider" aria-hidden="true"></span>
                   <form method="post" action="/items/{{ item.id }}/recheck" data-recheck-item-form data-submit-tick="Recheck triggered" data-submit-error-label="Retry">
                     <input type="hidden" name="return_to" value="{{ current_url }}">
@@ -212,7 +215,6 @@
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></svg>
                     </button>
                   </form>
-                  {% endif %}
                 </div>
               </td>
             </tr>

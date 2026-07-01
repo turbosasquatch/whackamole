@@ -63,6 +63,11 @@ Known repo facts:
 - Docker workflow: `.github/workflows/docker-image.yml` / `Docker Image`
 - Published image: `ghcr.io/turbosasquatch/whackamole:latest`
 - Docker rebuild trigger: push to `main`
+- Unraid GraphQL endpoint: `http://192.168.1.16/graphql`
+- Unraid container: `/Whackamole`
+- Minimum Unraid API version: `4.30.0`
+- Deployment health endpoint: `http://192.168.1.16:9393/api/status`
+- Local Unraid credentials: ignored `.codex/unraid-api.env`
 
 Efficient process:
 
@@ -73,19 +78,25 @@ Efficient process:
 5. Commit on `main` with a terse message.
 6. Push with `git push origin main`.
 7. Get the pushed SHA with `git rev-parse HEAD`.
-8. Verify the Docker rebuild with `.venv/bin/python tools/docker_workflow_status.py`.
+8. Verify the Docker rebuild completed successfully with `.venv/bin/python tools/docker_workflow_status.py`.
+9. Only after that helper exits successfully, update and verify the live Unraid container with `.venv/bin/python tools/unraid_update_whackamole.py`.
 
 Efficiency rules:
 
 - Do not rediscover the README, workflow, image name, or remote unless the worktree state contradicts the known facts above.
 - Prefer the GitHub connector or one compact read-only GitHub Actions API request over `gh`; `gh auth` is not reliably valid in this environment.
 - Do not print full GitHub API payloads. Parse to one-line summaries with run id, workflow name, short SHA, status, conclusion, and URL.
+- Request escalated network access up front for the Unraid deployment helper. Stop on any GitHub build, container identity, API version, update, revision, or health failure.
+- Never pass the Unraid API key on the command line or copy it into tracked files. The helper loads it from `.codex/unraid-api.env` and must keep it out of output.
+- The Unraid helper is deliberately restricted to the exact `/Whackamole` container and `ghcr.io/turbosasquatch/whackamole:latest` image. Do not broaden it to update other containers during this workflow.
 - Do not run local Docker unless Docker is known available or the user specifically asks for a local image. GitHub Actions is the canonical rebuild path.
-- Final updates should report only the commit SHA, test result, push result, Docker workflow URL/conclusion, and any untouched local-only files.
+- Final updates should report only the commit SHA, test result, push result, Docker workflow URL/conclusion, deployed revision/health, and any untouched local-only files.
 
 Repeated task helpers:
 
 - Live report inspection: `.venv/bin/python tools/live_report.py --report-id N`
 - Docker rebuild status: `.venv/bin/python tools/docker_workflow_status.py`
+- Unraid Whackamole deployment: `.venv/bin/python tools/unraid_update_whackamole.py`
+- Read-only Unraid deployment preflight: `.venv/bin/python tools/unraid_update_whackamole.py --check-only`
 - Open report replay: `.venv/bin/python tools/rule_replay.py`
 - These helpers are read-only, compact by default, and should be run with network escalation up front when they need live network access.

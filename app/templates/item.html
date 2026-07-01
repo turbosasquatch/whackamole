@@ -71,10 +71,7 @@
   </div>
 {%- endmacro %}
 {% block title %}Item · Whackamole{% endblock %}
-{% block page_label %}Item detail{% endblock %}
-{% block topbar_actions %}
-  <a class="button secondary small" href="/">Dashboard</a>
-{% endblock %}
+{% block page_label %}Item{% endblock %}
 {% block content %}
 {% if not item %}
   <section class="empty-state">
@@ -464,7 +461,7 @@
             </div>
           </details>
         </div>
-        {% if media.reason %}<p class="desktop-item-only">{{ media.reason }}</p>{% endif %}
+        {% if media.reason %}<p>{{ media.reason }}</p>{% endif %}
         <div class="media-tag-block">
           <div class="media-tag-row">
             <span class="tag-row-label"><span class="desktop-item-only">Title</span><span class="mobile-item-only">Title (Name / Release Tags)</span></span>

@@ -15,8 +15,8 @@
         } catch (error) {}
       })();
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=item-mobile-redesign4">
-    <script src="{{ url_for('static', path='app.js') }}?v=item-mobile-redesign6" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}?v=mobile-redesign5">
+    <script src="{{ url_for('static', path='app.js') }}?v=mobile-redesign5" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -122,9 +122,14 @@
 
           <div class="topbar-actions">
             {% if show_dashboard_search | default(false) %}
-              <button class="button secondary small mobile-search-toggle" type="button" data-search-open>Search</button>
+              <button class="icon-button mobile-search-toggle" type="button" data-search-open aria-label="Search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              </button>
             {% endif %}
             {% block topbar_actions %}{% endblock %}
+            {% if show_dashboard_search | default(false) %}
+              <span class="topbar-divider" aria-hidden="true"></span>
+            {% endif %}
             <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">
               <span class="theme-toggle-icon theme-toggle-icon-light" aria-hidden="true">&#9728;</span>
               <span class="theme-toggle-icon theme-toggle-icon-dark" aria-hidden="true">&#9789;</span>

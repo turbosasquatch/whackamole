@@ -656,7 +656,7 @@ def test_dashboard_clear_search_preserves_filters_without_query(tmp_path, monkey
         assert "Example.Show" in first_page.text
 
 
-def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_path, monkeypatch):
+def test_candidate_dashboard_includes_filters_and_row_recheck_actions(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
         item_id = _seed_item(client)
@@ -671,8 +671,7 @@ def test_candidate_dashboard_includes_filters_without_row_recheck_actions(tmp_pa
         assert "Blocked reason" in page.text
         assert "Review reason" in page.text
         assert "/items/recheck-filtered" in page.text
-        assert f'/items/{item_id}/recheck' not in page.text
-        assert "Run recheck" not in page.text
+        assert f'/items/{item_id}/recheck' in page.text
         assert "mobile-bottom-nav" not in page.text
         assert "data-search-open" in page.text
         assert "data-search-modal" in page.text
