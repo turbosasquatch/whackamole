@@ -252,7 +252,7 @@
       <section class="details-panel rename-panel">
         <div class="panel-heading">
           <div class="status-heading">
-            <span class="status-heading-icon {{ rename_check.state or 'neutral' }} mobile-item-only">{{ icon("check" if rename_check.state == "pass" else ("warning" if rename_check.state == "warning" else "info")) }}</span>
+            <span class="status-heading-icon {{ rename_check.state or 'neutral' }}">{{ icon("check" if rename_check.state == "pass" else ("warning" if rename_check.state == "warning" else "info")) }}</span>
             <div>
             <span class="eyebrow">Rename Check</span>
             <h2>{{ rename_check.status_label or "No Rename Check evidence" }}</h2>
@@ -440,7 +440,7 @@
         <div class="panel-heading">
           <div class="status-heading">
             {% set media_state = 'error' if (media.media_status or media.verdict or media.status) | lower in ['error', 'failed', 'blocked'] else ('warning' if (media.media_status or media.verdict or media.status) | lower in ['warning', 'manual_review'] else 'pass') %}
-            <span class="status-heading-icon {{ media_state }} mobile-item-only">{{ icon("error" if media_state == "error" else ("warning" if media_state == "warning" else "check")) }}</span>
+            <span class="status-heading-icon {{ media_state }}">{{ icon("error" if media_state == "error" else ("warning" if media_state == "warning" else "check")) }}</span>
             <div>
             <span class="eyebrow">MediaInfo</span>
             <h2>{{ media.media_status or media.verdict or media.status or "No check recorded" }}</h2>

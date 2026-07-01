@@ -2083,7 +2083,13 @@ tr:last-child td {
 }
 
 .item-action-icon {
-  display: none;
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+}
+
+.item-action {
+  gap: 8px;
 }
 
 .status-heading {
@@ -2091,6 +2097,26 @@ tr:last-child td {
   display: flex;
   gap: 12px;
 }
+
+.status-heading-icon {
+  align-items: center;
+  border-radius: 50%;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+
+.status-heading-icon .item-icon {
+  height: 22px;
+  width: 22px;
+}
+
+.status-heading-icon.pass { background: var(--green-bg); color: var(--green); }
+.status-heading-icon.warning { background: var(--amber-bg); color: var(--amber); }
+.status-heading-icon.error { background: var(--red-bg); color: var(--red); }
+.status-heading-icon.neutral { background: var(--surface-soft); color: var(--muted); }
 
 .desktop-reporting {
   display: grid;
@@ -2123,29 +2149,40 @@ tr:last-child td {
 }
 
 .decision-panel {
-  display: grid;
-  gap: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 14px;
   overflow: hidden;
+  padding: 0;
 }
 
-.decision-panel > div {
-  border-right: 1px solid var(--line);
-  padding: 14px;
+.decision-widget {
+  align-items: center;
+  display: grid;
+  gap: 8px 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 20px 22px;
 }
 
-.decision-panel > div:last-child {
-  border-right: 0;
+.decision-widget > .eyebrow,
+.decision-widget > strong,
+.decision-widget > p {
+  grid-column: 1;
 }
 
-.decision-panel strong {
+.decision-widget > .coverage-badges {
+  align-self: center;
+  grid-column: 2;
+  grid-row: 1 / -1;
+  justify-content: flex-end;
+  max-width: 360px;
+}
+
+.decision-widget strong {
   display: block;
-  font-size: 18px;
-  margin-bottom: 4px;
+  font-size: 22px;
+  margin-bottom: 2px;
 }
 
-.decision-panel p {
+.decision-widget p {
   color: var(--muted);
   margin: 0;
 }
@@ -4181,11 +4218,7 @@ dd {
   }
 
   .status-heading-icon {
-    align-items: center;
-    border-radius: 50%;
-    display: inline-flex !important;
     height: 46px;
-    justify-content: center;
     width: 46px;
   }
 
@@ -4193,11 +4226,6 @@ dd {
     height: 30px;
     width: 30px;
   }
-
-  .status-heading-icon.pass { color: var(--green); }
-  .status-heading-icon.warning { background: var(--amber-bg); color: var(--amber); }
-  .status-heading-icon.error { background: var(--red-bg); color: var(--red); }
-  .status-heading-icon.neutral { background: var(--surface-soft); color: var(--muted); }
 
   .status-heading .eyebrow {
     font-size: 11px;
