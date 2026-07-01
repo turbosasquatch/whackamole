@@ -698,6 +698,57 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
     return rows
 
 
+def _item_page_presentation(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Build display-only data used by the responsive item detail page."""
+    tab_destinations = {
+        "Media Info": "mediainfo",
+        "Rename Check": "rename",
+        "Upload Assistant": "upload-assistant",
+        "Discovarr": "discovarr",
+    }
+    counts = {"pass": 0, "warning": 0, "error": 0, "info": 0}
+    checks: List[Dict[str, Any]] = []
+    for source in item.get("overview_checks") or []:
+        if not isinstance(source, dict):
+            continue
+        check = dict(source)
+        group = str(check.get("group") or "").lower()
+        count_key = group if group in {"pass", "warning", "error"} else "info"
+        counts[count_key] += 1
+        target = tab_destinations.get(str(check.get("label") or ""))
+        check["action"] = "tab" if target else "details"
+        check["target"] = target or ""
+        check["count_key"] = count_key
+        checks.append(check)
+
+    media = item.get("check_results", {}).get("media", {}) if isinstance(item.get("check_results"), dict) else {}
+    issues = media.get("issues") if isinstance(media, dict) else []
+    issue_groups = [
+        {"key": "error", "label": "Errors", "items": []},
+        {"key": "warning", "label": "Warnings", "items": []},
+        {"key": "info", "label": "Information", "items": []},
+    ]
+    issue_group_map = {group["key"]: group for group in issue_groups}
+    for source in issues if isinstance(issues, list) else []:
+        if not isinstance(source, dict):
+            continue
+        issue = dict(source)
+        severity = str(issue.get("severity") or "INFO").lower()
+        key = severity if severity in {"error", "warning"} else "info"
+        issue["severity_key"] = key
+        issue_group_map[key]["items"].append(issue)
+
+    return {
+        "checks": checks,
+        "check_counts": counts,
+        "media_issue_groups": issue_groups,
+        "report_counts": {
+            "active": len(item.get("active_reports") or []),
+            "attempted": len(item.get("attempted_reports") or []),
+        },
+    }
+
+
 def _rename_check(item: Dict[str, Any], check_results: Dict[str, Any]) -> Dict[str, Any]:
     rename = check_results.get("rename_detection") if isinstance(check_results.get("rename_detection"), dict) else {}
     if rename:
@@ -2176,6 +2227,7 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
     item["resolved_reports"] = [
         _report_payload(report) for report in request.app.state.db.list_reports(state="resolved", item_id=item_id, limit=50)
     ]
+    item["item_page"] = _item_page_presentation(item)
     return templates.TemplateResponse(
         request,
         "item.html",

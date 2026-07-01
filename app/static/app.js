@@ -397,6 +397,10 @@
   document.querySelectorAll("[data-tabs]").forEach((tabs) => {
     const buttons = Array.from(tabs.querySelectorAll("[data-tab-target]"));
     const panels = Array.from(tabs.querySelectorAll("[data-tab-panel]"));
+    const externalTriggers = Array.from(tabs.querySelectorAll("[data-tab-open]"));
+    const moreRoot = tabs.querySelector("[data-tab-more]");
+    const moreToggle = moreRoot && moreRoot.querySelector("[data-tab-more-toggle]");
+    const moreMenu = moreRoot && moreRoot.querySelector("[data-tab-more-menu]");
     if (!buttons.length || !panels.length) return;
 
     const knownTab = (name) => buttons.some((button) => button.dataset.tabTarget === name);
@@ -417,6 +421,11 @@
         panel.classList.toggle("active", active);
         panel.hidden = !active;
       });
+      if (moreToggle) {
+        moreToggle.classList.toggle("active", name === "discovarr" || name === "reporting");
+      }
+      if (moreMenu) moreMenu.hidden = true;
+      if (moreToggle) moreToggle.setAttribute("aria-expanded", "false");
       if (options.syncHash && window.history && tabFromHash() !== name) {
         window.history.pushState(null, "", `#${name}`);
       }
@@ -425,23 +434,51 @@
     buttons.forEach((button) => {
       button.addEventListener("click", () => activate(button.dataset.tabTarget, { syncHash: true }));
       button.addEventListener("keydown", (event) => {
-        const currentIndex = buttons.indexOf(button);
+        const navigableButtons = buttons.filter((candidate) => candidate.offsetParent !== null);
+        const currentIndex = navigableButtons.indexOf(button);
         let nextIndex = currentIndex;
         if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-          nextIndex = (currentIndex + 1) % buttons.length;
+          nextIndex = (currentIndex + 1) % navigableButtons.length;
         } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-          nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+          nextIndex = (currentIndex - 1 + navigableButtons.length) % navigableButtons.length;
         } else if (event.key === "Home") {
           nextIndex = 0;
         } else if (event.key === "End") {
-          nextIndex = buttons.length - 1;
+          nextIndex = navigableButtons.length - 1;
         } else {
           return;
         }
         event.preventDefault();
-        activate(buttons[nextIndex].dataset.tabTarget, { focus: true, syncHash: true });
+        activate(navigableButtons[nextIndex].dataset.tabTarget, { focus: true, syncHash: true });
       });
     });
+
+    externalTriggers.forEach((button) => {
+      button.addEventListener("click", () => activate(button.dataset.tabOpen, { syncHash: true }));
+    });
+
+    if (moreToggle && moreMenu) {
+      moreToggle.addEventListener("click", () => {
+        const opening = moreMenu.hidden;
+        moreMenu.hidden = !opening;
+        moreToggle.setAttribute("aria-expanded", opening ? "true" : "false");
+        if (opening) {
+          const first = moreMenu.querySelector("button");
+          if (first) first.focus();
+        }
+      });
+      moreRoot.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        moreMenu.hidden = true;
+        moreToggle.setAttribute("aria-expanded", "false");
+        moreToggle.focus();
+      });
+      document.addEventListener("click", (event) => {
+        if (moreRoot.contains(event.target)) return;
+        moreMenu.hidden = true;
+        moreToggle.setAttribute("aria-expanded", "false");
+      });
+    }
 
     const requested = tabFromHash();
     if (knownTab(requested)) {
@@ -456,6 +493,43 @@
     };
     window.addEventListener("hashchange", syncFromLocation);
     window.addEventListener("popstate", syncFromLocation);
+  });
+
+  document.querySelectorAll("[data-copy-value-from]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const source = document.querySelector(button.dataset.copyValueFrom || "");
+      if (!source) return;
+      const value = source.value || source.textContent || "";
+      let copied = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(value);
+          copied = true;
+        }
+      } catch {}
+      if (!copied && typeof source.select === "function") {
+        try {
+          source.select();
+          copied = document.execCommand("copy");
+          source.setSelectionRange(0, 0);
+        } catch {}
+      }
+      const feedback = copied ? "Copied selected path" : "Selected path for copying";
+      button.classList.toggle("copied", copied);
+      button.classList.toggle("selected", !copied);
+      button.setAttribute("aria-label", feedback);
+      button.title = copied ? "Copied" : "Path selected";
+    });
+  });
+
+  document.querySelectorAll("[data-character-count-for]").forEach((counter) => {
+    const field = document.getElementById(counter.dataset.characterCountFor || "");
+    if (!field) return;
+    const update = () => {
+      counter.textContent = `${field.value.length} / ${field.maxLength > 0 ? field.maxLength : 1000}`;
+    };
+    field.addEventListener("input", update);
+    update();
   });
 
   const modal = document.querySelector("[data-raw-modal]");

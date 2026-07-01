@@ -529,7 +529,7 @@ def test_destructive_actions_have_confirmations_and_settings_inputs_are_semantic
     assert '<time datetime="{{ import.created_at | datetime_iso }}" data-local-datetime>' in imports_template
     assert '<time datetime="{{ group.oldest_at | datetime_iso }}" data-local-datetime>' in reports_template
     assert '<time datetime="{{ error.last_seen_at | datetime_iso }}" data-local-datetime>' in base_template
-    assert '<time datetime="{{ report.created_at | datetime_iso }}" data-local-datetime>' in item_template
+    assert '<time datetime="{{ (report.updated_at if attempted else report.created_at) | datetime_iso }}" data-local-datetime>' in item_template
     assert "Reject item" in item_template
     assert "Rejection stage" in item_template
     assert "Rejection reason" in item_template

@@ -1,4 +1,75 @@
 {% extends "base.html" %}
+{% macro icon(name, class_name="") -%}
+  <svg class="item-icon {{ class_name }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    {% if name == "refresh" %}<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 18 15"/>
+    {% elif name == "upload" %}<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 15a4 4 0 0 0 0 8h14a4 4 0 0 0 0-8h-1"/>
+    {% elif name == "ban" %}<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>
+    {% elif name == "close" %}<path d="m6 6 12 12M18 6 6 18"/>
+    {% elif name == "arrow" %}<path d="M5 12h14m-5-5 5 5-5 5"/>
+    {% elif name == "check" %}<circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/>
+    {% elif name == "warning" %}<path d="M10.3 3.6 2.5 17a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/>
+    {% elif name == "error" %}<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/>
+    {% elif name == "info" %}<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>
+    {% elif name == "chevron" %}<path d="m9 18 6-6-6-6"/>
+    {% elif name == "folder" %}<path d="M3 6h6l2 2h10v11H3z"/>
+    {% elif name == "copy" %}<rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>
+    {% elif name == "code" %}<path d="m8 9-3 3 3 3m8-6 3 3-3 3m-2-9-4 12"/>
+    {% elif name == "play" %}<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z"/>
+    {% elif name == "list" %}<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>
+    {% elif name == "trash" %}<path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6"/>
+    {% elif name == "flag" %}<path d="M5 21V4m0 1c5-3 8 3 14 0v10c-6 3-9-3-14 0"/>
+    {% elif name == "shield" %}<path d="M12 3 4.5 6v5.5c0 4.6 3.2 7.9 7.5 9.5 4.3-1.6 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/>
+    {% elif name == "report" %}<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6m-6 4h4"/>
+    {% elif name == "source" %}<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/>
+    {% elif name == "records" %}<path d="M5 4h14v16H5zM8 8h8m-8 4h8m-8 4h5"/>
+    {% elif name == "difference" %}<path d="M7 4v6a3 3 0 0 0 3 3h7m0 0-3-3m3 3-3 3"/><path d="M17 4v2M7 18v2"/>
+    {% endif %}
+  </svg>
+{%- endmacro %}
+
+{% macro media_files(item) -%}
+  {% if item.video_files.files %}
+    <ul class="file-list mobile-file-list">
+      {% for file in item.video_files.files %}
+        <li>
+          <div><span>{{ file.relative_path }}</span><small>{{ file.size | bytes }}</small></div>
+          <form method="post" action="/items/{{ item.id }}/rename-video-file" class="inline-rename-form" data-submit-tick="Renamed and requeued">
+            <input type="hidden" name="old_path" value="{{ file.path }}">
+            <input type="hidden" name="return_to" value="/items/{{ item.id }}#overview">
+            <input name="new_name" value="{{ file.name }}" aria-label="New video filename">
+            <button class="button secondary small" type="submit" data-submit-tick-button>Rename</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+    {% if item.video_files.truncated %}<p class="muted">Showing first {{ item.video_files.files | length }} video files.</p>{% endif %}
+  {% else %}
+    <p class="muted">{{ item.video_files.message or "-" }}</p>
+  {% endif %}
+{%- endmacro %}
+
+{% macro report_cards(reports, item, attempted=false) -%}
+  <div class="report-list">
+    {% for report in reports %}
+      <article class="report-card{% if attempted %} attempted{% endif %}">
+        <div>
+          <strong>{{ report.stage }}</strong>
+          <time datetime="{{ (report.updated_at if attempted else report.created_at) | datetime_iso }}" data-local-datetime>{{ (report.updated_at if attempted else report.created_at) | datetime }}</time>
+          <p>{{ report.notes or "-" }}</p>
+        </div>
+        <div class="button-row">
+          {% if not attempted %}
+            <form method="post" action="/reports/{{ report.id }}/attempt"><input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting"><button class="button small secondary" type="submit">Mark attempted</button></form>
+          {% endif %}
+          <form method="post" action="/reports/{{ report.id }}/resolve"><input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting"><button class="button small" type="submit">Resolve</button></form>
+          <form method="post" action="/reports/{{ report.id }}/delete" data-confirm="Delete this {{ report.stage }} report? This cannot be undone."><input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting"><button class="button small danger" type="submit">Delete</button></form>
+        </div>
+      </article>
+    {% else %}
+      <p class="muted">No {{ "attempted" if attempted else "active" }} reports.</p>
+    {% endfor %}
+  </div>
+{%- endmacro %}
 {% block title %}Item · Whackamole{% endblock %}
 {% block page_label %}Item detail{% endblock %}
 {% block topbar_actions %}
@@ -42,21 +113,21 @@
     </div>
     <div class="hero-actions">
       <form method="post" action="/items/{{ item.id }}/recheck" data-submit-tick="Recheck triggered">
-        <button class="button" type="submit" data-submit-tick-button>Recheck</button>
+        <button class="button item-action recheck-action" type="submit" data-submit-tick-button>{{ icon("refresh", "item-action-icon") }}<span>Recheck</span></button>
       </form>
       <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-submit-error-label="Retry" data-queue-upload-form data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue" data-queued-import-id="{{ active_import.id or '' }}">
         <input type="hidden" name="return_to" value="/items/{{ item.id }}">
-        <button class="button success" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
-          {% if active_import %}Queued{% else %}Queue Upload{% endif %}
+        <button class="button success item-action upload-action" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
+          {{ icon("upload", "item-action-icon") }}<span>{% if active_import %}Queued{% else %}Queue Upload{% endif %}</span>
         </button>
       </form>
       <form method="post" action="/items/{{ item.id }}/ignore">
-        <button class="button secondary" type="submit">Ignore</button>
+        <button class="button secondary item-action" type="submit">{{ icon("ban", "item-action-icon") }}<span>Ignore</span></button>
       </form>
       {% if item.effective_status != "rejected" %}
-        <a class="button danger" href="/items/{{ item.id }}#reporting">Mark rejected</a>
+        <a class="button danger item-action" href="/items/{{ item.id }}#reporting">{{ icon("close", "item-action-icon") }}<span>Mark rejected</span></a>
       {% endif %}
-      <a class="button secondary" href="{{ next_item_url }}">Next Item</a>
+      <a class="button secondary item-action next-item-action" href="{{ next_item_url }}">{{ icon("arrow", "item-action-icon") }}<span>Next Item</span></a>
     </div>
   </section>
 
@@ -86,15 +157,30 @@
       <button id="tab-rename" type="button" role="tab" aria-selected="false" aria-controls="panel-rename" tabindex="-1" data-tab-target="rename">Rename</button>
       <button id="tab-mediainfo" type="button" role="tab" aria-selected="false" aria-controls="panel-mediainfo" tabindex="-1" data-tab-target="mediainfo">Media Info</button>
       <button id="tab-upload-assistant" type="button" role="tab" aria-selected="false" aria-controls="panel-upload-assistant" tabindex="-1" data-tab-target="upload-assistant">Upload Assistant</button>
-      <button id="tab-discovarr" type="button" role="tab" aria-selected="false" aria-controls="panel-discovarr" tabindex="-1" data-tab-target="discovarr">Discovarr</button>
-      <button id="tab-reporting" type="button" role="tab" aria-selected="false" aria-controls="panel-reporting" tabindex="-1" data-tab-target="reporting">Reporting</button>
+      <button id="tab-discovarr" class="overflow-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-discovarr" tabindex="-1" data-tab-target="discovarr">Discovarr</button>
+      <button id="tab-reporting" class="overflow-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-reporting" tabindex="-1" data-tab-target="reporting">Reporting</button>
+      <div class="mobile-tab-more mobile-item-only" data-tab-more>
+        <button class="mobile-tab-more-toggle" type="button" aria-label="More item sections" aria-expanded="false" data-tab-more-toggle>&hellip;</button>
+        <div class="mobile-tab-more-menu" data-tab-more-menu hidden>
+          <button type="button" data-tab-open="discovarr">Discovarr</button>
+          <button type="button" data-tab-open="reporting">Reporting</button>
+        </div>
+      </div>
     </div>
 
     <div id="panel-overview" class="tab-panel active" role="tabpanel" aria-labelledby="tab-overview" data-tab-panel="overview">
       <div class="info-grid overview-summary-grid">
         <section>
-          <h2>Checks Summary</h2>
-          <div class="check-summary">
+          <div class="checks-summary-heading">
+            <h2>Checks Summary</h2>
+            <div class="check-counts mobile-item-only" aria-label="Check totals">
+              <span class="pass">{{ icon("check") }}{{ item.item_page.check_counts.pass }}</span>
+              <span class="warning">{{ icon("warning") }}{{ item.item_page.check_counts.warning }}</span>
+              <span class="error">{{ icon("error") }}{{ item.item_page.check_counts.error }}</span>
+              <span class="info">{{ icon("info") }}{{ item.item_page.check_counts.info }}</span>
+            </div>
+          </div>
+          <div class="check-summary desktop-item-only">
             {% for check in item.overview_checks %}
               <div class="check-summary-row">
                 <strong>{{ check.label }}</strong>
@@ -104,35 +190,52 @@
               </div>
             {% endfor %}
           </div>
+          <div class="mobile-check-summary mobile-item-only">
+            {% for check in item.item_page.checks %}
+              {% if check.action == "tab" %}
+                <button class="mobile-check-row" type="button" data-tab-open="{{ check.target }}">
+                  <span class="mobile-check-icon {{ check.count_key }}">{{ icon("check" if check.count_key == "pass" else check.count_key) }}</span>
+                  <span class="mobile-check-copy"><strong>{{ check.label }}</strong><small>{{ check.notes or "-" }}</small></span>
+                  <span class="check-state {{ check.group }}">{{ check.state }}</span>
+                  {{ icon("chevron", "mobile-check-chevron") }}
+                </button>
+              {% else %}
+                <details class="mobile-check-detail">
+                  <summary class="mobile-check-row">
+                    <span class="mobile-check-icon {{ check.count_key }}">{{ icon("check" if check.count_key == "pass" else check.count_key) }}</span>
+                    <span class="mobile-check-copy"><strong>{{ check.label }}</strong><small>{{ check.notes or "-" }}</small></span>
+                    <span class="check-state {{ check.group }}">{{ check.state }}</span>
+                    {{ icon("chevron", "mobile-check-chevron") }}
+                  </summary>
+                  <div class="mobile-check-detail-body">
+                    {% if check.label == "Source Detection" %}
+                      <div class="button-row">
+                        <form method="post" action="/items/{{ item.id }}/grab-nfo"><input type="hidden" name="return_to" value="{{ current_url | default('/items/' ~ item.id ~ '#overview') }}"><button class="button secondary small" type="submit">Grab NFO</button></form>
+                        <button class="button secondary small" type="button" data-raw-open data-raw-title="NFO" data-raw-kind="text" data-raw-source="raw-nfo">View NFO</button>
+                      </div>
+                    {% elif check.label == "Path Mapping" %}
+                      <h3>Media Files</h3>
+                      {{ media_files(item) }}
+                      <div class="button-row mobile-path-tools">
+                        <button class="button secondary small" type="button" data-raw-open data-raw-title="Check diagnostics" data-raw-kind="json" data-raw-source="raw-diagnostics">Check Diagnostics</button>
+                        <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw QUI Torrent" data-raw-kind="json" data-raw-source="raw-qui">Raw QUI Torrent</button>
+                      </div>
+                    {% else %}
+                      <p>{{ check.notes or "No additional detail recorded." }}</p>
+                      <button class="button secondary small" type="button" data-raw-open data-raw-title="{{ check.raw_title }}" data-raw-kind="{{ check.raw_kind }}" data-raw-source="raw-{{ check.raw_key }}">View raw data</button>
+                    {% endif %}
+                  </div>
+                </details>
+              {% endif %}
+            {% endfor %}
+          </div>
         </section>
       </div>
 
-      <div class="info-grid">
+      <div class="info-grid desktop-item-only">
         <section class="details-panel">
           <h2>Media Files</h2>
-          {% if item.video_files.files %}
-            <ul class="file-list">
-              {% for file in item.video_files.files %}
-                <li>
-                  <div>
-                    <span>{{ file.relative_path }}</span>
-                    <small>{{ file.size | bytes }}</small>
-                  </div>
-                  <form method="post" action="/items/{{ item.id }}/rename-video-file" class="inline-rename-form" data-submit-tick="Renamed and requeued">
-                    <input type="hidden" name="old_path" value="{{ file.path }}">
-                    <input type="hidden" name="return_to" value="/items/{{ item.id }}#overview">
-                    <input name="new_name" value="{{ file.name }}" aria-label="New video filename">
-                    <button class="button secondary small" type="submit" data-submit-tick-button>Rename</button>
-                  </form>
-                </li>
-              {% endfor %}
-            </ul>
-            {% if item.video_files.truncated %}
-              <p class="muted">Showing first {{ item.video_files.files | length }} video files.</p>
-            {% endif %}
-          {% else %}
-            <p class="muted">{{ item.video_files.message or "-" }}</p>
-          {% endif %}
+          {{ media_files(item) }}
         </section>
         <section class="details-panel">
           <h2>Tools</h2>
@@ -151,9 +254,12 @@
     <div id="panel-rename" class="tab-panel" role="tabpanel" aria-labelledby="tab-rename" data-tab-panel="rename" hidden>
       <section class="details-panel rename-panel">
         <div class="panel-heading">
-          <div>
+          <div class="status-heading">
+            <span class="status-heading-icon {{ rename_check.state or 'neutral' }} mobile-item-only">{{ icon("check" if rename_check.state == "pass" else ("warning" if rename_check.state == "warning" else "info")) }}</span>
+            <div>
             <span class="eyebrow">Rename Check</span>
             <h2>{{ rename_check.status_label or "No Rename Check evidence" }}</h2>
+            </div>
           </div>
           <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Rename Check" data-raw-kind="json" data-raw-source="raw-rename_detection">Raw</button>
         </div>
@@ -178,10 +284,46 @@
         </div>
 
         {% if rename_check.reason %}
-          <p class="muted">{{ rename_check.reason }}</p>
+          <p class="muted rename-reason-card">{{ rename_check.reason }}</p>
         {% endif %}
 
-        <table class="mini-table responsive-table rename-table">
+        <div class="rename-mobile-accordions mobile-item-only">
+          <details class="item-accordion">
+            <summary>{{ icon("source") }}<span><strong>Source</strong><small>{% if rename_check.rows %}{{ rename_check.rows | map(attribute='source') | unique | join(', ') }}{% else %}No evidence source{% endif %}</small></span><span class="severity-pill info">Info</span>{{ icon("chevron", "accordion-chevron") }}</summary>
+            <div class="item-accordion-body">
+              {% for row in rename_check.rows %}<p><strong>{{ row.source }}</strong>{% if row.tracker %} · {{ row.tracker }}{% endif %}{% if row.scope_label %}<small>{{ row.scope_label }}</small>{% endif %}</p>{% else %}<p class="muted">No Rename Check evidence source recorded.</p>{% endfor %}
+            </div>
+          </details>
+          <details class="item-accordion">
+            <summary>{{ icon("info") }}<span><strong>Issue</strong><small>{% if rename_check.rows %}{{ rename_check.rows[0].kind_label }}{% else %}No suspicious mismatch{% endif %}</small></span><span class="severity-pill info">Info</span>{{ icon("chevron", "accordion-chevron") }}</summary>
+            <div class="item-accordion-body">
+              {% for row in rename_check.rows %}<p><strong>{{ row.kind_label }}</strong>{% if row.reason %}<small>{{ row.reason }}</small>{% endif %}</p>{% else %}<p class="muted">No Rename Check issues recorded.</p>{% endfor %}
+            </div>
+          </details>
+          <details class="item-accordion">
+            <summary>{{ icon("records") }}<span><strong>Records</strong><small>{% if rename_check.rows %}Local and expected values{% else %}No differing records{% endif %}</small></span><span class="severity-pill info">Info</span>{{ icon("chevron", "accordion-chevron") }}</summary>
+            <div class="item-accordion-body rename-records-body">
+              {% for row in rename_check.rows %}
+                <div><small>{{ row.local_label }}</small>{% if row.diff.local %}<code class="rename-diff">{% for segment in row.diff.local %}<span class="rename-diff-{{ segment.type }}">{{ segment.text }}</span>{% endfor %}</code>{% else %}<span class="muted">-</span>{% endif %}</div>
+                <div><small>{{ row.remote_label }}</small>{% if row.diff.remote %}<code class="rename-diff">{% for segment in row.diff.remote %}<span class="rename-diff-{{ segment.type }}">{{ segment.text }}</span>{% endfor %}</code>{% elif row.remote_value %}<code class="rename-diff">{{ row.remote_value }}</code>{% else %}<span class="muted">-</span>{% endif %}</div>
+              {% else %}<p class="muted">Local file matches the available reference record.</p>{% endfor %}
+            </div>
+          </details>
+          <details class="item-accordion">
+            <summary>{{ icon("difference") }}<span><strong>Difference</strong><small>{{ rename_check.reason or "No suspicious mismatch" }}</small></span><span class="severity-pill info">Info</span>{{ icon("chevron", "accordion-chevron") }}</summary>
+            <div class="item-accordion-body">
+              {% for row in rename_check.rows %}
+                <div class="rename-mobile-difference"><strong>{{ row.difference_summary }}</strong>
+                  {% if row.problem %}<div class="rename-problem"><strong>{{ row.problem.summary }}</strong>{% if row.problem.detail %}<small>{{ row.problem.detail }}</small>{% endif %}{% if row.problem.suggested_value %}<code class="rename-diff rename-problem-suggestion">{{ row.problem.suggested_value }}</code>{% endif %}</div>{% endif %}
+                  {% if row.meta %}<dl class="rename-meta">{% for meta in row.meta %}<dt>{{ meta.label }}</dt><dd>{{ meta.value }}</dd>{% endfor %}</dl>{% endif %}
+                  {% if row.files %}<div class="rename-files"><strong>Affected files</strong>{% for group in row.files %}<small>{{ group.label }}</small><ul>{% for file in group["items"] %}<li>{{ file }}</li>{% endfor %}</ul>{% endfor %}</div>{% endif %}
+                </div>
+              {% else %}<p class="muted">{{ rename_check.reason }}</p>{% endfor %}
+            </div>
+          </details>
+        </div>
+
+        <table class="mini-table responsive-table rename-table desktop-item-only">
           <thead>
             <tr>
               <th>Severity</th>
@@ -299,19 +441,33 @@
     <div id="panel-mediainfo" class="tab-panel" role="tabpanel" aria-labelledby="tab-mediainfo" data-tab-panel="mediainfo" hidden>
       <section class="details-panel">
         <div class="panel-heading">
-          <div>
+          <div class="status-heading">
+            {% set media_state = 'error' if (media.media_status or media.verdict or media.status) | lower in ['error', 'failed', 'blocked'] else ('warning' if (media.media_status or media.verdict or media.status) | lower in ['warning', 'manual_review'] else 'pass') %}
+            <span class="status-heading-icon {{ media_state }} mobile-item-only">{{ icon("error" if media_state == "error" else ("warning" if media_state == "warning" else "check")) }}</span>
+            <div>
             <span class="eyebrow">MediaInfo</span>
             <h2>{{ media.media_status or media.verdict or media.status or "No check recorded" }}</h2>
+            </div>
           </div>
-          <div class="button-row compact">
+          <div class="button-row compact desktop-item-only">
             <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw QUI MediaInfo" data-raw-kind="json" data-raw-source="raw-mediainfo">Raw QUI MediaInfo</button>
             <button class="button secondary small" type="button" data-raw-open data-raw-title="Raw Local MediaInfo" data-raw-kind="json" data-raw-source="raw-local-mediainfo">Raw Local MediaInfo</button>
           </div>
+          <details class="media-raw-toggle mobile-item-only" open>
+            <summary>Raw {{ icon("chevron", "accordion-chevron") }}</summary>
+            <div class="media-raw-actions">
+              <h3>Raw Data</h3>
+              <div>
+                <button class="button secondary" type="button" data-raw-open data-raw-title="Raw QUI MediaInfo" data-raw-kind="json" data-raw-source="raw-mediainfo">{{ icon("code") }}<span>Raw QUI MediaInfo</span></button>
+                <button class="button secondary" type="button" data-raw-open data-raw-title="Raw Local MediaInfo" data-raw-kind="json" data-raw-source="raw-local-mediainfo">{{ icon("code") }}<span>Raw Local MediaInfo</span></button>
+              </div>
+            </div>
+          </details>
         </div>
-        {% if media.reason %}<p>{{ media.reason }}</p>{% endif %}
+        {% if media.reason %}<p class="desktop-item-only">{{ media.reason }}</p>{% endif %}
         <div class="media-tag-block">
           <div class="media-tag-row">
-            <span class="tag-row-label">Title</span>
+            <span class="tag-row-label"><span class="desktop-item-only">Title</span><span class="mobile-item-only">Title (Name / Release Tags)</span></span>
             <div class="tag-list title-tag-list">
               {% for tag in media.title_tag_matches or [] %}
                 <span class="title-tag {{ tag.state or 'neutral' }}" title="{{ tag.reason or '' }}">{{ tag.label }}</span>
@@ -319,7 +475,7 @@
             </div>
           </div>
           <div class="media-tag-row">
-            <span class="tag-row-label">MediaInfo</span>
+            <span class="tag-row-label"><span class="desktop-item-only">MediaInfo</span><span class="mobile-item-only">MediaInfo (Extracted)</span></span>
             <div class="tag-list mediainfo-tag-list">
               {% for tag in media.media_tags or [] %}
                 <span class="media-confirmed-tag">{{ tag }}</span>
@@ -327,7 +483,26 @@
             </div>
           </div>
         </div>
-        <table class="mini-table responsive-table">
+        <div class="media-mobile-issues mobile-item-only">
+          <div class="media-issues-heading"><h3>Issues</h3></div>
+          {% for group in item.item_page.media_issue_groups if group["items"] %}
+            <details class="media-issue-group {{ group.key }}" open>
+              <summary>{{ group.label }} ({{ group["items"] | length }}) {{ icon("chevron", "accordion-chevron") }}</summary>
+              <div>
+                {% for issue in group["items"] %}
+                  <article class="media-issue-row">
+                    <span class="mobile-check-icon {{ group.key }}">{{ icon("error" if group.key == "error" else ("warning" if group.key == "warning" else "info")) }}</span>
+                    <div><strong>{{ issue.key or "MediaInfo issue" }}</strong><small>{{ issue.message }}</small>{% if issue.file %}<span>{{ issue.file }}</span>{% endif %}</div>
+                    {{ icon("chevron", "mobile-check-chevron") }}
+                  </article>
+                {% endfor %}
+              </div>
+            </details>
+          {% else %}
+            <p class="muted">No MediaInfo issues recorded.</p>
+          {% endfor %}
+        </div>
+        <table class="mini-table responsive-table desktop-item-only">
           <thead>
             <tr>
               <th>Severity</th>
@@ -380,7 +555,11 @@
         <div class="upload-console-grid">
           <label>
             <span>Selected {{ ua_console.path_kind or "path" }}</span>
-            <input data-upload-path value="{{ ua_console.path or '' }}" readonly>
+            <div class="upload-path-control">
+              {{ icon("folder") }}
+              <input data-upload-path value="{{ ua_console.path or '' }}" readonly>
+              <button type="button" data-copy-value-from="[data-upload-path]" aria-label="Copy selected path" title="Copy selected path">{{ icon("copy") }}</button>
+            </div>
           </label>
           <label>
             <span>Additional Arguments</span>
@@ -403,16 +582,16 @@
 
         <div class="upload-console-actions">
           <button class="button" type="button" data-upload-execute {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
-            {% if ua_check_busy %}Check running{% elif ua_busy and not ua_busy_this_item %}Busy{% else %}Execute Upload{% endif %}
+            {{ icon("play", "item-action-icon") }}<span>{% if ua_check_busy %}Check running{% elif ua_busy and not ua_busy_this_item %}Busy{% else %}Execute Upload{% endif %}</span>
           </button>
           <button class="button secondary" type="button" data-upload-autorun {% if ua_execute_disabled or ua_busy_this_item %}disabled{% endif %}>
-            Autorun
+            {{ icon("play", "item-action-icon") }}<span>Autorun</span>
           </button>
           <button class="button secondary" type="button" data-upload-queue {% if not item.can_upload or not upload_console_configured or not ua_console.path %}disabled{% endif %}>
-            Queue
+            {{ icon("list", "item-action-icon") }}<span>Queue</span>
           </button>
-          <button class="button secondary" type="button" data-upload-clear {% if ua_busy_this_item %}hidden{% endif %}>Clear</button>
-          <button class="button danger" type="button" data-upload-kill {% if not ua_busy_this_item %}hidden{% endif %}>Kill &amp; Clear</button>
+          <button class="button secondary" type="button" data-upload-clear {% if ua_busy_this_item %}hidden{% endif %}>{{ icon("trash", "item-action-icon") }}<span>Clear</span></button>
+          <button class="button danger" type="button" data-upload-kill {% if not ua_busy_this_item %}hidden{% endif %}>{{ icon("close", "item-action-icon") }}<span>Kill &amp; Clear</span></button>
         </div>
 
         <div class="upload-console-terminal-wrap">
@@ -464,15 +643,17 @@
           {% for decision in item.arr_result.decisions or [] %}
             {% set releases = item.arr_release_views.get(decision.tracker, []) %}
             <article class="decision-card {{ decision.status }}">
-              <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
-              {% if decision.reason and "Valid Upload Candidate" not in decision.reason %}<span>{{ decision.reason }}</span>{% endif %}
-              <span>{{ decision.matched_count or 0 }} torrent result{{ "" if decision.matched_count == 1 else "s" }} · {{ decision.same_lane_count or 0 }} in lane</span>
-              {% if decision.best_release %}
-                <span><b>Best match:</b> {{ decision.best_release.title }}{% if decision.best_release.quality %} · {{ decision.best_release.quality }}{% endif %}{% if decision.best_release.seeders is not none %} · {{ decision.best_release.seeders }} seeders{% endif %}</span>
-              {% endif %}
-              {% if releases %}
-                <details>
-                  <summary>Discovarr releases</summary>
+              <span class="decision-status-icon">{{ icon("check" if decision.status == "candidate" else ("warning" if decision.status in ["warning", "manual_review"] else "error")) }}</span>
+              <div class="decision-card-content">
+                <strong>{{ decision.tracker }} · {{ decision.status }}</strong>
+                {% if decision.reason and "Valid Upload Candidate" not in decision.reason %}<span>{{ decision.reason }}</span>{% endif %}
+                <span>{{ decision.matched_count or 0 }} torrent result{{ "" if decision.matched_count == 1 else "s" }} · {{ decision.same_lane_count or 0 }} in lane</span>
+                {% if decision.best_release %}
+                  <span><b>Best match:</b> {{ decision.best_release.title }}{% if decision.best_release.quality %} · {{ decision.best_release.quality }}{% endif %}{% if decision.best_release.seeders is not none %} · {{ decision.best_release.seeders }} seeders{% endif %}</span>
+                {% endif %}
+                {% if releases %}
+                  <details>
+                  <summary>{{ icon("play") }}Discovarr releases {{ icon("chevron", "accordion-chevron") }}</summary>
                   <table class="mini-table comparison-table">
                     <thead><tr><th>Indexer</th><th>Title</th><th>Lane Matches</th><th>Ranking</th><th>Seeders</th></tr></thead>
                     <tbody>
@@ -499,8 +680,9 @@
                       {% endfor %}
                     </tbody>
                   </table>
-                </details>
-              {% endif %}
+                  </details>
+                {% endif %}
+              </div>
             </article>
           {% else %}
             <p class="muted">No Discovarr comparison recorded.</p>
@@ -510,6 +692,41 @@
     </div>
 
     <div id="panel-reporting" class="tab-panel" role="tabpanel" aria-labelledby="tab-reporting" data-tab-panel="reporting" hidden>
+      <div class="mobile-reporting mobile-item-only">
+        <span class="eyebrow">Reporting</span>
+        <details class="reporting-accordion report-issue" open>
+          <summary>{{ icon("flag") }}<strong>Report an issue</strong>{{ icon("chevron", "accordion-chevron") }}</summary>
+          <form class="report-form" method="post" action="/items/{{ item.id }}/reports">
+            <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+            <label>Processing Stage<select name="stage">{% for stage in reporting_stages %}<option value="{{ stage }}">{{ stage }}</option>{% endfor %}</select></label>
+            <label>Notes<span class="reporting-textarea-wrap"><textarea id="mobile-report-notes" name="notes" rows="5" maxlength="1000" placeholder="Describe the issue&hellip;"></textarea><span class="character-count" data-character-count-for="mobile-report-notes">0 / 1000</span></span></label>
+            <button class="button" type="submit">{{ icon("flag") }}<span>Flag Error</span></button>
+          </form>
+        </details>
+
+        {% if item.effective_status != "rejected" %}
+          <details class="reporting-accordion reject-item">
+            <summary>{{ icon("shield") }}<strong>Reject this item</strong>{{ icon("chevron", "accordion-chevron") }}</summary>
+            <form class="report-form" method="post" action="/items/{{ item.id }}/reject">
+              <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
+              <label>Rejection stage<select name="stage">{% for stage in reporting_stages %}<option value="{{ stage }}" {% if stage == "Tracker Moderation" %}selected{% endif %}>{{ stage }}</option>{% endfor %}</select></label>
+              <label>Rejection reason<textarea name="notes" rows="5" maxlength="1000" required placeholder="Describe the moderation rejection&hellip;"></textarea></label>
+              <button class="button danger" type="submit">Mark rejected</button>
+            </form>
+          </details>
+        {% endif %}
+
+        <details class="reporting-list-accordion">
+          <summary>{{ icon("report") }}<span><strong>Active Reports</strong><small>{% if item.active_reports %}Review open reports.{% else %}No active reports.{% endif %}</small></span><span class="report-count active">{{ item.item_page.report_counts.active }}</span>{{ icon("chevron", "accordion-chevron") }}</summary>
+          <div>{{ report_cards(item.active_reports, item) }}</div>
+        </details>
+        <details class="reporting-list-accordion">
+          <summary>{{ icon("report") }}<span><strong>Attempted Reports</strong><small>{% if item.attempted_reports %}Review attempted reports.{% else %}No attempted reports.{% endif %}</small></span><span class="report-count">{{ item.item_page.report_counts.attempted }}</span>{{ icon("chevron", "accordion-chevron") }}</summary>
+          <div>{{ report_cards(item.attempted_reports, item, true) }}</div>
+        </details>
+      </div>
+
+      <div class="desktop-reporting desktop-item-only">
       <section class="details-panel">
         <div class="panel-heading">
           <div>
@@ -529,7 +746,7 @@
           </label>
           <label>
             Notes
-            <textarea name="notes" rows="5" placeholder="Describe the issue&hellip;"></textarea>
+            <textarea name="notes" rows="5" maxlength="1000" placeholder="Describe the issue&hellip;"></textarea>
           </label>
           <button class="button" type="submit">Flag Error</button>
         </form>
@@ -555,7 +772,7 @@
             </label>
             <label>
               Rejection reason
-              <textarea name="notes" rows="5" required placeholder="Describe the moderation rejection&hellip;"></textarea>
+              <textarea name="notes" rows="5" maxlength="1000" required placeholder="Describe the moderation rejection&hellip;"></textarea>
             </label>
             <button class="button danger" type="submit">Mark rejected</button>
           </form>
@@ -564,61 +781,14 @@
 
       <section class="details-panel">
         <h2>Active Reports</h2>
-        <div class="report-list">
-          {% for report in item.active_reports %}
-            <article class="report-card">
-              <div>
-                <strong>{{ report.stage }}</strong>
-                <time datetime="{{ report.created_at | datetime_iso }}" data-local-datetime>{{ report.created_at | datetime }}</time>
-                <p>{{ report.notes or "-" }}</p>
-              </div>
-              <div class="button-row">
-                <form method="post" action="/reports/{{ report.id }}/attempt">
-                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
-                  <button class="button small secondary" type="submit">Mark attempted</button>
-                </form>
-                <form method="post" action="/reports/{{ report.id }}/resolve">
-                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
-                  <button class="button small" type="submit">Resolve</button>
-                </form>
-                <form method="post" action="/reports/{{ report.id }}/delete" data-confirm="Delete this {{ report.stage }} report? This cannot be undone.">
-                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
-                  <button class="button small danger" type="submit">Delete</button>
-                </form>
-              </div>
-            </article>
-          {% else %}
-            <p class="muted">No active reports.</p>
-          {% endfor %}
-        </div>
+        {{ report_cards(item.active_reports, item) }}
       </section>
 
       <section class="details-panel">
         <h2>Attempted Reports</h2>
-        <div class="report-list">
-          {% for report in item.attempted_reports %}
-            <article class="report-card attempted">
-              <div>
-                <strong>{{ report.stage }}</strong>
-                <time datetime="{{ report.updated_at | datetime_iso }}" data-local-datetime>{{ report.updated_at | datetime }}</time>
-                <p>{{ report.notes or "-" }}</p>
-              </div>
-              <div class="button-row">
-                <form method="post" action="/reports/{{ report.id }}/resolve">
-                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
-                  <button class="button small" type="submit">Resolve</button>
-                </form>
-                <form method="post" action="/reports/{{ report.id }}/delete" data-confirm="Delete this {{ report.stage }} report? This cannot be undone.">
-                  <input type="hidden" name="return_to" value="/items/{{ item.id }}#reporting">
-                  <button class="button small danger" type="submit">Delete</button>
-                </form>
-              </div>
-            </article>
-          {% else %}
-            <p class="muted">No attempted reports.</p>
-          {% endfor %}
-        </div>
+        {{ report_cards(item.attempted_reports, item, true) }}
       </section>
+      </div>
     </div>
   </section>
 {% endif %}

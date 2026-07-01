@@ -252,9 +252,36 @@ def test_item_detail_tabs_expose_accessible_tab_markup(tmp_path, monkeypatch):
             assert f'data-tab-panel="{tab}"' in response.text
         assert 'id="tab-overview" class="active" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" tabindex="0"' in response.text
         for tab in ["rename", "mediainfo", "upload-assistant", "discovarr", "reporting"]:
-            assert f'id="tab-{tab}" type="button" role="tab" aria-selected="false" aria-controls="panel-{tab}" tabindex="-1"' in response.text
+            tab_markup = response.text.split(f'id="tab-{tab}"', 1)[1].split(">", 1)[0]
+            assert 'type="button"' in tab_markup
+            assert 'role="tab"' in tab_markup
+            assert 'aria-selected="false"' in tab_markup
+            assert f'aria-controls="panel-{tab}"' in tab_markup
+            assert 'tabindex="-1"' in tab_markup
         assert 'id="panel-overview" class="tab-panel active" role="tabpanel" aria-labelledby="tab-overview"' in response.text
         assert 'id="panel-reporting" class="tab-panel" role="tabpanel" aria-labelledby="tab-reporting" data-tab-panel="reporting" hidden' in response.text
+
+
+def test_item_detail_exposes_mobile_summary_navigation_and_reporting_controls(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+
+        response = client.get(f"/items/{item_id}")
+
+        assert response.status_code == 200
+        assert 'class="check-counts mobile-item-only"' in response.text
+        for target in ["rename", "mediainfo", "upload-assistant", "discovarr"]:
+            assert f'data-tab-open="{target}"' in response.text
+        assert "data-tab-more-toggle" in response.text
+        assert "mobile-check-detail" in response.text
+        assert "mobile-path-tools" in response.text
+        assert "rename-mobile-accordions" in response.text
+        assert "media-mobile-issues" in response.text
+        assert 'data-copy-value-from="[data-upload-path]"' in response.text
+        assert 'id="mobile-report-notes"' in response.text
+        assert 'maxlength="1000"' in response.text
+        assert 'data-character-count-for="mobile-report-notes"' in response.text
+        assert "reporting-list-accordion" in response.text
 
 
 def test_item_page_separates_title_and_confirmed_mediainfo_tags(tmp_path, monkeypatch):
@@ -302,8 +329,10 @@ def test_item_page_separates_title_and_confirmed_mediainfo_tags(tmp_path, monkey
         page = client.get(f"/items/{item_id}")
 
         assert page.status_code == 200
-        assert '<span class="tag-row-label">Title</span>' in page.text
-        assert '<span class="tag-row-label">MediaInfo</span>' in page.text
+        assert '<span class="desktop-item-only">Title</span>' in page.text
+        assert '<span class="mobile-item-only">Title (Name / Release Tags)</span>' in page.text
+        assert '<span class="desktop-item-only">MediaInfo</span>' in page.text
+        assert '<span class="mobile-item-only">MediaInfo (Extracted)</span>' in page.text
         assert '<span class="title-tag mismatch" title="Not confirmed by MediaInfo.">7.1</span>' in page.text
         assert '<span class="title-tag neutral" title="Not directly verified by MediaInfo.">BluRay</span>' in page.text
         assert '<span class="media-confirmed-tag">5.1</span>' in page.text
@@ -1396,7 +1425,8 @@ def test_rejected_action_moves_candidate_item_and_creates_report(tmp_path, monke
         row = db.get_item(item_id)
 
         assert page.status_code == 200
-        assert f'href="/items/{item_id}#reporting">Mark rejected</a>' in page.text
+        assert f'href="/items/{item_id}#reporting"' in page.text
+        assert "Mark rejected" in page.text
         assert f'action="/items/{item_id}/reject"' in page.text
         assert "Reject item" in page.text
         assert "Rejection stage" in page.text
