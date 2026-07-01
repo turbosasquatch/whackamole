@@ -129,6 +129,20 @@
   </section>
 
   <section>
+    <h2>Notifications</h2>
+    <div class="form-grid">
+      <label>
+        Discord webhook URL {% if secrets.discord_webhook_url %}<span class="saved">saved</span>{% endif %}
+        <input name="discord_webhook_url" type="password" autocomplete="new-password" placeholder="{% if secrets.discord_webhook_url %}Leave blank to keep saved webhook{% else %}Paste webhook URL{% endif %}">
+      </label>
+      <label class="checkbox">
+        <input name="clear_discord_webhook_url" type="checkbox">
+        Clear saved Discord webhook
+      </label>
+    </div>
+  </section>
+
+  <section>
     <h2>Watch Scope</h2>
     <div class="form-grid">
       <label>

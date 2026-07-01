@@ -1671,6 +1671,7 @@ def _secret_state(secrets: SecretStore) -> Dict[str, bool]:
         "radarr_api_key": secrets.has("radarr_api_key"),
         "easycross_api_key": secrets.has("easycross_api_key"),
         "profilarr_api_key": secrets.has("profilarr_api_key"),
+        "discord_webhook_url": secrets.has("discord_webhook_url"),
     }
 
 
@@ -2815,6 +2816,8 @@ async def save_config(
     clear_profilarr_api_key: Optional[str] = Form(None),
     whackamole_api_token: str = Form(""),
     clear_whackamole_api_token: Optional[str] = Form(None),
+    discord_webhook_url: str = Form(""),
+    clear_discord_webhook_url: Optional[str] = Form(None),
     policy_dp_banned: Optional[str] = Form(None),
     policy_dp_ranked: Optional[str] = Form(None),
     policy_ulcx_banned: Optional[str] = Form(None),
@@ -2907,6 +2910,7 @@ async def save_config(
     _update_secret(secrets, "easycross_api_key", easycross_api_key, clear_easycross_api_key)
     _update_secret(secrets, "profilarr_api_key", profilarr_api_key, clear_profilarr_api_key)
     _update_secret(secrets, "whackamole_api_token", whackamole_api_token, clear_whackamole_api_token)
+    _update_secret(secrets, "discord_webhook_url", discord_webhook_url, clear_discord_webhook_url)
 
     manager.save(cfg)
     policy_reapply = request.app.state.db.reapply_release_group_policy(cfg.tracker_policies)

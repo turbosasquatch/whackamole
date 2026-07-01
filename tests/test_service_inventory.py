@@ -1663,3 +1663,104 @@ def test_auto_upload_toggle_alone_does_not_sweep_existing_candidates(tmp_path, m
     row = db.get_item(item_id)
     assert row["status"] == "candidate"
     assert db.list_imports() == []
+
+
+def test_new_candidate_with_auto_upload_off_notifies_discord_once(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    secrets.set("discord_webhook_url", "http://discord.test/webhook")
+    notified = []
+
+    async def fake_notify(webhook_url, embed):
+        notified.append((webhook_url, embed["title"]))
+
+    monkeypatch.setattr("app.service.send_discord_notification", fake_notify)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+    asyncio.run(run_check())
+
+    assert notified == [("http://discord.test/webhook", "📋 New candidate (auto-upload off)")]
+
+
+def test_auto_upload_enabled_notifies_discord_on_queue(tmp_path, monkeypatch):
+    manager, secrets, db, item_id = _setup_candidate_check(tmp_path, monkeypatch)
+    secrets.set("ua_bearer_token", "token")
+    secrets.set("discord_webhook_url", "http://discord.test/webhook")
+    db.set_kv("auto_upload_enabled", "true")
+    notified = []
+
+    async def fake_notify(webhook_url, embed):
+        notified.append(embed["title"])
+
+    monkeypatch.setattr("app.service.send_discord_notification", fake_notify)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+
+    assert notified == ["⬆️ Auto-uploaded"]
+
+
+def test_manual_review_notifies_discord_once_across_rechecks(tmp_path, monkeypatch):
+    release_title = "Last.Night.In.Soho.2021.2160p.UHD.BluRay.Atmos.DV.x265-W4NK3R"
+    MediaQuiClient.files = [
+        {"index": 0, "name": f"{release_title}/{release_title}.mkv", "size": 1000}
+    ]
+    MediaQuiClient.mediainfo = {
+        "streams": [
+            {"@type": "Video", "Format": "HEVC", "Width": "3840", "Height": "1608", "ScanType": "Progressive"},
+            {"@type": "Audio", "Format": "MLP FBA", "Channels": "8"},
+        ],
+    }
+    MediaQuiClient.mediainfo_error = None
+    MediaQuiClient.mediainfo_calls = []
+    MediaQuiClient.download_calls = 0
+    MediaQuiClient.nfo_content = None
+    PassingUploadAssistantClient.calls = 0
+    monkeypatch.setattr("app.service.QuiClient", MediaQuiClient)
+    monkeypatch.setattr("app.service.UploadAssistantClient", PassingUploadAssistantClient)
+
+    async def fake_compare_item_with_arr(**_kwargs):
+        return {
+            "status": "candidate",
+            "reason": "Valid upload candidate on: DP",
+            "decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}],
+        }
+
+    async def fake_verify_srrdb_release(**_kwargs):
+        return {"status": "skipped", "reason": "skipped"}
+
+    monkeypatch.setattr("app.service.compare_item_with_arr", fake_compare_item_with_arr)
+    monkeypatch.setattr("app.service.verify_srrdb_release", fake_verify_srrdb_release)
+    manager = ConfigManager(str(tmp_path))
+    cfg = manager.load()
+    cfg.mediainfo.enabled = False
+    cfg.upload_assistant.url = "http://ua.test"
+    manager.save(cfg)
+    secrets = SecretStore(str(tmp_path))
+    secrets.set("discord_webhook_url", "http://discord.test/webhook")
+    db = Database(str(tmp_path / "whackamole.db"))
+    item_id = _insert_check_item(db, release_title)
+
+    notified = []
+
+    async def fake_notify(webhook_url, embed):
+        notified.append(embed["title"])
+
+    monkeypatch.setattr("app.service.send_discord_notification", fake_notify)
+
+    async def run_check():
+        service = WhackamoleService(manager, secrets, db)
+        await service.check_item(item_id)
+
+    asyncio.run(run_check())
+    asyncio.run(run_check())
+
+    row = db.get_item(item_id)
+    assert row["status"] == "manual_review"
+    assert notified == ["🔍 Added to review"]

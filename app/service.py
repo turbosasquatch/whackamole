@@ -37,6 +37,7 @@ from app.media_policy import (
     VIDEO_EXTENSIONS,
     video_file_payloads,
 )
+from app.notifications import build_candidate_embed, send_discord_notification
 from app.pathmap import map_path
 from app.reducer import reduce_ua_log
 from app.rename_detection import analyze_rename_detection, rename_detection_flag
@@ -1385,6 +1386,7 @@ class WhackamoleService:
         verdict = reduction.verdict
         reason = reduction.reason
         next_check_at = None
+        previous_status = str(item["status"] or "")
         if reduction.status == "candidate" and reduction.tracker_results.get("passed"):
             self.db.update_check_stage(item_id, "arr", "Running Arr comparison.", check_results)
             arr_started_at = time.perf_counter()
@@ -1588,9 +1590,25 @@ class WhackamoleService:
             increment_attempt=True,
         )
 
+        if decision.status == "manual_review" and previous_status != "manual_review":
+            await self._notify_discord(
+                "🔍 Added to review",
+                item,
+                reduction.tracker_results,
+                arr_results,
+                check_results,
+                decision.reason,
+            )
+
         if decision.status == "candidate":
             await self._maybe_auto_queue_upload(
-                item_id, item, mapped_path, reduction.tracker_results, arr_results, check_results
+                item_id,
+                item,
+                mapped_path,
+                reduction.tracker_results,
+                arr_results,
+                check_results,
+                previous_status=previous_status,
             )
 
     async def _maybe_auto_queue_upload(
@@ -1601,8 +1619,18 @@ class WhackamoleService:
         tracker_groups: Dict[str, Any],
         arr_results: Dict[str, Any],
         check_results: Dict[str, Any],
+        previous_status: str = "",
     ) -> None:
         if self.db.get_kv("auto_upload_enabled") != "true":
+            if previous_status != "candidate":
+                await self._notify_discord(
+                    "📋 New candidate (auto-upload off)",
+                    item,
+                    tracker_groups,
+                    arr_results,
+                    check_results,
+                    "",
+                )
             return
         cfg = self.config_manager.load()
         if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
@@ -1620,6 +1648,39 @@ class WhackamoleService:
             args=args,
         )
         await self.request_queued_import_run()
+        await self._notify_discord(
+            "⬆️ Auto-uploaded",
+            item,
+            tracker_groups,
+            arr_results,
+            check_results,
+            "",
+        )
+
+    async def _notify_discord(
+        self,
+        event_title: str,
+        item: Mapping[str, Any],
+        tracker_groups: Mapping[str, Any],
+        arr_results: Mapping[str, Any],
+        check_results: Mapping[str, Any],
+        reason: str,
+    ) -> None:
+        webhook_url = self.secrets.get("discord_webhook_url")
+        if not webhook_url:
+            return
+        embed = build_candidate_embed(
+            event_title=event_title,
+            item=item,
+            tracker_groups=tracker_groups,
+            arr_result=arr_results,
+            check_results=check_results,
+            reason=reason,
+        )
+        try:
+            await send_discord_notification(webhook_url, embed)
+        except Exception as exc:
+            self.db.append_service_error(f"Discord notification failed: {exc}")
 
     def _next_error_check(self, attempt_count: int, retry_after: Optional[str]) -> int:
         cfg = self.config_manager.load()
