@@ -263,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Update the live Unraid Whackamole container safely.")
     parser.add_argument("--check-only", action="store_true", help="Validate live deployment state without updating.")
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_PATH, help="Ignored Unraid API env file.")
+    parser.add_argument("--health-url", default=DEFAULT_HEALTH_URL, help="Whackamole health endpoint to verify.")
     parser.add_argument("--timeout", type=float, default=300.0, help="Maximum deployment wait in seconds.")
     parser.add_argument("--poll-interval", type=float, default=10.0, help="Seconds between deployment checks.")
     return parser
@@ -282,6 +283,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 health_client=health_client,
                 api_url=settings.api_url,
                 expected_sha=expected_sha,
+                health_url=args.health_url,
                 timeout=args.timeout,
                 poll_interval=args.poll_interval,
                 check_only=args.check_only,

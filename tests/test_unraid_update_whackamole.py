@@ -9,6 +9,7 @@ import pytest
 from tools.unraid_update_whackamole import (
     EXPECTED_IMAGE,
     REVISION_LABEL,
+    build_parser,
     deploy_whackamole,
     inspect_whackamole,
     unraid_settings,
@@ -72,6 +73,12 @@ def test_unraid_settings_loads_ignored_env_without_exposing_key(tmp_path: Path):
 
     assert settings.api_url == "http://192.168.1.16/graphql"
     assert settings.api_key == "secret-value"
+
+
+def test_cli_accepts_fallback_health_url():
+    args = build_parser().parse_args(["--health-url", HEALTH_URL])
+
+    assert args.health_url == HEALTH_URL
 
 
 def test_inspect_rejects_old_api_version():
