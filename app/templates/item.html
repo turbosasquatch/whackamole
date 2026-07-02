@@ -112,7 +112,7 @@
       <form method="post" action="/items/{{ item.id }}/recheck" data-submit-tick="Recheck triggered">
         <button class="button item-action recheck-action" type="submit" data-submit-tick-button>{{ icon("refresh", "item-action-icon") }}<span>Recheck</span></button>
       </form>
-      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-submit-error-label="Retry" data-queue-upload-form data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue" data-queued-import-id="{{ active_import.id or '' }}">
+      <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-submit-error-label="Retry" data-queue-upload-form data-queue-url="/ui-api/items/{{ item.id }}/upload-assistant/queue" data-queued-import-id="{{ active_import.id or '' }}">
         <input type="hidden" name="return_to" value="/items/{{ item.id }}">
         <button class="button success item-action upload-action" type="submit" data-submit-tick-button {% if active_import or not item.can_upload %}disabled{% endif %}>
           {{ icon("upload", "item-action-icon") }}<span>{% if active_import %}Queued{% else %}Queue Upload{% endif %}</span>
@@ -530,11 +530,11 @@
         class="details-panel upload-console"
         data-upload-console
         data-item-id="{{ item.id }}"
-        data-execute-url="/api/items/{{ item.id }}/upload-assistant/execute"
-        data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
-        data-stream-url="/api/items/{{ item.id }}/upload-assistant/stream"
-        data-input-url="/api/items/{{ item.id }}/upload-assistant/input"
-        data-kill-url="/api/items/{{ item.id }}/upload-assistant/kill"
+        data-execute-url="/ui-api/items/{{ item.id }}/upload-assistant/execute"
+        data-queue-url="/ui-api/items/{{ item.id }}/upload-assistant/queue"
+        data-stream-url="/ui-api/items/{{ item.id }}/upload-assistant/stream"
+        data-input-url="/ui-api/items/{{ item.id }}/upload-assistant/input"
+        data-kill-url="/ui-api/items/{{ item.id }}/upload-assistant/kill"
         data-active-session="{% if ua_busy_this_item %}{{ ua_owner.session_id or ua_session.session_id }}{% endif %}"
         data-can-execute="{% if item.can_upload and upload_console_configured and ua_console.path and not (ua_busy and not ua_busy_this_item) %}true{% else %}false{% endif %}"
         data-can-queue="{% if item.can_upload and upload_console_configured and ua_console.path %}true{% else %}false{% endif %}"

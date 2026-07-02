@@ -39,9 +39,11 @@ from app.media_policy import (
 )
 from app.notifications import build_candidate_embed, send_discord_notification
 from app.pathmap import map_path
+from app.path_security import safe_join_media
 from app.reducer import reduce_ua_log
 from app.rename_detection import analyze_rename_detection, rename_detection_flag
 from app.rules import apply_decision_payload, evaluate_decision
+from app.security import get_bound_secret
 from app.srrdb import apply_srrdb_result, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
@@ -433,7 +435,7 @@ def _local_torrent_file_path(cfg: Any, item: Mapping[str, Any], video_file: Mapp
         parts = parts[1:]
     if not parts:
         return mapped_root
-    return str(PurePosixPath(mapped_root).joinpath(*parts))
+    return str(safe_join_media(mapped_root, str(PurePosixPath(*parts))))
 
 
 def _mapping_text(value: Mapping[str, Any], key: str) -> str:
@@ -544,7 +546,7 @@ class WhackamoleService:
             cfg = self.config_manager.load()
             try:
                 maintenance_active = await self._maintenance_pause_active(cfg)
-                if not maintenance_active and cfg.qui.url and self.secrets.has("qui_api_key"):
+                if not maintenance_active and cfg.qui.url and get_bound_secret(self.secrets, "qui_api_key", cfg.qui.url):
                     await self.poll_once()
                     if self._queued_import_run_requested:
                         await self.run_queued_import()
@@ -562,7 +564,7 @@ class WhackamoleService:
 
     async def poll_once(self) -> None:
         cfg = self.config_manager.load()
-        client = QuiClient(cfg, self.secrets.get("qui_api_key"))
+        client = QuiClient(cfg, get_bound_secret(self.secrets, "qui_api_key", cfg.qui.url))
         baseline_done = self.db.get_kv("baseline_done") == "true"
         inventory_done = self.db.get_kv("inventory_done") == "true"
         full_inventory_done = self.db.get_kv("inventory_full_crawl_v2_done") == "true"
@@ -695,7 +697,7 @@ class WhackamoleService:
         if self._import_task and not self._import_task.done():
             return
         cfg = self.config_manager.load()
-        if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
+        if not cfg.upload_assistant.url or not get_bound_secret(self.secrets, "ua_bearer_token", cfg.upload_assistant.url):
             self._queued_import_run_requested = False
             return
         if not self.db.has_pending_imports():
@@ -731,7 +733,7 @@ class WhackamoleService:
         args = str(row["args"] or "")
         session_id = str(row["session_id"] or f"whackamole-queued-import-{import_id}")
         output_chunks: list[str] = []
-        client = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
+        client = UploadAssistantClient(cfg, get_bound_secret(self.secrets, "ua_bearer_token", cfg.upload_assistant.url))
         self._last_ua_job_started_at = time.time()
         try:
             async def consume_stream() -> None:
@@ -813,7 +815,7 @@ class WhackamoleService:
         manual_resumed_date = self.db.get_kv("maintenance_manual_resume_date") or ""
         manual_paused = self.db.get_kv("maintenance_manual_paused") == "true"
         seen_down = self.db.get_kv("maintenance_seen_down") == "true"
-        dependency_configured = bool(cfg.qui.url and self.secrets.has("qui_api_key"))
+        dependency_configured = bool(cfg.qui.url and get_bound_secret(self.secrets, "qui_api_key", cfg.qui.url))
         scheduled_active = active_date == today and completed_date != today and manual_resumed_date != today
         lead_pending = (
             bool(cfg.maintenance.enabled)
@@ -911,7 +913,7 @@ class WhackamoleService:
         if time.time() - self._maintenance_probe_at < 10 and self._maintenance_probe_ok is not None:
             return self._maintenance_probe_ok
         try:
-            await QuiClient(cfg, self.secrets.get("qui_api_key")).health()
+            await QuiClient(cfg, get_bound_secret(self.secrets, "qui_api_key", cfg.qui.url)).health()
         except Exception:
             ok = False
         else:
@@ -1015,7 +1017,7 @@ class WhackamoleService:
     ) -> tuple[Dict[str, Any], Dict[str, Any], bool]:
         started_at = time.perf_counter()
         self.db.update_check_stage(item_id, "media", "Checking MediaInfo identity before UA.", check_results)
-        qui = QuiClient(cfg, self.secrets.get("qui_api_key"))
+        qui = QuiClient(cfg, get_bound_secret(self.secrets, "qui_api_key", cfg.qui.url))
         torrent_files = []
         try:
             torrent_files = await qui.list_torrent_files(str(item["hash"]))
@@ -1248,7 +1250,7 @@ class WhackamoleService:
         check_results: Dict[str, Any],
     ) -> tuple[str, Any, Dict[str, Any], bool]:
         ua_args = "--site-check -ua -sda"
-        ua = UploadAssistantClient(cfg, self.secrets.get("ua_bearer_token"))
+        ua = UploadAssistantClient(cfg, get_bound_secret(self.secrets, "ua_bearer_token", cfg.upload_assistant.url))
         self.db.update_status(
             item_id,
             "checking",
@@ -1633,7 +1635,7 @@ class WhackamoleService:
                 )
             return
         cfg = self.config_manager.load()
-        if not cfg.upload_assistant.url or not self.secrets.has("ua_bearer_token"):
+        if not cfg.upload_assistant.url or not get_bound_secret(self.secrets, "ua_bearer_token", cfg.upload_assistant.url):
             return
         if self.db.active_import_for_item(item_id) is not None:
             return

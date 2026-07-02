@@ -71,10 +71,11 @@
         <input name="mediainfo_enabled" type="checkbox" {% if cfg.mediainfo.enabled %}checked{% endif %}>
         <span class="toggle-track" aria-hidden="true"></span>
       </label>
-      <label>
-        Binary path
-        <input name="mediainfo_binary_path" value="{{ cfg.mediainfo.binary_path }}" autocomplete="off" spellcheck="false" placeholder="mediainfo">
-      </label>
+      <div class="field-note">
+        MediaInfo executable
+        <strong>{{ cfg.mediainfo.binary_path }}</strong>
+        <span>Configured at container startup.</span>
+      </div>
       <label>
         Timeout
         <div class="input-unit">
@@ -130,11 +131,7 @@
         API bearer token {% if secrets.whackamole_api_token %}<span class="saved">saved</span>{% endif %}
         <input name="whackamole_api_token" type="password" autocomplete="new-password" class="{% if secrets.whackamole_api_token %}field-success{% endif %}" placeholder="{% if secrets.whackamole_api_token %}Leave blank to keep saved token{% else %}Paste token{% endif %}">
       </label>
-      <label class="filter-option">
-        <input name="clear_whackamole_api_token" type="checkbox">
-        <span class="filter-option-box" aria-hidden="true"></span>
-        <span class="filter-option-label">Clear saved Whackamole API token</span>
-      </label>
+      <p class="muted">The administrator API token can be rotated here but cannot be cleared.</p>
     </div>
   </section>
 
@@ -384,4 +381,19 @@
     <button class="button" type="submit">Save settings</button>
   </footer>
 </form>
+
+<section>
+  <h2>UI administrator</h2>
+  <p class="muted">Changing these credentials signs out every active browser session. Local-network bypass still requires the current password or API token for this change.</p>
+  <form class="settings" method="post" action="/config/account">
+    <div class="form-grid">
+      <label>Username<input name="username" value="{{ admin_username }}" required minlength="3" maxlength="64" autocomplete="username"></label>
+      <label>New password<input name="password" type="password" required minlength="15" maxlength="256" autocomplete="new-password"></label>
+      <label>Confirm new password<input name="password_confirm" type="password" required minlength="15" maxlength="256" autocomplete="new-password"></label>
+      <label>Current password<input name="current_password" type="password" autocomplete="current-password"></label>
+      <label>Or current API token<input name="api_token" type="password" autocomplete="off"></label>
+    </div>
+    <button class="button" type="submit">Update administrator</button>
+  </form>
+</section>
 {% endblock %}

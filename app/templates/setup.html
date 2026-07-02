@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Secure setup · Whackamole</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  </head>
+  <body>
+    <main class="content-shell auth-shell">
+      <section>
+        <span class="eyebrow">One-time security migration</span>
+        <h1>Create the UI administrator</h1>
+        <p>Confirm the existing Whackamole API token, then choose a separate username and password.</p>
+        {% if message %}<p class="notice">{{ message }}</p>{% endif %}
+        <form method="post" action="/setup" class="settings">
+          <label>Existing API token<input name="api_token" type="password" required autocomplete="off"></label>
+          <label>Username<input name="username" required autocomplete="username" minlength="3" maxlength="64"></label>
+          <label>Password<input name="password" type="password" required autocomplete="new-password" minlength="15" maxlength="256"></label>
+          <label>Confirm password<input name="password_confirm" type="password" required autocomplete="new-password" minlength="15" maxlength="256"></label>
+          <label>Local UI bypass CIDR<input name="ui_bypass_cidrs" value="{{ bypass_cidrs }}" placeholder="192.168.1.0/24" autocomplete="off"></label>
+          <label>Allowed browser origin<input name="allowed_origins" value="{{ allowed_origin }}" required placeholder="http://192.168.1.16:9393" autocomplete="off"></label>
+          <label class="filter-option"><input name="cookie_secure" type="checkbox"><span>Use Secure cookies (HTTPS only)</span></label>
+          <button class="button" type="submit">Create administrator</button>
+        </form>
+        <p class="field-note">Observed client address: <strong>{{ client_ip }}</strong></p>
+      </section>
+    </main>
+  </body>
+</html>

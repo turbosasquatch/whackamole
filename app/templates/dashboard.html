@@ -255,7 +255,7 @@
                     data-submit-tick="Upload queued"
                     data-submit-error-label="Retry"
                     data-queue-upload-form
-                    data-queue-url="/api/items/{{ item.id }}/upload-assistant/queue"
+                    data-queue-url="/ui-api/items/{{ item.id }}/upload-assistant/queue"
                     data-queued-import-id="{{ active_import.id or '' }}"
                   >
                     <input type="hidden" name="return_to" value="{{ current_url }}">

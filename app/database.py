@@ -60,6 +60,10 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
+        try:
+            self.path.chmod(0o600)
+        except OSError:
+            pass
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.path))
@@ -145,6 +149,46 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_account (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    username TEXT NOT NULL,
+                    username_normalized TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    auth_version INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    auth_version INTEGER NOT NULL,
+                    auth_method TEXT NOT NULL,
+                    client_ip TEXT NOT NULL DEFAULT '',
+                    csrf_hash TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event TEXT NOT NULL,
+                    username TEXT NOT NULL DEFAULT '',
+                    client_ip TEXT NOT NULL DEFAULT '',
+                    route TEXT NOT NULL DEFAULT '',
+                    outcome TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
             self._ensure_column(conn, "items", "arr_results", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_meta", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "items", "inventory_group_key", "TEXT NOT NULL DEFAULT ''")
@@ -160,6 +204,7 @@ class Database:
             self._ensure_column(conn, "items", "media_raw_mediainfo_payloads", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "items", "media_raw_local_mediainfo_payloads", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "items", "media_supplemental_mediainfo_files", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "auth_sessions", "csrf_hash", "TEXT NOT NULL DEFAULT ''")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_status_updated ON items(status, updated_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_items_inventory_group ON items(inventory_group_key)")
             conn.execute(
@@ -178,6 +223,8 @@ class Database:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_item ON queued_imports(item_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_state_updated ON item_reports(state, updated_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_item ON item_reports(item_id, state)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)")
             self._backfill_media_payload_columns(conn)
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -233,6 +280,98 @@ class Database:
             conn.execute(
                 "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
+            )
+
+    def get_admin_account(self) -> Optional[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM admin_account WHERE id = 1").fetchone()
+
+    def create_admin_account(self, username: str, username_normalized: str, password_hash: str) -> bool:
+        now = int(time.time())
+        with self.connect() as conn:
+            existing = conn.execute("SELECT 1 FROM admin_account WHERE id = 1").fetchone()
+            if existing:
+                return False
+            conn.execute(
+                """
+                INSERT INTO admin_account(id, username, username_normalized, password_hash, auth_version, created_at, updated_at)
+                VALUES(1, ?, ?, ?, 1, ?, ?)
+                """,
+                (username, username_normalized, password_hash, now, now),
+            )
+            return True
+
+    def update_admin_account(self, username: str, username_normalized: str, password_hash: str) -> int:
+        now = int(time.time())
+        with self.connect() as conn:
+            row = conn.execute("SELECT auth_version FROM admin_account WHERE id = 1").fetchone()
+            if row is None:
+                raise ValueError("Administrator account is not configured")
+            auth_version = int(row["auth_version"]) + 1
+            conn.execute(
+                """
+                UPDATE admin_account
+                SET username = ?, username_normalized = ?, password_hash = ?, auth_version = ?, updated_at = ?
+                WHERE id = 1
+                """,
+                (username, username_normalized, password_hash, auth_version, now),
+            )
+            conn.execute("DELETE FROM auth_sessions")
+            return auth_version
+
+    def create_auth_session(
+        self,
+        token_hash: str,
+        username: str,
+        auth_version: int,
+        auth_method: str,
+        client_ip: str,
+        csrf_hash: str,
+        expires_at: int,
+    ) -> None:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now,))
+            conn.execute(
+                """
+                INSERT INTO auth_sessions(token_hash, username, auth_version, auth_method, client_ip, csrf_hash, created_at, expires_at)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (token_hash, username, auth_version, auth_method, client_ip, csrf_hash, now, expires_at),
+            )
+
+    def get_auth_session(self, token_hash: str) -> Optional[sqlite3.Row]:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now,))
+            return conn.execute("SELECT * FROM auth_sessions WHERE token_hash = ?", (token_hash,)).fetchone()
+
+    def delete_auth_session(self, token_hash: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))
+
+    def revoke_auth_sessions(self) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM auth_sessions")
+
+    def append_security_event(
+        self,
+        event: str,
+        *,
+        username: str = "",
+        client_ip: str = "",
+        route: str = "",
+        outcome: str = "",
+    ) -> None:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO security_events(event, username, client_ip, route, outcome, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                (event[:80], username[:64], client_ip[:64], route[:200], outcome[:40], now),
+            )
+            conn.execute(
+                "DELETE FROM security_events WHERE created_at < ?",
+                (now - (30 * 24 * 60 * 60),),
             )
 
     def backfill_inventory_columns(self) -> int:

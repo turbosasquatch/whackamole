@@ -4,17 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Whackamole{% endblock %}</title>
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem("theme");
-          var theme = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-          if (theme === "dark") {
-            document.documentElement.setAttribute("data-theme", "dark");
-          }
-        } catch (error) {}
-      })();
-    </script>
+    <meta name="csrf-token" content="{{ csrf_token | default('') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', path='img/favicon-32.png') }}">
     <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', path='img/favicon-64.png') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', path='img/favicon-64.png') }}">
@@ -23,6 +13,11 @@
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
+    {% if local_bypass | default(false) %}
+      <div class="notice network-bypass-banner" role="status">
+        Local network bypass active · {{ client_ip }}
+      </div>
+    {% endif %}
     <div class="app-shell" data-app-shell>
       <button class="sidebar-backdrop" type="button" data-sidebar-close aria-label="Close menu"></button>
       <aside class="app-sidebar" aria-label="Primary navigation">
@@ -78,6 +73,9 @@
             <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
             <span>Settings</span>
           </a>
+          <form method="post" action="/logout">
+            <button class="sidebar-link" type="submit"><span>Sign out</span></button>
+          </form>
           {% if service is defined %}
             <button
               class="sidebar-toggle-row"

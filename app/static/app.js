@@ -1,4 +1,31 @@
 (function () {
+  try {
+    const storedTheme = window.localStorage && window.localStorage.getItem("theme");
+    const initialTheme = storedTheme || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    if (initialTheme === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  } catch {}
+
+  const csrfToken = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+  document.querySelectorAll('form[method="post"], form[method="POST"]').forEach((form) => {
+    if (!csrfToken || form.querySelector('input[name="_csrf_token"]')) return;
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "_csrf_token";
+    input.value = csrfToken;
+    form.appendChild(input);
+  });
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, options = {}) => {
+    const method = String(options.method || "GET").toUpperCase();
+    const url = new URL(typeof input === "string" ? input : input.url, window.location.href);
+    if (csrfToken && url.origin === window.location.origin && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+      const headers = new Headers(options.headers || (typeof input !== "string" ? input.headers : undefined));
+      headers.set("X-CSRF-Token", csrfToken);
+      options = { ...options, headers };
+    }
+    return nativeFetch(input, options);
+  };
+
   const shell = document.querySelector("[data-app-shell]");
   const memoryStorage = new Map();
   const storage = {
@@ -85,7 +112,7 @@
       const next = button.getAttribute("aria-pressed") !== "true";
       button.disabled = true;
       try {
-        const response = await fetch("/api/settings/auto-upload", {
+        const response = await fetch("/ui-api/settings/auto-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ enabled: next }),
@@ -1076,7 +1103,7 @@
 
   function refreshStatus() {
     if (!document.querySelector("[data-count-view], [data-queue-field], [data-service-running]")) return;
-    fetch("/api/status", { headers: { accept: "application/json" } })
+    fetch("/ui-api/status", { headers: { accept: "application/json" } })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
         if (!payload) return;

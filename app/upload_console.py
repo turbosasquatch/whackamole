@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from app.media_policy import VIDEO_EXTENSIONS
+from app.path_security import validate_media_path
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.srrdb import srrdb_lookup_name
 
@@ -154,7 +155,7 @@ def _video_files_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
         return result
 
     try:
-        path = Path(root)
+        path = validate_media_path(root)
         if not path.exists():
             result["message"] = "Path is not visible inside the Whackamole container."
             return result
@@ -171,6 +172,10 @@ def _video_files_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
         files = []
         for child in sorted(path.rglob("*")):
             if not child.is_file() or child.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            try:
+                validate_media_path(str(child.resolve(strict=False)), (path.resolve(strict=False),))
+            except ValueError:
                 continue
             files.append(_video_file_payload(child, path))
             if len(files) >= MAX_VIDEO_FILES:

@@ -12,6 +12,7 @@ import httpx
 
 from app.clients import UploadAssistantClient
 from app.config import AppConfig, SecretStore
+from app.security import get_bound_secret
 
 
 def sse_payload(kind: str, data: Any = "", **extra: Any) -> str:
@@ -158,13 +159,13 @@ class UploadConsoleSession:
                 self._subscribers.discard(queue)
 
     async def send_input(self, user_input: str) -> Dict[str, Any]:
-        client = UploadAssistantClient(self.config, self.secrets.get("ua_bearer_token"))
+        client = UploadAssistantClient(self.config, get_bound_secret(self.secrets, "ua_bearer_token", self.config.upload_assistant.url))
         return await client.send_input(self.session_id, user_input)
 
     async def kill(self) -> Dict[str, Any]:
         if self.state not in {"complete", "error", "killed"}:
             self.state = "killing"
-            client = UploadAssistantClient(self.config, self.secrets.get("ua_bearer_token"))
+            client = UploadAssistantClient(self.config, get_bound_secret(self.secrets, "ua_bearer_token", self.config.upload_assistant.url))
             try:
                 result = await client.kill_session(self.session_id)
             except httpx.HTTPStatusError as exc:
@@ -183,7 +184,7 @@ class UploadConsoleSession:
         return {"success": True, "message": "Session already finished"}
 
     async def _run(self) -> None:
-        client = UploadAssistantClient(self.config, self.secrets.get("ua_bearer_token"))
+        client = UploadAssistantClient(self.config, get_bound_secret(self.secrets, "ua_bearer_token", self.config.upload_assistant.url))
         self.state = "running"
         await self._publish(sse_payload("system", f'Executing Upload Assistant for "{self.path}"'))
         try:

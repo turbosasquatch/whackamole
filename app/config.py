@@ -8,7 +8,7 @@ import yaml
 from cryptography.fernet import Fernet, InvalidToken
 
 
-CURRENT_CONFIG_VERSION = 3
+CURRENT_CONFIG_VERSION = 4
 OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 45
 DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 300
 DEFAULT_TRACKER_POLICY_KEYS = ("DP", "ULCX", "IHD")
@@ -123,6 +123,10 @@ class ConfigManager:
     def save(self, config: AppConfig) -> None:
         payload = asdict(config)
         self.config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        try:
+            self.config_path.chmod(0o600)
+        except OSError:
+            pass
 
     def _merge_dataclass(self, target: Any, values: Dict[str, Any]) -> None:
         for key, value in values.items():

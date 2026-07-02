@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import time
 from datetime import datetime
 from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path
+import ipaddress
 from urllib.parse import urlencode
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
@@ -39,8 +41,21 @@ from app.inventory import (
     missing_primary_trackers,
 )
 from app.media_identity import ensure_media_display_fields
+from app.path_security import validate_media_path
 from app.reducer import TRACKER_BUCKETS
 from app.rules import rule_catalogue, ruleset_changelog
+from app.security import (
+    AuthManager,
+    AuthSettings,
+    SecurityMiddleware,
+    SESSION_COOKIE,
+    clear_bound_secret,
+    clear_session_cookies,
+    get_bound_secret,
+    set_bound_secret,
+    set_session_cookies,
+    validate_service_url,
+)
 from app.service import WhackamoleService
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.rename_display import build_rename_check
@@ -207,6 +222,19 @@ templates.env.filters["json_pretty"] = _format_json
 
 def _config_dir() -> str:
     return os.getenv("WHACKAMOLE_CONFIG_DIR", "/config")
+
+
+def _backup_database_before_security_migration(config_dir: str) -> None:
+    source = Path(config_dir) / "whackamole.db"
+    backup = Path(config_dir) / "whackamole.db.pre-auth-v1.bak"
+    if not source.exists() or backup.exists():
+        return
+    with sqlite3.connect(str(source)) as source_db, sqlite3.connect(str(backup)) as backup_db:
+        source_db.backup(backup_db)
+    try:
+        backup.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
@@ -1437,7 +1465,7 @@ def _local_nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if not root:
         return {"available": False, "message": "No path recorded."}
     try:
-        path = Path(root)
+        path = validate_media_path(root)
         candidates: List[Path] = []
         if path.is_file():
             if path.suffix.lower() in NFO_EXTENSIONS:
@@ -1451,8 +1479,9 @@ def _local_nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
             if not candidate.is_file():
                 continue
             try:
+                validate_media_path(str(candidate.resolve(strict=False)), (path if path.is_dir() else path.parent,))
                 content = candidate.read_bytes()[:MAX_NFO_BYTES].decode("utf-8", errors="replace")
-            except OSError:
+            except (OSError, ValueError):
                 continue
             return _nfo_payload(content, str(candidate), "local")
         return {"available": False, "message": "No NFO found at this path."}
@@ -1468,7 +1497,7 @@ async def _grab_nfo_for_row(row: Any, request: Request) -> Dict[str, Any]:
 
     cfg = request.app.state.config_manager.load()
     try:
-        qui = QuiClient(cfg, request.app.state.secrets.get("qui_api_key"))
+        qui = QuiClient(cfg, get_bound_secret(request.app.state.secrets, "qui_api_key", cfg.qui.url))
         files = await qui.list_torrent_files(str(item.get("hash") or ""))
         for file_info in files:
             name = str(file_info.get("name") or "")
@@ -1679,6 +1708,7 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
     cfg = request.app.state.config_manager.load()
     secrets = request.app.state.secrets
     tracker_options = _tracker_setting_options(request.app.state.db, cfg)
+    admin = request.app.state.db.get_admin_account()
     return {
         **_shell_context(request, section="settings"),
         "request": request,
@@ -1693,6 +1723,7 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
         "high_quality_trackers": set(_dedupe_trackers(cfg.safety.high_quality_trackers)),
         "message": message,
         "probe_results": probe_results or [],
+        "admin_username": str(admin["username"]) if admin is not None else "",
     }
 
 
@@ -1744,6 +1775,10 @@ def _shell_context(
         "dashboard_nav": _dashboard_nav(counts, service_snapshot, view=view, q=q),
         "search_query": q,
         "show_dashboard_search": section == "dashboard",
+        "csrf_token": str(getattr(request.state, "csrf_token", "")),
+        "local_bypass": bool(getattr(request.state, "local_bypass", False)),
+        "client_ip": str(getattr(request.state, "client_ip", "")),
+        "auth_username": str(getattr(request.state, "auth_username", "")),
     }
 
 
@@ -2071,7 +2106,9 @@ def _selected_media_filter(media: Any) -> List[str]:
 async def lifespan(app: FastAPI):
     app.state.config_manager = ConfigManager(_config_dir())
     app.state.secrets = SecretStore(_config_dir())
+    _backup_database_before_security_migration(_config_dir())
     app.state.db = Database(str(Path(_config_dir()) / "whackamole.db"))
+    app.state.auth = AuthManager(app.state.db, app.state.secrets)
     app.state.db.backfill_inventory_columns()
     app.state.ua_execution = UaExecutionCoordinator()
     app.state.upload_console = UploadConsoleManager(app.state.ua_execution)
@@ -2085,7 +2122,145 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Whackamole", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(SecurityMiddleware)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request, message: str = "") -> HTMLResponse:
+    if request.app.state.auth.has_admin():
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    bypass_cidrs, allowed_origin = _setup_network_defaults(request)
+    return templates.TemplateResponse(
+        request,
+        "setup.html",
+        {"request": request, "message": message, "client_ip": request.state.client_ip, "bypass_cidrs": bypass_cidrs, "allowed_origin": allowed_origin},
+    )
+
+
+@app.post("/setup", response_class=HTMLResponse)
+async def setup_admin(
+    request: Request,
+    api_token: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
+    password_confirm: str = Form(""),
+    ui_bypass_cidrs: str = Form(""),
+    allowed_origins: str = Form(""),
+    cookie_secure: Optional[str] = Form(None),
+) -> HTMLResponse:
+    auth: AuthManager = request.app.state.auth
+    client_ip = request.state.client_ip
+    if auth.has_admin():
+        return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    if auth.login_blocked(client_ip):
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"request": request, "message": "Too many failed attempts. Try again later.", "client_ip": client_ip, "bypass_cidrs": ui_bypass_cidrs, "allowed_origin": allowed_origins},
+            status_code=429,
+        )
+    if not auth.verify_api_token(api_token):
+        auth.record_login_failure(client_ip, "/setup")
+        message = "The existing API token was not accepted."
+    elif password != password_confirm:
+        message = "Password confirmation does not match."
+    else:
+        try:
+            network_settings = AuthSettings.from_values(ui_bypass_cidrs, allowed_origins, cookie_secure == "on")
+            if not auth.create_admin(username, password):
+                return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+            auth.configure_network_bypass(network_settings)
+        except ValueError as exc:
+            message = str(exc)
+        else:
+            auth.clear_login_failures(client_ip)
+            return RedirectResponse("/login?setup=complete", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(
+        request,
+        "setup.html",
+        {"request": request, "message": message, "client_ip": client_ip, "bypass_cidrs": ui_bypass_cidrs, "allowed_origin": allowed_origins},
+        status_code=400,
+    )
+
+
+def _setup_network_defaults(request: Request) -> tuple[str, str]:
+    client_ip = str(getattr(request.state, "client_ip", ""))
+    bypass = ""
+    try:
+        address = ipaddress.ip_address(client_ip)
+        prefix = 24 if address.version == 4 else 64
+        if not address.is_global:
+            bypass = str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
+    except ValueError:
+        pass
+    origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
+    return bypass, origin
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/", setup: str = "") -> HTMLResponse:
+    if not request.app.state.auth.has_admin():
+        return RedirectResponse("/setup", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "request": request,
+            "next": _safe_local_redirect(next, "/"),
+            "message": "Administrator created. Sign in to test the new credentials." if setup == "complete" else "",
+            "client_ip": request.state.client_ip,
+        },
+    )
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login(
+    request: Request,
+    username: str = Form(""),
+    password: str = Form(""),
+    next: str = Form("/"),
+) -> HTMLResponse:
+    auth: AuthManager = request.app.state.auth
+    client_ip = request.state.client_ip
+    destination = _safe_local_redirect(next, "/")
+    if auth.login_blocked(client_ip):
+        message = "Too many failed attempts. Try again later."
+        response_code = 429
+    elif not auth.verify_password(username, password):
+        auth.record_login_failure(client_ip, "/login")
+        message = "Invalid username or password."
+        response_code = 401
+    else:
+        auth.clear_login_failures(client_ip)
+        admin = request.app.state.db.get_admin_account()
+        canonical_username = str(admin["username"])
+        session_token, csrf_token = auth.create_session(canonical_username, "password", client_ip)
+        response = RedirectResponse(destination, status_code=status.HTTP_303_SEE_OTHER)
+        set_session_cookies(response, session_token, csrf_token, auth.settings.cookie_secure)
+        auth.db.append_security_event("login", username=canonical_username, client_ip=client_ip, route="/login", outcome="success")
+        return response
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"request": request, "next": destination, "message": message, "client_ip": client_ip},
+        status_code=response_code,
+    )
+
+
+@app.post("/logout")
+async def logout(request: Request) -> RedirectResponse:
+    request.app.state.auth.delete_session(request.cookies.get(SESSION_COOKIE, ""))
+    request.app.state.db.append_security_event(
+        "logout",
+        username=str(getattr(request.state, "auth_username", "")),
+        client_ip=request.state.client_ip,
+        route="/logout",
+        outcome="success",
+    )
+    response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    clear_session_cookies(response)
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2238,7 +2413,7 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             "item": item,
             "reporting_stages": REPORTING_STAGES,
             "next_item_url": _next_item_url(request.app.state.db, item),
-            "upload_console_configured": bool(cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token")),
+            "upload_console_configured": bool(cfg.upload_assistant.url and get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url)),
             "upload_console_session": request.app.state.upload_console.snapshot(),
         },
     )
@@ -2378,7 +2553,10 @@ async def rename_item_video_file(
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
     video_files = _video_files_for_item(item)
     allowed = {str(file.get("path") or "") for file in video_files.get("files") or [] if isinstance(file, dict)}
-    source = Path(old_path)
+    try:
+        source = validate_media_path(old_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Video file not found") from exc
     if str(source) not in allowed or not source.is_file():
         raise HTTPException(status_code=404, detail="Video file not found")
     filename = Path(new_name.strip()).name
@@ -2485,7 +2663,7 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
         return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
     console = item["upload_console"]
     path = str(console.get("path") or "").strip()
-    if cfg.upload_assistant.url and request.app.state.secrets.has("ua_bearer_token") and path:
+    if cfg.upload_assistant.url and get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url) and path:
         request.app.state.db.enqueue_import(
             item_id=item_id,
             item_name=str(item.get("name") or f"Item {item_id}"),
@@ -2495,13 +2673,14 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.post("/api/items/{item_id}/upload-assistant/execute")
+@app.post("/api/items/{item_id}/upload-assistant/execute", include_in_schema=False)
+@app.post("/ui-api/items/{item_id}/upload-assistant/execute")
 async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         return JSONResponse({"error": "Item not found", "success": False}, status_code=404)
     cfg = request.app.state.config_manager.load()
-    if not cfg.upload_assistant.url or not request.app.state.secrets.has("ua_bearer_token"):
+    if not cfg.upload_assistant.url or not get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url):
         return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
 
     item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
@@ -2542,13 +2721,14 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
     )
 
 
-@app.post("/api/items/{item_id}/upload-assistant/queue")
+@app.post("/api/items/{item_id}/upload-assistant/queue", include_in_schema=False)
+@app.post("/ui-api/items/{item_id}/upload-assistant/queue")
 async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         return JSONResponse({"error": "Item not found", "success": False}, status_code=404)
     cfg = request.app.state.config_manager.load()
-    if not cfg.upload_assistant.url or not request.app.state.secrets.has("ua_bearer_token"):
+    if not cfg.upload_assistant.url or not get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url):
         return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
 
     existing = request.app.state.db.active_import_for_item(item_id)
@@ -2585,7 +2765,8 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
     return JSONResponse({"success": True, "id": import_id, "args": queued_args})
 
 
-@app.get("/api/items/{item_id}/upload-assistant/stream")
+@app.get("/api/items/{item_id}/upload-assistant/stream", include_in_schema=False)
+@app.get("/ui-api/items/{item_id}/upload-assistant/stream")
 async def stream_item_upload_assistant(request: Request, item_id: int, session_id: str = "") -> Any:
     session = request.app.state.upload_console.get(session_id)
     if session is None or session.item_id != item_id:
@@ -2597,7 +2778,8 @@ async def stream_item_upload_assistant(request: Request, item_id: int, session_i
     )
 
 
-@app.post("/api/items/{item_id}/upload-assistant/input")
+@app.post("/api/items/{item_id}/upload-assistant/input", include_in_schema=False)
+@app.post("/ui-api/items/{item_id}/upload-assistant/input")
 async def send_item_upload_assistant_input(request: Request, item_id: int) -> JSONResponse:
     try:
         payload = await request.json()
@@ -2617,7 +2799,8 @@ async def send_item_upload_assistant_input(request: Request, item_id: int) -> JS
     return JSONResponse(result)
 
 
-@app.post("/api/items/{item_id}/upload-assistant/kill")
+@app.post("/api/items/{item_id}/upload-assistant/kill", include_in_schema=False)
+@app.post("/ui-api/items/{item_id}/upload-assistant/kill")
 async def kill_item_upload_assistant(request: Request, item_id: int) -> JSONResponse:
     try:
         payload = await request.json()
@@ -2723,13 +2906,15 @@ async def resume_maintenance(return_to: str = Form("/")) -> RedirectResponse:
     return RedirectResponse(url=_safe_local_redirect(return_to, "/"), status_code=status.HTTP_303_SEE_OTHER)
 
 
-@app.get("/api/settings/auto-upload")
+@app.get("/api/settings/auto-upload", include_in_schema=False)
+@app.get("/ui-api/settings/auto-upload")
 async def get_auto_upload_setting(request: Request) -> JSONResponse:
     enabled = request.app.state.db.get_kv("auto_upload_enabled") == "true"
     return JSONResponse({"enabled": enabled})
 
 
-@app.post("/api/settings/auto-upload")
+@app.post("/api/settings/auto-upload", include_in_schema=False)
+@app.post("/ui-api/settings/auto-upload")
 async def set_auto_upload_setting(request: Request) -> JSONResponse:
     try:
         payload = await request.json()
@@ -2775,7 +2960,6 @@ async def save_config(
     qui_api_key: str = Form(""),
     clear_qui_api_key: Optional[str] = Form(None),
     mediainfo_enabled: Optional[str] = Form(None),
-    mediainfo_binary_path: str = Form("mediainfo"),
     mediainfo_timeout_seconds: str = Form("60"),
     ua_url: str = Form(""),
     ua_tmp_path: str = Form("/ua-tmp"),
@@ -2829,13 +3013,33 @@ async def save_config(
     secrets: SecretStore = request.app.state.secrets
     cfg: AppConfig = manager.load()
 
-    cfg.qui.url = qui_url.strip().rstrip("/")
+    previous_urls = {
+        "qui_api_key": cfg.qui.url,
+        "ua_bearer_token": cfg.upload_assistant.url,
+        "sonarr_api_key": cfg.sonarr.url,
+        "radarr_api_key": cfg.radarr.url,
+        "easycross_api_key": cfg.easycross.url,
+        "profilarr_api_key": cfg.profilarr.url,
+    }
+    try:
+        cfg.qui.url = validate_service_url(qui_url)
+        cfg.upload_assistant.url = validate_service_url(ua_url)
+        cfg.sonarr.url = validate_service_url(sonarr_url)
+        cfg.radarr.url = validate_service_url(radarr_url)
+        cfg.easycross.url = validate_service_url(easycross_url)
+        cfg.profilarr.url = validate_service_url(profilarr_url)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            _config_context(request, message=str(exc)),
+            status_code=400,
+        )
     cfg.qui.instance_id = _as_int(qui_instance_id, cfg.qui.instance_id, minimum=1)
     cfg.qui.page_limit = _as_int(qui_page_limit, cfg.qui.page_limit, minimum=1)
     cfg.mediainfo.enabled = mediainfo_enabled == "on"
-    cfg.mediainfo.binary_path = mediainfo_binary_path.strip() or "mediainfo"
+    cfg.mediainfo.binary_path = os.getenv("WHACKAMOLE_MEDIAINFO_BINARY", "/usr/bin/mediainfo")
     cfg.mediainfo.timeout_seconds = _as_int(mediainfo_timeout_seconds, cfg.mediainfo.timeout_seconds, minimum=1)
-    cfg.upload_assistant.url = ua_url.strip().rstrip("/")
     cfg.upload_assistant.tmp_path = ua_tmp_path.strip() or "/ua-tmp"
     cfg.upload_assistant.request_timeout_seconds = _as_int(ua_timeout, cfg.upload_assistant.request_timeout_seconds, minimum=60)
     cfg.path_mappings = parse_path_mappings(path_mappings)
@@ -2885,10 +3089,6 @@ async def save_config(
     cfg.maintenance.lead_minutes = _as_int(maintenance_lead_minutes, cfg.maintenance.lead_minutes, minimum=0)
     cfg.maintenance.resume_signal = "qui_down_up"
 
-    cfg.sonarr.url = sonarr_url.strip().rstrip("/")
-    cfg.radarr.url = radarr_url.strip().rstrip("/")
-    cfg.easycross.url = easycross_url.strip().rstrip("/")
-    cfg.profilarr.url = profilarr_url.strip().rstrip("/")
     policy_inputs = {
         "DP": (policy_dp_banned, policy_dp_ranked),
         "ULCX": (policy_ulcx_banned, policy_ulcx_ranked),
@@ -2903,13 +3103,42 @@ async def save_config(
             "ranked_release_groups": parse_csv(ranked) if ranked is not None else list(existing.get("ranked_release_groups", [])),
         }
 
-    _update_secret(secrets, "qui_api_key", qui_api_key, clear_qui_api_key)
-    _update_secret(secrets, "ua_bearer_token", ua_bearer_token, clear_ua_bearer_token)
-    _update_secret(secrets, "sonarr_api_key", sonarr_api_key, clear_sonarr_api_key)
-    _update_secret(secrets, "radarr_api_key", radarr_api_key, clear_radarr_api_key)
-    _update_secret(secrets, "easycross_api_key", easycross_api_key, clear_easycross_api_key)
-    _update_secret(secrets, "profilarr_api_key", profilarr_api_key, clear_profilarr_api_key)
-    _update_secret(secrets, "whackamole_api_token", whackamole_api_token, clear_whackamole_api_token)
+    bound_secret_updates = (
+        ("qui_api_key", qui_api_key, clear_qui_api_key, cfg.qui.url),
+        ("ua_bearer_token", ua_bearer_token, clear_ua_bearer_token, cfg.upload_assistant.url),
+        ("sonarr_api_key", sonarr_api_key, clear_sonarr_api_key, cfg.sonarr.url),
+        ("radarr_api_key", radarr_api_key, clear_radarr_api_key, cfg.radarr.url),
+        ("easycross_api_key", easycross_api_key, clear_easycross_api_key, cfg.easycross.url),
+        ("profilarr_api_key", profilarr_api_key, clear_profilarr_api_key, cfg.profilarr.url),
+    )
+    missing_url = next((name for name, value, _clear, url in bound_secret_updates if value.strip() and not url), "")
+    if missing_url:
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            _config_context(request, message=f"A service URL is required before saving {missing_url}."),
+            status_code=400,
+        )
+    if clear_whackamole_api_token == "on":
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            _config_context(request, message="The administrator API token cannot be cleared."),
+            status_code=400,
+        )
+    if whackamole_api_token.strip():
+        if len(whackamole_api_token.strip()) < 32:
+            return templates.TemplateResponse(
+                request,
+                "config.html",
+                _config_context(request, message="The API token must contain at least 32 characters."),
+                status_code=400,
+            )
+    for name, value, clear, url in bound_secret_updates:
+        _update_bound_service_secret(secrets, name, value, clear, url, previous_urls[name])
+    if whackamole_api_token.strip():
+        secrets.set("whackamole_api_token", whackamole_api_token.strip())
+        request.app.state.db.revoke_auth_sessions()
     _update_secret(secrets, "discord_webhook_url", discord_webhook_url, clear_discord_webhook_url)
 
     manager.save(cfg)
@@ -2925,6 +3154,46 @@ async def save_config(
     return templates.TemplateResponse(request, "config.html", _config_context(request, message=message))
 
 
+@app.post("/config/account", response_class=HTMLResponse)
+async def update_admin_account(
+    request: Request,
+    username: str = Form(""),
+    password: str = Form(""),
+    password_confirm: str = Form(""),
+    current_password: str = Form(""),
+    api_token: str = Form(""),
+) -> HTMLResponse:
+    auth: AuthManager = request.app.state.auth
+    admin = request.app.state.db.get_admin_account()
+    current_username = str(admin["username"]) if admin is not None else ""
+    if not (auth.verify_password(current_username, current_password) or auth.verify_api_token(api_token)):
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            _config_context(request, message="Current password or API token is required to change administrator credentials."),
+            status_code=403,
+        )
+    if password != password_confirm:
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            _config_context(request, message="Password confirmation does not match."),
+            status_code=400,
+        )
+    try:
+        auth.update_admin(username, password)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "config.html",
+            _config_context(request, message=str(exc)),
+            status_code=400,
+        )
+    response = RedirectResponse("/login?credentials=changed", status_code=status.HTTP_303_SEE_OTHER)
+    clear_session_cookies(response)
+    return response
+
+
 @app.post("/config/probe", response_class=HTMLResponse)
 async def probe_config(request: Request) -> HTMLResponse:
     cfg = request.app.state.config_manager.load()
@@ -2933,9 +3202,9 @@ async def probe_config(request: Request) -> HTMLResponse:
 
     if cfg.qui.url:
         try:
-            client = QuiClient(cfg, secrets.get("qui_api_key"))
+            client = QuiClient(cfg, get_bound_secret(secrets, "qui_api_key", cfg.qui.url))
             await client.health()
-            instances = await client.list_instances() if secrets.has("qui_api_key") else []
+            instances = await client.list_instances() if get_bound_secret(secrets, "qui_api_key", cfg.qui.url) else []
             detail = f"Connected. {len(instances)} instance(s) visible." if instances else "Setup endpoint reachable."
             results.append({"name": "QUI", "state": "ok", "detail": detail})
         except Exception as exc:
@@ -2943,9 +3212,9 @@ async def probe_config(request: Request) -> HTMLResponse:
 
     if cfg.upload_assistant.url:
         try:
-            client = UploadAssistantClient(cfg, secrets.get("ua_bearer_token"))
+            client = UploadAssistantClient(cfg, get_bound_secret(secrets, "ua_bearer_token", cfg.upload_assistant.url))
             await client.health()
-            roots = await client.browse_roots() if secrets.has("ua_bearer_token") else {}
+            roots = await client.browse_roots() if get_bound_secret(secrets, "ua_bearer_token", cfg.upload_assistant.url) else {}
             detail = "Connected."
             if isinstance(roots, dict) and roots:
                 detail = f"Connected. Browse roots: {', '.join(str(k) for k in roots.keys())}."
@@ -2955,9 +3224,9 @@ async def probe_config(request: Request) -> HTMLResponse:
 
     if cfg.sonarr.url:
         try:
-            client = SonarrClient(cfg.sonarr.url, secrets.get("sonarr_api_key"), cfg.safety.arr_search_timeout_seconds)
+            client = SonarrClient(cfg.sonarr.url, get_bound_secret(secrets, "sonarr_api_key", cfg.sonarr.url), cfg.safety.arr_search_timeout_seconds)
             status_payload = await client.system_status()
-            indexers = await client.list_indexers() if secrets.has("sonarr_api_key") else []
+            indexers = await client.list_indexers() if get_bound_secret(secrets, "sonarr_api_key", cfg.sonarr.url) else []
             torrent_count = sum(1 for indexer in indexers if str(indexer.get("protocol", "")).lower() == "torrent")
             detail = f"Connected to {status_payload.get('appName', 'Sonarr')}. {torrent_count} torrent indexer(s)."
             results.append({"name": "Sonarr", "state": "ok", "detail": detail})
@@ -2966,9 +3235,9 @@ async def probe_config(request: Request) -> HTMLResponse:
 
     if cfg.radarr.url:
         try:
-            client = RadarrClient(cfg.radarr.url, secrets.get("radarr_api_key"), cfg.safety.arr_search_timeout_seconds)
+            client = RadarrClient(cfg.radarr.url, get_bound_secret(secrets, "radarr_api_key", cfg.radarr.url), cfg.safety.arr_search_timeout_seconds)
             status_payload = await client.system_status()
-            indexers = await client.list_indexers() if secrets.has("radarr_api_key") else []
+            indexers = await client.list_indexers() if get_bound_secret(secrets, "radarr_api_key", cfg.radarr.url) else []
             torrent_count = sum(1 for indexer in indexers if str(indexer.get("protocol", "")).lower() == "torrent")
             detail = f"Connected to {status_payload.get('appName', 'Radarr')}. {torrent_count} torrent indexer(s)."
             results.append({"name": "Radarr", "state": "ok", "detail": detail})
@@ -2977,9 +3246,9 @@ async def probe_config(request: Request) -> HTMLResponse:
 
     if cfg.profilarr.url:
         try:
-            client = ProfilarrClient(cfg.profilarr.url, secrets.get("profilarr_api_key"), cfg.safety.arr_search_timeout_seconds)
+            client = ProfilarrClient(cfg.profilarr.url, get_bound_secret(secrets, "profilarr_api_key", cfg.profilarr.url), cfg.safety.arr_search_timeout_seconds)
             await client.health()
-            status_payload = await client.status() if secrets.has("profilarr_api_key") else {}
+            status_payload = await client.status() if get_bound_secret(secrets, "profilarr_api_key", cfg.profilarr.url) else {}
             databases = status_payload.get("databases") if isinstance(status_payload.get("databases"), list) else []
             if databases:
                 counts = databases[0].get("counts") if isinstance(databases[0], dict) else {}
@@ -3002,6 +3271,16 @@ async def probe_config(request: Request) -> HTMLResponse:
 
 @app.get("/api/status")
 async def api_status(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "ok",
+            "service_running": bool(request.app.state.service.snapshot().get("running")),
+        }
+    )
+
+
+@app.get("/ui-api/status")
+async def ui_status(request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "service": request.app.state.service.snapshot(),
@@ -3192,6 +3471,22 @@ def _update_secret(secrets: SecretStore, name: str, value: str, clear: Optional[
         secrets.clear(name)
     elif value.strip():
         secrets.set(name, value.strip())
+
+
+def _update_bound_service_secret(
+    secrets: SecretStore,
+    name: str,
+    value: str,
+    clear: Optional[str],
+    url: str,
+    previous_url: str,
+) -> None:
+    if clear == "on" or (url != previous_url and not value.strip()):
+        clear_bound_secret(secrets, name)
+    elif value.strip():
+        if not url:
+            raise ValueError(f"A service URL is required before saving {name}")
+        set_bound_secret(secrets, name, value.strip(), url)
 
 
 def _short_error(exc: Exception) -> str:

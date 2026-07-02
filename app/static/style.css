@@ -63,6 +63,17 @@
   --z-skip-link: 1000;
 }
 
+.auth-shell {
+  max-width: 38rem;
+  margin: 6vh auto;
+}
+
+.network-bypass-banner {
+  margin: 0;
+  border-radius: 0;
+  text-align: center;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0b1220;

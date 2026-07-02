@@ -15,7 +15,8 @@ from app.upload_console import resolve_path_and_args
 
 def _client(tmp_path, monkeypatch):
     monkeypatch.setenv("WHACKAMOLE_CONFIG_DIR", str(tmp_path))
-    return TestClient(app)
+    monkeypatch.setenv("WHACKAMOLE_API_TOKEN", "whackamole-test-token-that-is-at-least-32-characters")
+    return TestClient(app, headers={"Authorization": "Bearer whackamole-test-token-that-is-at-least-32-characters"})
 
 
 def _seed_candidate(client: TestClient, name: str = "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP") -> int:

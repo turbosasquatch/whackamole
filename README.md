@@ -83,7 +83,7 @@ You can adjust or disable the guard in Settings. The dashboard also has manual p
 
 ## JSON API
 
-Detailed item APIs are read-only and require the Whackamole API bearer token from Settings. `/api/status` stays unauthenticated and only returns lightweight service/configured-state booleans.
+Detailed item APIs require the Whackamole API bearer token from Settings. Browser sessions and local-network UI bypass never bypass bearer authentication for these endpoints. `/api/status` stays unauthenticated and returns only `status` and `service_running`.
 
 ```bash
 curl -H "Authorization: Bearer <whackamole-token>" \
@@ -102,7 +102,28 @@ Endpoints:
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-dev.txt
-WHACKAMOLE_CONFIG_DIR=./data uvicorn app.main:app --reload --port 8383
+WHACKAMOLE_CONFIG_DIR=./data \
+WHACKAMOLE_API_TOKEN=replace-with-at-least-32-random-characters \
+uvicorn app.main:app --reload --port 8383 --no-proxy-headers
+```
+
+On first launch, open `/setup`, confirm that API token, and create the separate UI administrator. Passwords are stored as Argon2id hashes. Browser sessions are revocable and expire after 12 hours.
+
+For an explicitly trusted LAN, passwordless UI access can be enabled without weakening bearer APIs:
+
+```text
+WHACKAMOLE_UI_BYPASS_CIDRS=192.168.1.0/24
+WHACKAMOLE_ALLOWED_ORIGINS=http://192.168.1.16:8383
+WHACKAMOLE_COOKIE_SECURE=false
+```
+
+Every device in an allowed subnet is a UI administrator. Host/origin and CSRF checks remain enforced. Set `WHACKAMOLE_COOKIE_SECURE=true` when the allowed origin is HTTPS. Forwarded client headers are ignored by the published container.
+
+Reset the administrator offline without putting a password on the command line:
+
+```bash
+WHACKAMOLE_ADMIN_PASSWORD='a new passphrase of at least 15 characters' \
+python tools/admin_credentials.py --config-dir ./data --username admin
 ```
 
 Run tests:

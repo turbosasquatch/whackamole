@@ -9,12 +9,13 @@ import app.upload_console as upload_console_module
 from app.main import app
 
 
-API_TOKEN = "whackamole-test-token"
+API_TOKEN = "whackamole-test-token-that-is-at-least-32-characters"
 
 
 def _client(tmp_path, monkeypatch):
     monkeypatch.setenv("WHACKAMOLE_CONFIG_DIR", str(tmp_path))
-    return TestClient(app)
+    monkeypatch.setenv("WHACKAMOLE_API_TOKEN", API_TOKEN)
+    return TestClient(app, headers=_auth_headers())
 
 
 def _auth_headers():
@@ -343,7 +344,7 @@ def test_detailed_api_requires_bearer_token(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
 
-        assert client.get("/api/items").status_code == 401
+        assert client.get("/api/items", headers={"Authorization": ""}).status_code == 401
         assert client.get("/api/items", headers={"Authorization": "Bearer nope"}).status_code == 401
 
 
@@ -351,7 +352,7 @@ def test_status_api_is_lightweight_and_does_not_expose_token(tmp_path, monkeypat
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)
 
-        response = client.get("/api/status")
+        response = client.get("/ui-api/status")
 
         assert response.status_code == 200
         assert response.json()["configured"]["whackamole_api_token"] is True
@@ -676,7 +677,7 @@ def test_candidate_dashboard_includes_filters_and_row_recheck_actions(tmp_path, 
         assert "data-search-open" in page.text
         assert "data-search-modal" in page.text
         assert f'/items/{item_id}/upload-assistant/queue' in page.text
-        assert f'data-queue-url="/api/items/{item_id}/upload-assistant/queue"' in page.text
+        assert f'data-queue-url="/ui-api/items/{item_id}/upload-assistant/queue"' in page.text
         assert "data-queue-upload-form" in page.text
         assert 'data-submit-tick="Upload queued"' in page.text
         assert "data-submit-tick-button" in page.text
@@ -1234,7 +1235,7 @@ def test_service_error_history_popout_and_clear(tmp_path, monkeypatch):
         db.append_service_error("QUI timeout", occurred_at=1779894964)
 
         page = client.get("/")
-        status_response = client.get("/api/status")
+        status_response = client.get("/ui-api/status")
         clear = client.post("/service-errors/clear", data={"return_to": "/"}, follow_redirects=False)
 
         assert page.status_code == 200
@@ -1465,7 +1466,7 @@ def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monk
         assert 'data-submit-tick="Recheck triggered"' in page.text
         assert 'data-submit-tick="Upload queued"' in page.text
         assert "data-queue-upload-form" in page.text
-        assert f'data-queue-url="/api/items/{item_id}/upload-assistant/queue"' in page.text
+        assert f'data-queue-url="/ui-api/items/{item_id}/upload-assistant/queue"' in page.text
         assert f'value="/items/{item_id}"' in page.text
         assert f'value="/items/{item_id}#upload-assistant"' not in page.text
         assert "Next Item" in page.text

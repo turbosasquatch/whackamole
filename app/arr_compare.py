@@ -10,6 +10,7 @@ import httpx
 
 from app.clients import RadarrClient, SonarrClient
 from app.config import AppConfig, SecretStore
+from app.security import get_bound_secret
 from app.media_identity import (
     ReleaseTraits,
     parse_release_traits as _shared_parse_release_traits,
@@ -310,7 +311,7 @@ async def _sonarr_releases(
     secrets: SecretStore,
     metadata_cache: Optional[ArrMetadataCache] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
-    api_key = secrets.get("sonarr_api_key")
+    api_key = get_bound_secret(secrets, "sonarr_api_key", cfg.sonarr.url)
     if not cfg.sonarr.url or not api_key:
         raise RuntimeError("Sonarr URL or API key is not configured")
     client = SonarrClient(cfg.sonarr.url, api_key, cfg.safety.arr_search_timeout_seconds)
@@ -353,7 +354,7 @@ async def _radarr_releases(
     secrets: SecretStore,
     metadata_cache: Optional[ArrMetadataCache] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
-    api_key = secrets.get("radarr_api_key")
+    api_key = get_bound_secret(secrets, "radarr_api_key", cfg.radarr.url)
     if not cfg.radarr.url or not api_key:
         raise RuntimeError("Radarr URL or API key is not configured")
     client = RadarrClient(cfg.radarr.url, api_key, cfg.safety.arr_search_timeout_seconds)
