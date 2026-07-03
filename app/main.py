@@ -1485,6 +1485,8 @@ def _local_nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             return _nfo_payload(content, str(candidate), "local")
         return {"available": False, "message": "No NFO found at this path."}
+    except ValueError as exc:
+        return {"available": False, "message": str(exc)}
     except OSError as exc:
         return {"available": False, "message": f"Could not inspect NFO path: {exc}"}
 

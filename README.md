@@ -39,6 +39,7 @@ Expected mounts:
 ```text
 /config       rw   Whackamole config, secrets, and sqlite database
 /data/torrents ro  Media path as Upload Assistant sees it
+/media/torrents ro Legacy-compatible media view used by existing installs
 /ua-tmp       ro   Optional Upload Assistant temp view
 ```
 
@@ -107,7 +108,7 @@ WHACKAMOLE_API_TOKEN=replace-with-at-least-32-random-characters \
 uvicorn app.main:app --reload --port 8383 --no-proxy-headers
 ```
 
-On first launch, open `/setup`, confirm that API token, and create the separate UI administrator. Passwords are stored as Argon2id hashes. Browser sessions are revocable and expire after 12 hours.
+On first launch, open `/setup`, confirm that API token, and create the separate UI administrator. Passwords are stored as Argon2id hashes. Browser sessions are revocable and expire 30 days after authentication; activity does not extend that absolute expiry.
 
 For an explicitly trusted LAN, passwordless UI access can be enabled without weakening bearer APIs:
 

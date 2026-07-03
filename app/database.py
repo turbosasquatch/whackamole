@@ -346,6 +346,21 @@ class Database:
             conn.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now,))
             return conn.execute("SELECT * FROM auth_sessions WHERE token_hash = ?", (token_hash,)).fetchone()
 
+    def extend_active_auth_sessions(self, ttl_seconds: int, *, now: Optional[int] = None) -> int:
+        current_time = int(time.time()) if now is None else int(now)
+        ttl = max(1, int(ttl_seconds))
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE auth_sessions
+                SET expires_at = created_at + ?
+                WHERE expires_at > ?
+                  AND expires_at < created_at + ?
+                """,
+                (ttl, current_time, ttl),
+            )
+            return int(cursor.rowcount)
+
     def delete_auth_session(self, token_hash: str) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))

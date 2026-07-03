@@ -25,7 +25,7 @@ from app.database import Database
 
 SESSION_COOKIE = "whackamole_session"
 CSRF_COOKIE = "whackamole_csrf"
-SESSION_TTL_SECONDS = 12 * 60 * 60
+SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_REQUEST_BYTES = 1024 * 1024
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,64}$")
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -107,6 +107,7 @@ class SessionIdentity:
     username: str
     auth_method: str
     csrf_token: str
+    expires_at: int
 
 
 class AuthManager:
@@ -117,6 +118,7 @@ class AuthManager:
         self.settings = settings or self._load_settings()
         self._failures: Dict[str, Deque[int]] = defaultdict(deque)
         self._bootstrap_api_token()
+        self.db.extend_active_auth_sessions(SESSION_TTL_SECONDS)
 
     def _load_settings(self) -> AuthSettings:
         if os.getenv("WHACKAMOLE_UI_BYPASS_CIDRS") or os.getenv("WHACKAMOLE_ALLOWED_ORIGINS"):
@@ -225,7 +227,7 @@ class AuthManager:
             admin = self.db.get_admin_account()
             if admin is None or int(row["auth_version"]) != int(admin["auth_version"]):
                 return None
-        return SessionIdentity(str(row["username"]), method, csrf_token)
+        return SessionIdentity(str(row["username"]), method, csrf_token, int(row["expires_at"]))
 
     def delete_session(self, raw_token: str) -> None:
         if raw_token:
@@ -274,9 +276,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         policy = route_policy(path)
         public = policy == "public"
         bearer_only = policy == "bearer_api"
+        session_token = request.cookies.get(SESSION_COOKIE, "")
+        csrf_token = request.cookies.get(CSRF_COOKIE, "")
         identity = manager.session_identity(
-            request.cookies.get(SESSION_COOKIE, ""),
-            request.cookies.get(CSRF_COOKIE, ""),
+            session_token,
+            csrf_token,
             client_ip,
         )
         new_session: Optional[Tuple[str, str]] = None
@@ -295,7 +299,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 return self._secure(RedirectResponse("/setup", status_code=status.HTTP_303_SEE_OTHER))
             if manager.settings.bypasses(client_ip) and request.method in {"GET", "HEAD"}:
                 new_session = manager.create_session("local-network", "network", client_ip)
-                identity = SessionIdentity("local-network", "network", new_session[1])
+                identity = SessionIdentity(
+                    "local-network",
+                    "network",
+                    new_session[1],
+                    int(time.time()) + SESSION_TTL_SECONDS,
+                )
                 manager.db.append_security_event("network_bypass", client_ip=client_ip, route=path, outcome="success")
             else:
                 if path.startswith("/ui-api/"):
@@ -322,6 +331,18 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         if new_session:
             _set_session_cookies(response, new_session[0], new_session[1], manager.settings.cookie_secure)
+        elif identity is not None and session_token and csrf_token:
+            current_identity = manager.session_identity(session_token, csrf_token, client_ip)
+            if current_identity is None:
+                return self._secure(response)
+            remaining = max(1, current_identity.expires_at - int(time.time()))
+            _set_session_cookies(
+                response,
+                session_token,
+                csrf_token,
+                manager.settings.cookie_secure,
+                max_age=remaining,
+            )
         return self._secure(response)
 
     @staticmethod
@@ -395,11 +416,18 @@ def route_policy(path: str) -> str:
     return "ui"
 
 
-def _set_session_cookies(response: Response, session_token: str, csrf_token: str, secure: bool) -> None:
+def _set_session_cookies(
+    response: Response,
+    session_token: str,
+    csrf_token: str,
+    secure: bool,
+    *,
+    max_age: int = SESSION_TTL_SECONDS,
+) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         session_token,
-        max_age=SESSION_TTL_SECONDS,
+        max_age=max_age,
         httponly=True,
         secure=secure,
         samesite="strict",
@@ -408,7 +436,7 @@ def _set_session_cookies(response: Response, session_token: str, csrf_token: str
     response.set_cookie(
         CSRF_COOKIE,
         csrf_token,
-        max_age=SESSION_TTL_SECONDS,
+        max_age=max_age,
         httponly=False,
         secure=secure,
         samesite="strict",

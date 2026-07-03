@@ -16,6 +16,7 @@ from app.upload_console import resolve_path_and_args
 def _client(tmp_path, monkeypatch):
     monkeypatch.setenv("WHACKAMOLE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("WHACKAMOLE_API_TOKEN", "whackamole-test-token-that-is-at-least-32-characters")
+    monkeypatch.setenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", f"{tmp_path.parent},/media/torrents,/ua")
     return TestClient(app, headers={"Authorization": "Bearer whackamole-test-token-that-is-at-least-32-characters"})
 
 

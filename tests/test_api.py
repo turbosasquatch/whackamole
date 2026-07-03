@@ -15,6 +15,7 @@ API_TOKEN = "whackamole-test-token-that-is-at-least-32-characters"
 def _client(tmp_path, monkeypatch):
     monkeypatch.setenv("WHACKAMOLE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("WHACKAMOLE_API_TOKEN", API_TOKEN)
+    monkeypatch.setenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", str(tmp_path.parent))
     return TestClient(app, headers=_auth_headers())
 
 
@@ -1853,6 +1854,22 @@ def test_no_video_error_item_renders_and_serializes(tmp_path, monkeypatch):
         assert page_response.status_code == 200
         assert "no_video_files" in page_response.text
         assert reason in page_response.text
+
+
+def test_disallowed_item_path_is_safe_for_page_and_detail_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", str(tmp_path / "allowed"))
+    monkeypatch.setenv("WHACKAMOLE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("WHACKAMOLE_API_TOKEN", API_TOKEN)
+    with TestClient(app, headers=_auth_headers(), raise_server_exceptions=False) as client:
+        item_id = _seed_item(client)
+
+        page_response = client.get(f"/items/{item_id}")
+        api_response = client.get(f"/api/items/{item_id}", headers=_auth_headers())
+
+        assert page_response.status_code == 200
+        assert api_response.status_code == 200
+        assert "outside configured media roots" in page_response.text.lower()
+        assert "outside configured media roots" in str(api_response.json()).lower()
 
 
 def test_grab_nfo_updates_source_without_rechecking_item(tmp_path, monkeypatch):

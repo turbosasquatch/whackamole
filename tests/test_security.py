@@ -1,13 +1,16 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app.config import SecretStore
 from app.main import app
-from app.path_security import safe_join_media
-from app.security import AuthSettings, get_bound_secret, route_policy, set_bound_secret, validate_service_url
+from app.path_security import allowed_media_roots, safe_join_media, validate_media_path
+from app.security import AuthSettings, SESSION_TTL_SECONDS, get_bound_secret, route_policy, set_bound_secret, validate_service_url
 
 
 API_TOKEN = "security-test-api-token-with-at-least-32-characters"
 PASSWORD = "correct horse battery staple"
+THIRTY_DAYS = 30 * 24 * 60 * 60
 
 
 def _raw_client(tmp_path, monkeypatch, **environment):
@@ -63,6 +66,53 @@ def test_password_session_protects_ui_and_bearer_api_remains_separate(tmp_path, 
         assert client.get("/api/items", headers={"Authorization": f"Bearer {API_TOKEN}"}).status_code == 200
 
 
+def test_password_session_has_fixed_thirty_day_expiry(tmp_path, monkeypatch):
+    with _raw_client(tmp_path, monkeypatch) as client:
+        _setup(client)
+        login = _login(client)
+        assert login.status_code == 303
+        assert SESSION_TTL_SECONDS == THIRTY_DAYS
+        assert any("Max-Age=2592000" in value for value in login.headers.get_list("set-cookie"))
+        with client.app.state.db.connect() as conn:
+            before = conn.execute("SELECT created_at, expires_at FROM auth_sessions").fetchone()
+        assert int(before["expires_at"]) - int(before["created_at"]) == THIRTY_DAYS
+
+        assert client.get("/").status_code == 200
+        with client.app.state.db.connect() as conn:
+            after = conn.execute("SELECT created_at, expires_at FROM auth_sessions").fetchone()
+        assert int(after["expires_at"]) == int(before["expires_at"])
+
+
+def test_active_legacy_sessions_extend_without_reviving_expired_sessions(tmp_path, monkeypatch):
+    with _raw_client(tmp_path, monkeypatch) as client:
+        now = int(time.time())
+        db = client.app.state.db
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO auth_sessions(token_hash, username, auth_version, auth_method, client_ip, csrf_hash, created_at, expires_at)
+                VALUES(?, 'admin', 1, 'password', '', 'csrf', ?, ?)
+                """,
+                ("active-legacy", now - 60, now + 60),
+            )
+            conn.execute(
+                """
+                INSERT INTO auth_sessions(token_hash, username, auth_version, auth_method, client_ip, csrf_hash, created_at, expires_at)
+                VALUES(?, 'admin', 1, 'password', '', 'csrf', ?, ?)
+                """,
+                ("expired-legacy", now - 120, now - 60),
+            )
+
+        updated = db.extend_active_auth_sessions(THIRTY_DAYS, now=now)
+
+        with db.connect() as conn:
+            active = conn.execute("SELECT created_at, expires_at FROM auth_sessions WHERE token_hash = 'active-legacy'").fetchone()
+            expired = conn.execute("SELECT created_at, expires_at FROM auth_sessions WHERE token_hash = 'expired-legacy'").fetchone()
+        assert updated == 1
+        assert int(active["expires_at"]) == int(active["created_at"]) + THIRTY_DAYS
+        assert int(expired["expires_at"]) == now - 60
+
+
 def test_csrf_is_required_for_cookie_authenticated_changes(tmp_path, monkeypatch):
     with _raw_client(tmp_path, monkeypatch) as client:
         _setup(client)
@@ -77,6 +127,27 @@ def test_csrf_is_required_for_cookie_authenticated_changes(tmp_path, monkeypatch
             follow_redirects=False,
         )
         assert accepted.status_code == 303
+
+
+def test_logout_does_not_reissue_deleted_session_cookies(tmp_path, monkeypatch):
+    with _raw_client(tmp_path, monkeypatch) as client:
+        _setup(client)
+        _login(client)
+        response = client.post(
+            "/logout",
+            headers={
+                "Origin": "http://testserver",
+                "X-CSRF-Token": client.cookies.get("whackamole_csrf"),
+            },
+            follow_redirects=False,
+        )
+
+        cookies = response.headers.get_list("set-cookie")
+        assert response.status_code == 303
+        assert any("whackamole_session=" in value and "Max-Age=0" in value for value in cookies)
+        assert not any("whackamole_session=" in value and "Max-Age=2592000" in value for value in cookies)
+        with client.app.state.db.connect() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM auth_sessions").fetchone()[0] == 0
 
 
 def test_public_status_is_minimal(tmp_path, monkeypatch):
@@ -169,6 +240,16 @@ def test_service_url_and_media_path_guards(monkeypatch, tmp_path):
         pass
     else:
         raise AssertionError("Traversal should be rejected")
+
+
+def test_default_media_roots_include_legacy_read_only_mount(monkeypatch):
+    for value in (None, ""):
+        if value is None:
+            monkeypatch.delenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", raising=False)
+        else:
+            monkeypatch.setenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", value)
+        assert "/media/torrents" in {str(root) for root in allowed_media_roots()}
+        assert str(validate_media_path("/media/torrents/show/episode.mkv")).startswith("/media/torrents/")
 
 
 def test_every_registered_route_has_a_deny_by_default_policy():

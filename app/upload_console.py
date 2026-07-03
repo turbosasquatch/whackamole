@@ -185,6 +185,9 @@ def _video_files_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
         if not files:
             result["message"] = "No video files found at this path."
         return result
+    except ValueError as exc:
+        result["message"] = str(exc)
+        return result
     except OSError as exc:
         result["message"] = f"Could not inspect path: {exc}"
         return result

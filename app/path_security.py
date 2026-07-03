@@ -5,8 +5,11 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Tuple
 
 
+DEFAULT_ALLOWED_MEDIA_ROOTS = "/data/torrents,/media/torrents,/ua-tmp"
+
+
 def allowed_media_roots() -> Tuple[Path, ...]:
-    value = os.getenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", "")
+    value = os.getenv("WHACKAMOLE_ALLOWED_MEDIA_ROOTS", "").strip() or DEFAULT_ALLOWED_MEDIA_ROOTS
     return tuple(Path(part.strip()).resolve(strict=False) for part in value.split(",") if part.strip())
 
 
