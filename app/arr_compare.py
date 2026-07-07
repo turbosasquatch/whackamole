@@ -20,17 +20,7 @@ from app.media_identity import (
     traits_payload as _shared_traits_payload,
 )
 from app.ua_logs import normalize_ua_log
-
-
-TRACKER_ALIASES: Dict[str, Sequence[str]] = {
-    "IHD": ("ihd", "infinityhd"),
-    "DP": ("dp", "darkpeers", "darkpeer"),
-    "ULCX": ("ulcx", "uploadcx", "upload.cx"),
-    "DC": ("dc", "digitalcore"),
-    "TL": ("tl", "torrentleech"),
-    "IPT": ("ipt", "iptorrents"),
-    "SP": ("sp", "seedpool"),
-}
+from app.trackers import canonical_tracker
 
 
 @dataclass
@@ -287,21 +277,6 @@ def summarize_decisions(decisions: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
 
 def release_is_equal_or_better(local: ReleaseTraits, remote: ReleaseTraits) -> bool:
     return _shared_release_is_equal_or_better(local, remote)
-
-
-def canonical_tracker(name: str) -> Optional[str]:
-    cleaned = _compact(name)
-    if not cleaned:
-        return None
-    for canonical, aliases in TRACKER_ALIASES.items():
-        if cleaned == _compact(canonical) or cleaned in {_compact(alias) for alias in aliases}:
-            return canonical
-    for canonical, aliases in TRACKER_ALIASES.items():
-        for alias in aliases:
-            compact_alias = _compact(alias)
-            if len(compact_alias) >= 4 and compact_alias in cleaned:
-                return canonical
-    return None
 
 
 async def _sonarr_releases(

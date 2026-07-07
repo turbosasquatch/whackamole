@@ -53,6 +53,14 @@ def test_reducer_extracts_all_trackers_from_ua_html_output():
     assert result.trackers == ["IHD", "DP", "ULCX"]
 
 
+def test_reducer_canonicalizes_luminarr_tracker_names():
+    result = reduce_ua_log("Trackers passed all checks: Luminarr, Luminarr (API), LUME")
+
+    assert result.status == "candidate"
+    assert result.tracker_results["passed"] == ["LUME"]
+    assert result.trackers == ["LUME"]
+
+
 def test_reducer_blocks_potential_dupes():
     result = reduce_ua_log("Found potential dupes on: ABC, XYZ")
 

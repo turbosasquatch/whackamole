@@ -3,32 +3,15 @@ from __future__ import annotations
 import json
 import re
 from pathlib import PurePosixPath
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
-
-PRIMARY_TRACKERS = ("DP", "ULCX", "IHD")
-
-TRACKER_LABELS = {
-    "DP": "DP",
-    "ULCX": "ULCX",
-    "IHD": "IHD",
-    "DC": "DC",
-    "TL": "TL",
-    "IPT": "IPT",
-    "SP": "Seedpool",
-}
-
-TRACKER_ALIASES = {
-    "DP": ("darkpeers", "darkpeer", "dp"),
-    "ULCX": ("upload.cx", "uploadcx", "ulcx"),
-    "IHD": ("infinityhd", "ihd"),
-    "DC": ("digitalcore",),
-    "TL": ("torrentleech", "tleechreload"),
-    "IPT": ("iptorrents",),
-    "SP": ("seedpool",),
-}
-
-_PRIMARY_ORDER = {tracker: index for index, tracker in enumerate(PRIMARY_TRACKERS)}
+from app.trackers import (
+    PRIMARY_TRACKER_ORDER,
+    PRIMARY_TRACKERS,
+    canonical_tracker,
+    compact_tracker_name,
+    tracker_payload,
+)
 
 
 def build_inventory_meta(torrent: Mapping[str, Any]) -> Dict[str, Any]:
@@ -202,26 +185,23 @@ def detect_tracker(torrent: Mapping[str, Any]) -> Dict[str, Any]:
     segments = _path_segments(fields)
 
     for segment in segments:
-        canonical = _canonical_tracker(segment, exact_short=True)
+        canonical = canonical_tracker(segment, exact_short=True)
         if canonical:
-            return _tracker_payload(canonical)
+            return tracker_payload(canonical)
 
-    compact_fields = " ".join(_compact(field) for field in fields)
-    for canonical, aliases in TRACKER_ALIASES.items():
-        for alias in aliases:
-            compact_alias = _compact(alias)
-            if len(compact_alias) >= 4 and compact_alias in compact_fields:
-                return _tracker_payload(canonical)
+    canonical = canonical_tracker(" ".join(fields))
+    if canonical:
+        return tracker_payload(canonical)
 
     folder = _support_folder(fields)
     if folder:
-        canonical = _canonical_tracker(folder, exact_short=True)
+        canonical = canonical_tracker(folder, exact_short=True)
         if canonical:
-            return _tracker_payload(canonical)
+            return tracker_payload(canonical)
         label = _clean_label(folder)
         if label:
             return {
-                "key": f"OTHER:{_compact(label).upper()}",
+                "key": f"OTHER:{compact_tracker_name(label).upper()}",
                 "label": label,
                 "primary": False,
             }
@@ -229,33 +209,12 @@ def detect_tracker(torrent: Mapping[str, Any]) -> Dict[str, Any]:
     return {}
 
 
-def _canonical_tracker(value: str, exact_short: bool = False) -> Optional[str]:
-    compact = _compact(value)
-    if not compact:
-        return None
-    for canonical, aliases in TRACKER_ALIASES.items():
-        alias_compacts = {_compact(alias) for alias in aliases}
-        if compact == _compact(canonical) or compact in alias_compacts:
-            return canonical
-        if not exact_short and any(len(alias) >= 4 and alias in compact for alias in alias_compacts):
-            return canonical
-    return None
-
-
-def _tracker_payload(canonical: str) -> Dict[str, Any]:
-    return {
-        "key": canonical,
-        "label": TRACKER_LABELS.get(canonical, canonical),
-        "primary": canonical in PRIMARY_TRACKERS,
-    }
-
-
 def _sort_coverage(values: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted(
         values,
         key=lambda item: (
             0 if item.get("primary") else 1,
-            _PRIMARY_ORDER.get(str(item.get("key")), 99),
+            PRIMARY_TRACKER_ORDER.get(str(item.get("key")), 99),
             str(item.get("label") or ""),
         ),
     )
@@ -305,10 +264,6 @@ def _tags(value: Any) -> List[str]:
     if isinstance(value, list):
         return [str(item).strip().lower() for item in value if str(item).strip()]
     return [part.strip().lower() for part in str(value or "").split(",") if part.strip()]
-
-
-def _compact(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
 
 
 def _jsonish_dict(value: Any) -> Dict[str, Any]:

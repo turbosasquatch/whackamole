@@ -49,6 +49,22 @@ def test_inventory_meta_detects_other_cross_seed_tracker():
     assert meta["tracker"]["primary"] is False
 
 
+def test_inventory_meta_detects_luminarr_as_primary_lume():
+    meta = build_inventory_meta(
+        {
+            "name": "Movie.2025.2160p.WEB-DL-GRP.mkv",
+            "category": "movies.cross",
+            "tags": "cross-seed",
+            "save_path": "/media/torrents/cross-seeds/Luminarr (API)",
+            "content_path": "/media/torrents/cross-seeds/Luminarr (API)/Movie.2025.2160p.WEB-DL-GRP.mkv",
+        }
+    )
+
+    assert meta["is_cross_seed"]
+    assert meta["is_support"]
+    assert meta["tracker"] == {"key": "LUME", "label": "LUME", "primary": True}
+
+
 def test_media_type_filters_movies_tv_and_episodes():
     assert detect_media_type({"name": "Movie.2024.1080p.WEB-DL-GRP", "category": "movies"}) == "movie"
     assert detect_media_type({"name": "Show.S03.1080p.WEB-DL-GRP", "category": "tv"}) == "tv"
@@ -78,6 +94,6 @@ def test_coverage_index_and_missing_filters():
     coverage = index[release_group_key(source["name"])]
 
     assert [item["key"] for item in coverage] == ["DP"]
-    assert missing_primary_trackers(coverage) == ["ULCX", "IHD"]
+    assert missing_primary_trackers(coverage) == ["ULCX", "IHD", "LUME"]
     assert filter_inventory_rows([source], index, missing=["DP"]) == []
     assert filter_inventory_rows([source], index, missing=["IHD"]) == [source]

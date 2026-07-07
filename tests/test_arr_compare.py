@@ -19,6 +19,10 @@ def test_tracker_aliases_match_ua_and_prowlarr_names():
     assert canonical_tracker("InfinityHD (API) (Prowlarr)") == "IHD"
     assert canonical_tracker("Darkpeers (API) (Prowlarr)") == "DP"
     assert canonical_tracker("upload.cx (API) (Prowlarr)") == "ULCX"
+    assert canonical_tracker("LUME") == "LUME"
+    assert canonical_tracker("Luminarr") == "LUME"
+    assert canonical_tracker("Luminarr (API)") == "LUME"
+    assert canonical_tracker("Luminarr (API) (Prowlarr)") == "LUME"
     assert canonical_tracker("UnknownTracker") is None
 
 

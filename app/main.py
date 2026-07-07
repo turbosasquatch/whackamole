@@ -3010,6 +3010,8 @@ async def save_config(
     policy_ulcx_ranked: Optional[str] = Form(None),
     policy_ihd_banned: Optional[str] = Form(None),
     policy_ihd_ranked: Optional[str] = Form(None),
+    policy_lume_banned: Optional[str] = Form(None),
+    policy_lume_ranked: Optional[str] = Form(None),
 ) -> HTMLResponse:
     manager: ConfigManager = request.app.state.config_manager
     secrets: SecretStore = request.app.state.secrets
@@ -3095,6 +3097,7 @@ async def save_config(
         "DP": (policy_dp_banned, policy_dp_ranked),
         "ULCX": (policy_ulcx_banned, policy_ulcx_ranked),
         "IHD": (policy_ihd_banned, policy_ihd_ranked),
+        "LUME": (policy_lume_banned, policy_lume_ranked),
     }
     existing_policies = cfg.tracker_policies if isinstance(cfg.tracker_policies, dict) else default_tracker_policies()
     cfg.tracker_policies = default_tracker_policies()

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from app.trackers import canonical_tracker
 from app.ua_logs import normalize_ua_log
 
 
@@ -141,7 +142,12 @@ def _split_tracker_list(value: str) -> List[str]:
     parts = re.split(r",|\band\b", cleaned)
     trackers = []
     for part in parts:
-        candidate = part.strip(" .:-[]'\"").upper()
+        raw_candidate = part.strip(" .:-[]'\"")
+        canonical = canonical_tracker(raw_candidate)
+        if canonical:
+            trackers.append(canonical)
+            continue
+        candidate = raw_candidate.upper()
         if candidate and len(candidate) <= 12 and candidate.replace("-", "").isalnum():
             trackers.append(candidate)
     return list(dict.fromkeys(trackers))

@@ -7,11 +7,13 @@ from typing import Any, Dict, List, Optional
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
 
+from app.trackers import PRIMARY_TRACKERS
+
 
 CURRENT_CONFIG_VERSION = 4
 OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 45
 DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 300
-DEFAULT_TRACKER_POLICY_KEYS = ("DP", "ULCX", "IHD")
+DEFAULT_TRACKER_POLICY_KEYS = PRIMARY_TRACKERS
 
 
 @dataclass

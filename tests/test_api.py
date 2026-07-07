@@ -390,6 +390,23 @@ def test_config_page_saves_maintenance_guard_settings(tmp_path, monkeypatch):
         assert cfg.safety.arr_metadata_cache_seconds == 120
 
 
+def test_config_page_saves_lume_release_group_policy(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/config",
+            data={
+                "policy_lume_banned": "BADGRP",
+                "policy_lume_ranked": "GOODGRP",
+            },
+        )
+
+        cfg = client.app.state.config_manager.load()
+
+        assert response.status_code == 200
+        assert cfg.tracker_policies["LUME"]["banned_release_groups"] == ["BADGRP"]
+        assert cfg.tracker_policies["LUME"]["ranked_release_groups"] == ["GOODGRP"]
+
+
 def test_config_save_reapplies_release_group_policy_to_candidates(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         item_id = _seed_item(client)
@@ -565,7 +582,7 @@ def test_items_api_filters_by_inventory_coverage(tmp_path, monkeypatch):
         item = visible.json()["items"][0]
         assert visible.json()["total"] == 1
         assert item["coverage"][0]["key"] == "DP"
-        assert item["missing_primary_trackers"] == ["ULCX", "IHD"]
+        assert item["missing_primary_trackers"] == ["ULCX", "IHD", "LUME"]
 
 
 def test_items_api_search_filters_results(tmp_path, monkeypatch):
@@ -669,6 +686,7 @@ def test_candidate_dashboard_includes_filters_and_row_recheck_actions(tmp_path, 
         assert 'name="view" value="candidates"' in page.text
         assert "Missing tracker coverage" in page.text
         assert "Decision valid for" in page.text
+        assert 'value="LUME"' in page.text
         assert '<th data-column-key="valid-for">Valid For</th>' not in page.text
         assert "Blocked reason" in page.text
         assert "Review reason" in page.text
