@@ -35,6 +35,16 @@
   </section>
 {% endif %}
 
+{% if service is defined %}
+  <form
+    id="maintenance-guard-form"
+    method="post"
+    action="{% if service.maintenance.active %}/maintenance/resume{% else %}/maintenance/pause{% endif %}"
+  >
+    <input type="hidden" name="return_to" value="/config">
+  </form>
+{% endif %}
+
 <form class="settings" method="post" action="/config">
   <section>
     <h2>QUI</h2>
@@ -243,12 +253,9 @@
             <span class="state-dot {{ 'warn' if service.maintenance.active else 'ok' }}"></span>
             {{ "Paused" if service.maintenance.active else "Active" }}
           </span>
-          <form method="post" action="{% if service.maintenance.active %}/maintenance/resume{% else %}/maintenance/pause{% endif %}">
-            <input type="hidden" name="return_to" value="/config">
-            <button class="button secondary small" type="submit">
-              {% if service.maintenance.active %}Resume maintenance{% else %}Pause maintenance{% endif %}
-            </button>
-          </form>
+          <button class="button secondary small" type="submit" form="maintenance-guard-form">
+            {% if service.maintenance.active %}Resume maintenance{% else %}Pause maintenance{% endif %}
+          </button>
         </div>
       {% endif %}
     </div>

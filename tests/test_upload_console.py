@@ -542,6 +542,11 @@ def test_destructive_actions_have_confirmations_and_settings_inputs_are_semantic
     assert 'name="path_mappings" rows="5" autocomplete="off" spellcheck="false"' in config_template
     assert 'name="exclude_category_terms" value="{{ exclude_category_terms }}" autocomplete="off" spellcheck="false"' in config_template
     assert 'name="policy_{{ policy.tracker | lower }}_banned" value="{{ policy.banned }}" autocomplete="off" spellcheck="false"' in config_template
+    assert 'id="maintenance-guard-form"' in config_template
+    assert 'form="maintenance-guard-form"' in config_template
+    settings_form = config_template.split('<form class="settings" method="post" action="/config">', 1)[1]
+    settings_form = settings_form.split('<footer class="save-bar">', 1)[0]
+    assert "<form" not in settings_form
 
 
 def test_upload_console_full_snapshots_are_not_terminal_replacements():
