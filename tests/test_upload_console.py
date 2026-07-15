@@ -10,7 +10,7 @@ from app.database import Database
 from app.main import app
 from app.service import WhackamoleService
 from app.ua_execution import UaExecutionCoordinator, UaExecutionOwner, UploadConsoleManager, sse_payload
-from app.upload_console import resolve_path_and_args
+from app.upload_console import resolve_path_and_args, restrict_upload_tracker_args
 
 
 def _client(tmp_path, monkeypatch):
@@ -1153,6 +1153,44 @@ def test_resolve_path_and_args_is_idempotent_when_unattended_already_present():
     _, args = resolve_path_and_args(item, tracker_groups, arr_result, check_results)
 
     assert args.count("--unattended") == 1
+
+
+def test_resolve_path_and_args_reloads_episode_moderation_policy():
+    item = {
+        "name": "Show.S01E01.1080p.WEB-DL-GRP",
+        "inventory_media_type": "episode",
+        "status": "candidate",
+        "mapped_path": "/media/torrents/show",
+        "content_path": "/media/torrents/show",
+        "discovarr_local_traits": {},
+    }
+    tracker_groups = {"passed": ["DP", "IHD"]}
+    arr_result = {"decisions": [
+        {"tracker": "DP", "status": "candidate"},
+        {"tracker": "IHD", "status": "candidate"},
+    ]}
+    path, args = resolve_path_and_args(
+        item,
+        tracker_groups,
+        arr_result,
+        {"media": {}},
+        {"DP": {"moderation_queue": True}, "IHD": {"moderation_queue": False}},
+    )
+
+    assert path == item["mapped_path"]
+    assert "--trackers ihd" in args
+    assert "dp" not in args
+
+
+def test_custom_tracker_args_are_intersected_without_losing_other_arguments():
+    args, error = restrict_upload_tracker_args("--service AMZN --trackers dp,ihd --unattended", ["IHD"])
+
+    assert error == ""
+    assert args == "--service AMZN --trackers ihd --unattended"
+
+    args, error = restrict_upload_tracker_args("--trackers dp --service AMZN", ["IHD"])
+    assert args == ""
+    assert "not eligible" in error
 
 
 def test_auto_upload_setting_get_and_post_roundtrip(tmp_path, monkeypatch):

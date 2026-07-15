@@ -441,7 +441,14 @@ def test_reapply_release_group_policy_updates_candidate_without_recheck(tmp_path
     arr_results = json.loads(row["arr_results"])
     check_results = json.loads(row["check_results"])
 
-    assert result == {"items": 1, "blocked_items": 0, "blocked_trackers": 1}
+    assert result == {
+        "items": 1,
+        "blocked_items": 0,
+        "blocked_trackers": 1,
+        "skipped_items": 0,
+        "restored_items": 0,
+        "moderation_queue_trackers": 0,
+    }
     assert row["status"] == "candidate"
     assert row["reason"] == "Valid upload candidate on: IHD"
     assert tracker_results["passed"] == ["IHD"]
@@ -468,10 +475,48 @@ def test_reapply_release_group_policy_blocks_candidate_when_all_trackers_banned(
     )
     row = db.get_item(candidate_id)
 
-    assert result == {"items": 1, "blocked_items": 1, "blocked_trackers": 1}
+    assert result == {
+        "items": 1,
+        "blocked_items": 1,
+        "blocked_trackers": 1,
+        "skipped_items": 0,
+        "restored_items": 0,
+        "moderation_queue_trackers": 0,
+    }
     assert row["status"] == "blocked"
     assert row["verdict"] == "banned_release_group"
     assert row["reason"] == "GRP is banned on every otherwise valid tracker."
+
+
+def test_reapply_moderation_queue_skips_and_then_restores_episode(tmp_path):
+    db = Database(str(tmp_path / "whackamole.db"))
+    _insert(db, "moderated", "Moderated.Show.S01E01.1080p.WEB-DL-GRP", status="candidate")
+    item_id = int(db.list_items(["candidate"], limit=1)[0]["id"])
+    db.update_status(
+        item_id,
+        "candidate",
+        "candidate",
+        "Valid upload candidate on: DP",
+        tracker_results={"passed": ["DP"], "covered": [], "dupe": [], "skipped": [], "error": []},
+        arr_results={"decisions": [{"tracker": "DP", "status": "candidate", "reason": "ok"}]},
+    )
+
+    enabled = db.reapply_release_group_policy(
+        {"DP": {"banned_release_groups": [], "moderation_queue": True}}
+    )
+    skipped = db.get_item(item_id)
+    disabled = db.reapply_release_group_policy(
+        {"DP": {"banned_release_groups": [], "moderation_queue": False}}
+    )
+    restored = db.get_item(item_id)
+
+    assert enabled["skipped_items"] == 1
+    assert enabled["moderation_queue_trackers"] == 1
+    assert skipped["status"] == "skipped"
+    assert skipped["verdict"] == "moderation_queue_no_targets"
+    assert disabled["restored_items"] == 1
+    assert restored["status"] == "candidate"
+    assert json.loads(restored["tracker_results"])["passed"] == ["DP"]
 
 
 def test_active_filter_only_includes_due_retries(tmp_path):

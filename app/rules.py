@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
-RULESET_VERSION = 3
+RULESET_VERSION = 4
 TRACKER_BUCKETS = ("passed", "covered", "dupe", "skipped", "error")
 TERMINAL_REPLAY_STATUSES = {"candidate", "manual_review", "blocked", "skipped"}
 PROTECTED_REPLAY_STATUSES = {"queued", "deferred", "checking", "retry", "error", "covered", "rejected", "baseline", "inventory", "ignored"}
@@ -18,6 +18,12 @@ VALID_EFFECTS = {"none", "candidate", "review", "block", "skip", "retry", "error
 RULESET_CHANGELOG: List[Dict[str, Any]] = [
     {
         "version": RULESET_VERSION,
+        "changed_rules": ["policy.moderation_queue_no_targets"],
+        "summary": "Skip episode uploads when moderation queues remove every otherwise valid tracker.",
+        "replay_recommended": True,
+    },
+    {
+        "version": 3,
         "changed_rules": [
             "system.mediainfo_unavailable",
             "system.no_video_files",
@@ -450,7 +456,7 @@ def _valid_trackers(
     status: str,
 ) -> List[str]:
     policy_candidates = _tracker_list(policy.get("candidate_trackers"))
-    if policy_candidates:
+    if "candidate_trackers" in policy and (policy_candidates or status != "manual_review"):
         return policy_candidates
 
     decisions = arr.get("decisions") if isinstance(arr.get("decisions"), list) else []
@@ -476,6 +482,16 @@ def _skipped_reason(
     verdict: str,
     reason: str,
 ) -> Optional[tuple[str, str, str, Dict[str, Any]]]:
+    moderation_queues = _tracker_list(policy.get("moderation_queue_trackers"))
+    policy_candidates = _tracker_list(policy.get("candidate_trackers"))
+    policy_blocked = _tracker_list(policy.get("blocked_trackers"))
+    if moderation_queues and not policy_candidates and not policy_blocked:
+        return (
+            "policy.moderation_queue_no_targets",
+            "moderation_queue_no_targets",
+            reason or f"Episode uploads are skipped on every otherwise valid tracker: {', '.join(moderation_queues)}.",
+            {"trackers": moderation_queues},
+        )
     if groups.get("dupe") or verdict in {"dupe", "exact_match"}:
         trackers = _dedupe(groups.get("dupe", []))
         return (
@@ -601,7 +617,8 @@ RULE_DEFINITIONS: List[RuleDefinition] = [
     RuleDefinition("arr.no_matching_media", "No matching Arr media", "Decision", "Discovarr", "error", "error", "check_results.arr", notes="Errors when Sonarr/Radarr cannot link the release to configured media.", order=90),
     RuleDefinition("arr.equal_or_better_no_targets", "No upgrade needed", "Decision", "Discovarr", "info", "skip", "arr_results.decisions", notes="Skips when Arr found equal-or-better results for every target.", order=100),
     RuleDefinition("policy.all_trackers_banned", "Release group banned everywhere", "Decision", "Release Group", "error", "block", "release_group_policy", configurable="Settings", notes="Blocks when the group is banned on every otherwise valid tracker.", order=110),
-    RuleDefinition("tracker.no_remaining_valid_targets", "No remaining valid targets", "Decision", "Tracker Validation", "info", "skip", "release_group_policy", notes="Skips cleanly when filtering leaves no valid tracker.", order=120),
+    RuleDefinition("policy.moderation_queue_no_targets", "Moderation queues remove all targets", "Decision", "Tracker Policy", "info", "skip", "release_group_policy.moderation_queue_trackers", configurable="Settings", notes="Skips episode uploads when moderation queues remove every otherwise valid tracker.", order=120),
+    RuleDefinition("tracker.no_remaining_valid_targets", "No remaining valid targets", "Decision", "Tracker Validation", "info", "skip", "release_group_policy", notes="Skips cleanly when filtering leaves no valid tracker.", order=125),
     RuleDefinition("review.missing_release_group", "Missing release group", "Decision", "Release Group", "warning", "review", "release_group_policy", notes="Reviews when policy needs a release group and none can be parsed.", order=130),
     RuleDefinition("review.srrdb_mismatch", "srrDB mismatch", "Decision", "srrDB", "warning", "review", "check_results.srrdb", notes="Reviews when archived filenames or sizes differ.", order=140),
     RuleDefinition("review.rename_check", "Rename Check", "Decision", "Rename Check", "warning", "review", "check_results.rename_detection", notes="Reviews high-confidence renamed folder, file, sibling, Arr, or srrDB evidence.", order=150),

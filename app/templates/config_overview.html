@@ -1,0 +1,15 @@
+{% extends "settings_layout.html" %}
+{% block settings_title %}Settings overview{% endblock %}
+{% block settings_heading %}Settings overview{% endblock %}
+{% block settings_subtitle %}A quick view of your configuration. Choose a section to make changes.{% endblock %}
+{% block settings_content %}
+<section class="settings-summary-grid">
+  <a class="settings-summary-card" href="/config/connections"><span class="summary-icon">↗</span><div><h2>Connections</h2><p>QUI and Arr services</p></div><strong>{{ [cfg.qui.url, cfg.sonarr.url, cfg.radarr.url, cfg.easycross.url, cfg.profilarr.url] | select | list | length }}/5 configured</strong></a>
+  <a class="settings-summary-card" href="/config/processing"><span class="summary-icon">⌁</span><div><h2>Processing</h2><p>Media checks and safety</p></div><strong>{{ "Enabled" if cfg.mediainfo.enabled else "Disabled" }}</strong></a>
+  <a class="settings-summary-card" href="/config/uploading"><span class="summary-icon">↑</span><div><h2>Uploading</h2><p>Upload Assistant and paths</p></div><strong>{{ "Configured" if cfg.upload_assistant.url else "Not configured" }}</strong></a>
+  <a class="settings-summary-card" href="/config/trackers"><span class="summary-icon">◎</span><div><h2>Tracker Policies</h2><p>Banned groups and moderation</p></div><strong>{{ tracker_policies | selectattr("moderation_queue") | list | length }} moderation queues</strong></a>
+  <a class="settings-summary-card" href="/config/notifications"><span class="summary-icon">◌</span><div><h2>Notifications</h2><p>Discord event delivery</p></div><strong>{{ "Configured" if secrets.discord_webhook_url else "Not configured" }}</strong></a>
+  <a class="settings-summary-card" href="/config/security"><span class="summary-icon">◇</span><div><h2>Security</h2><p>API and administrator access</p></div><strong>{{ "Configured" if secrets.whackamole_api_token else "Not configured" }}</strong></a>
+</section>
+<section class="settings-card overview-note"><h2>Configuration at a glance</h2><p>Credentials remain encrypted and are never shown after saving. Connection labels on these pages report only whether values are configured; use <strong>Probe connections</strong> for a live Connected or Error result.</p></section>
+{% endblock %}

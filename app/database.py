@@ -15,6 +15,7 @@ from app.rules import (
     RULESET_VERSION,
     TERMINAL_REPLAY_STATUSES,
     add_replay_audit,
+    apply_decision_payload,
     evaluate_decision,
 )
 
@@ -1078,20 +1079,41 @@ class Database:
 
     def reapply_release_group_policy(self, tracker_policies: Dict[str, Any]) -> Dict[str, int]:
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM items WHERE status = 'candidate'").fetchall()
+            rows = conn.execute(
+                """
+                SELECT * FROM items
+                WHERE status = 'candidate'
+                   OR (status = 'skipped' AND verdict = 'moderation_queue_no_targets')
+                """
+            ).fetchall()
         if not rows:
-            return {"items": 0, "blocked_items": 0, "blocked_trackers": 0}
+            return {"items": 0, "blocked_items": 0, "blocked_trackers": 0, "skipped_items": 0, "restored_items": 0, "moderation_queue_trackers": 0}
 
         now = int(time.time())
         updates: List[Tuple[str, str, str, str, str, str, int, int]] = []
         blocked_items = 0
         blocked_trackers = 0
+        skipped_items = 0
+        restored_items = 0
+        moderation_queue_trackers = 0
 
         for raw_row in rows:
             row = dict(raw_row)
             tracker_results = _tracker_result_groups(row.get("tracker_results"), row.get("verdict"))
             arr_results = _json_dict(row.get("arr_results"))
             check_results = _json_dict(row.get("check_results"))
+            if str(row.get("status") or "") == "skipped" and str(row.get("verdict") or "") == "moderation_queue_no_targets":
+                previous_policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+                previous_moderation = [
+                    str(tracker).upper()
+                    for tracker in previous_policy.get("moderation_queue_trackers", [])
+                    if str(tracker).strip()
+                ]
+                tracker_results["passed"] = list(dict.fromkeys([*tracker_results.get("passed", []), *previous_moderation]))
+                arr_results["decisions"] = [
+                    {"tracker": tracker, "status": "candidate", "reason": "Restored for policy reapplication."}
+                    for tracker in previous_moderation
+                ]
             release_group = _release_group_for_policy(row, check_results)
             status, verdict, reason, policy_result, flags = apply_release_group_policy(
                 tracker_results=tracker_results,
@@ -1100,8 +1122,9 @@ class Database:
                 tracker_policies=tracker_policies,
                 flags=check_results.get("flags") if isinstance(check_results.get("flags"), list) else [],
                 item_name=str(row.get("name") or ""),
+                media_type=str(row.get("inventory_media_type") or ""),
             )
-            if status not in {"candidate", "blocked"}:
+            if status not in {"candidate", "blocked", "skipped"}:
                 continue
 
             updated_tracker_results = _policy_tracker_results(tracker_results, policy_result)
@@ -1127,6 +1150,17 @@ class Database:
                 reason,
                 now,
             )
+            decision = evaluate_decision(
+                item_name=str(row.get("name") or ""),
+                current_status=status,
+                current_verdict=verdict,
+                current_reason=reason,
+                tracker_results=updated_tracker_results,
+                arr_results=updated_arr_results,
+                check_results=updated_check_results,
+            )
+            status, verdict, reason = decision.status, decision.verdict, decision.reason
+            updated_check_results = apply_decision_payload(updated_check_results, decision)
             payload = (
                 status,
                 verdict,
@@ -1139,10 +1173,17 @@ class Database:
             )
             updates.append(payload)
             blocked = list(policy_result.get("blocked_trackers") or [])
+            moderation = list(policy_result.get("moderation_queue_trackers") or [])
             if blocked:
                 blocked_trackers += len(blocked)
+            if moderation:
+                moderation_queue_trackers += len(moderation)
             if status == "blocked":
                 blocked_items += 1
+            if status == "skipped":
+                skipped_items += 1
+            if str(row.get("status") or "") == "skipped" and status == "candidate":
+                restored_items += 1
 
         if updates:
             with self.connect() as conn:
@@ -1163,7 +1204,14 @@ class Database:
                     updates,
                 )
 
-        return {"items": len(updates), "blocked_items": blocked_items, "blocked_trackers": blocked_trackers}
+        return {
+            "items": len(updates),
+            "blocked_items": blocked_items,
+            "blocked_trackers": blocked_trackers,
+            "skipped_items": skipped_items,
+            "restored_items": restored_items,
+            "moderation_queue_trackers": moderation_queue_trackers,
+        }
 
     def reevaluate_stored_decisions(self, *, apply: bool = False, sample_limit: int = 25) -> Dict[str, Any]:
         replay_statuses = sorted(TERMINAL_REPLAY_STATUSES)
@@ -2078,7 +2126,8 @@ def _policy_tracker_results(
     updated = {bucket: list(tracker_results.get(bucket, [])) for bucket in TRACKER_BUCKETS}
     allowed = _dedupe_trackers(policy_result.get("candidate_trackers") or [])
     blocked = set(_dedupe_trackers(policy_result.get("blocked_trackers") or []))
-    if allowed or blocked:
+    moderation = set(_dedupe_trackers(policy_result.get("moderation_queue_trackers") or []))
+    if allowed or blocked or moderation:
         updated["passed"] = allowed
     return updated
 
@@ -2149,6 +2198,7 @@ def _policy_check_results(
             "at": updated_at,
             "candidate_trackers": list(policy_result.get("candidate_trackers") or []),
             "blocked_trackers": list(policy_result.get("blocked_trackers") or []),
+            "moderation_queue_trackers": list(policy_result.get("moderation_queue_trackers") or []),
             "policy_only": True,
         }
     )

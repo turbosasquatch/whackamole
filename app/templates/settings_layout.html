@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{% block settings_title %}Settings{% endblock %} · Whackamole{% endblock %}
+{% block page_label %}Settings{% endblock %}
+{% block content %}
+<div class="settings-shell">
+  <nav class="settings-nav" aria-label="Settings sections">
+    {% for key, label, href in settings_nav %}
+      <a href="{{ href }}" class="{% if settings_page == key %}active{% endif %}" {% if settings_page == key %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <main class="settings-page">
+    <header class="settings-page-header">
+      <div>
+        <p class="settings-eyebrow">Settings</p>
+        <h1>{% block settings_heading %}Settings{% endblock %}</h1>
+        <p>{% block settings_subtitle %}Configure Whackamole.{% endblock %}</p>
+      </div>
+      {% block settings_header_actions %}{% endblock %}
+    </header>
+    {% if message %}<p class="notice settings-notice" role="status">{{ message }}</p>{% endif %}
+    {% if probe_results %}
+      <section class="probe-grid" aria-label="Connection probe results">
+        {% for result in probe_results %}
+          <div class="probe {{ result.state }}"><strong>{{ result.name }}</strong><span>{{ result.detail }}</span></div>
+        {% endfor %}
+      </section>
+    {% endif %}
+    {% block settings_content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

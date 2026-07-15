@@ -396,7 +396,7 @@ def test_config_page_saves_lume_release_group_policy(tmp_path, monkeypatch):
             "/config",
             data={
                 "policy_lume_banned": "BADGRP",
-                "policy_lume_ranked": "GOODGRP",
+                "policy_lume_moderation_queue": "on",
             },
         )
 
@@ -404,7 +404,81 @@ def test_config_page_saves_lume_release_group_policy(tmp_path, monkeypatch):
 
         assert response.status_code == 200
         assert cfg.tracker_policies["LUME"]["banned_release_groups"] == ["BADGRP"]
-        assert cfg.tracker_policies["LUME"]["ranked_release_groups"] == ["GOODGRP"]
+        assert cfg.tracker_policies["LUME"]["moderation_queue"] is True
+        assert "ranked_release_groups" not in cfg.tracker_policies["LUME"]
+
+
+def test_settings_pages_use_scoped_navigation_and_cover_assigned_controls(tmp_path, monkeypatch):
+    expected = {
+        "/config": ["Settings overview", "Configuration at a glance"],
+        "/config/connections": ["Probe connections", "qui_url", "profilarr_api_key"],
+        "/config/processing": ["Local MediaInfo", "max_concurrent_ua_jobs", "Maintenance guard"],
+        "/config/uploading": ["Upload Assistant", "path_source", "high_quality_trackers", "Auto Upload"],
+        "/config/trackers": ["Tracker policies", "policy_dp_moderation_queue", "Edit comma-separated list"],
+        "/config/notifications": ["Discord webhook", "Built-in events"],
+        "/config/security": ["Rotate API token", "Update administrator"],
+        "/config/rules": ["Stored Evidence Replay", "policy.moderation_queue_no_targets"],
+    }
+    with _client(tmp_path, monkeypatch) as client:
+        for route, fragments in expected.items():
+            response = client.get(route)
+            assert response.status_code == 200
+            assert 'aria-label="Settings sections"' in response.text
+            for fragment in fragments:
+                assert fragment in response.text
+
+
+def test_page_scoped_connection_save_preserves_processing_config(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        cfg = client.app.state.config_manager.load()
+        cfg.safety.max_queue_size = 777
+        client.app.state.config_manager.save(cfg)
+
+        response = client.post(
+            "/config/connections",
+            data={
+                "qui_url": "http://qui:7476",
+                "qui_instance_id": "2",
+                "qui_page_limit": "300",
+                "sonarr_url": "",
+                "radarr_url": "",
+                "easycross_url": "",
+                "profilarr_url": "",
+            },
+            follow_redirects=False,
+        )
+        saved = client.app.state.config_manager.load()
+
+        assert response.status_code == 303
+        assert saved.qui.url == "http://qui:7476"
+        assert saved.qui.instance_id == 2
+        assert saved.safety.max_queue_size == 777
+
+
+def test_uploading_path_rows_require_complete_pairs_and_preserve_order(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        invalid = client.post(
+            "/config/uploading",
+            data={"path_source": ["/one"], "path_target": [""]},
+        )
+        assert invalid.status_code == 400
+        assert "requires both a source and destination" in invalid.text
+
+        valid = client.post(
+            "/config/uploading",
+            data={
+                "path_source": ["/one", "/two"],
+                "path_target": ["/target-one", "/target-two"],
+            },
+            follow_redirects=False,
+        )
+        mappings = client.app.state.config_manager.load().path_mappings
+
+        assert valid.status_code == 303
+        assert [(row.source, row.target) for row in mappings] == [
+            ("/one", "/target-one"),
+            ("/two", "/target-two"),
+        ]
 
 
 def test_config_save_reapplies_release_group_policy_to_candidates(tmp_path, monkeypatch):

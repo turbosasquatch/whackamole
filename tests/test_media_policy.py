@@ -660,3 +660,88 @@ def test_release_group_policy_blocks_when_all_candidates_banned():
     assert status == "blocked"
     assert verdict == "banned_release_group"
     assert policy["candidate_trackers"] == []
+
+
+def test_episode_moderation_queue_skips_one_tracker_and_keeps_candidate():
+    status, verdict, reason, policy, _flags = apply_release_group_policy(
+        tracker_results={"passed": ["DP", "IHD"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"decisions": [
+            {"tracker": "DP", "status": "candidate"},
+            {"tracker": "IHD", "status": "candidate"},
+        ]},
+        release_group="GRP",
+        tracker_policies={
+            "DP": {"banned_release_groups": [], "moderation_queue": True},
+            "IHD": {"banned_release_groups": [], "moderation_queue": False},
+        },
+        flags=[],
+        item_name="Show.S01E02.1080p.WEB-DL-GRP",
+        media_type="episode",
+    )
+
+    assert status == "candidate"
+    assert verdict == "candidate"
+    assert "IHD" in reason
+    assert policy["version"] == 2
+    assert policy["candidate_trackers"] == ["IHD"]
+    assert policy["moderation_queue_trackers"] == ["DP"]
+    assert next(row for row in policy["decisions"] if row["tracker"] == "DP")["status"] == "skipped"
+
+
+def test_episode_all_moderation_queue_trackers_returns_policy_skip():
+    status, verdict, _reason, policy, _flags = apply_release_group_policy(
+        tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"decisions": [{"tracker": "DP", "status": "candidate"}]},
+        release_group="GRP",
+        tracker_policies={"DP": {"banned_release_groups": [], "moderation_queue": True}},
+        flags=[],
+        item_name="Show.S01E02.1080p.WEB-DL-GRP",
+        media_type="episode",
+    )
+
+    assert status == "skipped"
+    assert verdict == "moderation_queue_no_targets"
+    assert policy["candidate_trackers"] == []
+    assert policy["moderation_queue_trackers"] == ["DP"]
+
+
+def test_moderation_queue_does_not_affect_movies_or_season_packs():
+    for name, media_type in (
+        ("Movie.2026.1080p.WEB-DL-GRP", "movie"),
+        ("Show.S01.1080p.WEB-DL-GRP", "season"),
+    ):
+        status, _verdict, _reason, policy, _flags = apply_release_group_policy(
+            tracker_results={"passed": ["DP"], "dupe": [], "skipped": [], "error": []},
+            arr_results={"decisions": [{"tracker": "DP", "status": "candidate"}]},
+            release_group="GRP",
+            tracker_policies={"DP": {"banned_release_groups": [], "moderation_queue": True}},
+            flags=[],
+            item_name=name,
+            media_type=media_type,
+        )
+        assert status == "candidate"
+        assert policy["candidate_trackers"] == ["DP"]
+        assert policy["moderation_queue_trackers"] == []
+
+
+def test_banned_policy_wins_when_only_banned_and_moderation_trackers_remain():
+    status, verdict, _reason, policy, _flags = apply_release_group_policy(
+        tracker_results={"passed": ["DP", "IHD"], "dupe": [], "skipped": [], "error": []},
+        arr_results={"decisions": [
+            {"tracker": "DP", "status": "candidate"},
+            {"tracker": "IHD", "status": "candidate"},
+        ]},
+        release_group="GRP",
+        tracker_policies={
+            "DP": {"banned_release_groups": [], "moderation_queue": True},
+            "IHD": {"banned_release_groups": ["GRP"], "moderation_queue": False},
+        },
+        flags=[],
+        item_name="Show.S01E02.1080p.WEB-DL-GRP",
+        media_type="episode",
+    )
+
+    assert status == "blocked"
+    assert verdict == "banned_release_group"
+    assert policy["blocked_trackers"] == ["IHD"]
+    assert policy["moderation_queue_trackers"] == ["DP"]

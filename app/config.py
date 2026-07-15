@@ -10,7 +10,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.trackers import PRIMARY_TRACKERS
 
 
-CURRENT_CONFIG_VERSION = 4
+CURRENT_CONFIG_VERSION = 5
 OLD_DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 45
 DEFAULT_ARR_SEARCH_TIMEOUT_SECONDS = 300
 DEFAULT_TRACKER_POLICY_KEYS = PRIMARY_TRACKERS
@@ -96,7 +96,7 @@ class AppConfig:
     radarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     easycross: OptionalEndpoint = field(default_factory=OptionalEndpoint)
     profilarr: OptionalEndpoint = field(default_factory=OptionalEndpoint)
-    tracker_policies: Dict[str, Dict[str, List[str]]] = field(default_factory=lambda: default_tracker_policies())
+    tracker_policies: Dict[str, Dict[str, Any]] = field(default_factory=lambda: default_tracker_policies())
 
 
 class ConfigManager:
@@ -162,7 +162,8 @@ class ConfigManager:
                 cfg.tracker_policies[tracker] = policy
                 continue
             existing.setdefault("banned_release_groups", [])
-            existing.setdefault("ranked_release_groups", [])
+            existing["moderation_queue"] = bool(existing.get("moderation_queue", False))
+            existing.pop("ranked_release_groups", None)
         cfg.config_version = CURRENT_CONFIG_VERSION
 
 
@@ -229,11 +230,11 @@ def join_csv(values: List[str]) -> str:
     return ", ".join(values)
 
 
-def default_tracker_policies() -> Dict[str, Dict[str, List[str]]]:
+def default_tracker_policies() -> Dict[str, Dict[str, Any]]:
     return {
         tracker: {
             "banned_release_groups": [],
-            "ranked_release_groups": [],
+            "moderation_queue": False,
         }
         for tracker in DEFAULT_TRACKER_POLICY_KEYS
     }

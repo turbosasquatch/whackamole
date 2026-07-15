@@ -119,7 +119,9 @@
         });
         if (!response.ok) throw new Error(`Request failed with ${response.status}`);
         const payload = await response.json();
-        button.setAttribute("aria-pressed", payload.enabled ? "true" : "false");
+        document.querySelectorAll("[data-auto-upload-toggle]").forEach((toggle) => {
+          toggle.setAttribute("aria-pressed", payload.enabled ? "true" : "false");
+        });
       } catch (error) {
         // leave aria-pressed unchanged on failure
       } finally {
@@ -127,6 +129,30 @@
       }
     });
   });
+
+  const pathList = document.querySelector("[data-path-mappings]");
+  const addPathButton = document.querySelector("[data-add-path]");
+  function bindPathRemoval(scope = document) {
+    scope.querySelectorAll("[data-remove-path]").forEach((button) => {
+      if (button.dataset.bound === "true") return;
+      button.dataset.bound = "true";
+      button.addEventListener("click", () => {
+        const rows = pathList ? pathList.querySelectorAll(".path-mapping-row") : [];
+        if (rows.length > 1) button.closest(".path-mapping-row")?.remove();
+      });
+    });
+  }
+  bindPathRemoval();
+  if (pathList && addPathButton) {
+    addPathButton.addEventListener("click", () => {
+      const row = document.createElement("div");
+      row.className = "path-mapping-row";
+      row.innerHTML = '<label>Source<input name="path_source" required></label><span aria-hidden="true">→</span><label>Destination<input name="path_target" required></label><button class="icon-button remove-path" type="button" data-remove-path aria-label="Remove path mapping">×</button>';
+      pathList.appendChild(row);
+      bindPathRemoval(row);
+      row.querySelector("input")?.focus();
+    });
+  }
 
   function setSidebar(collapsed) {
     if (!shell) return;

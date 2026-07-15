@@ -1,0 +1,13 @@
+{% extends "settings_layout.html" %}
+{% block settings_title %}Tracker Policies{% endblock %}
+{% block settings_heading %}Tracker policies{% endblock %}
+{% block settings_subtitle %}Control prohibited release groups and trackers whose episode uploads enter moderation.{% endblock %}
+{% block settings_content %}
+<form class="settings-form" method="post" action="/config/trackers">
+  <section class="settings-card tracker-policy-intro"><h2>How moderation queues work</h2><p>For individual episodes, enabled trackers are removed from eligibility and upload destinations. Movies and season packs are unaffected. If another tracker remains eligible, the item can still become a candidate.</p></section>
+  <section class="settings-card tracker-policy-table-card"><div class="table-wrap"><table class="responsive-table tracker-policy-table"><thead><tr><th>Tracker</th><th>Banned release groups</th><th>Moderation queue</th></tr></thead><tbody>
+    {% for policy in tracker_policies %}<tr><td data-label="Tracker"><strong>{{ policy.tracker }}</strong></td><td data-label="Banned release groups"><div class="policy-chips">{% for group in policy.banned_groups[:6] %}<span class="pill neutral">{{ group }}</span>{% endfor %}{% if policy.banned_groups | length > 6 %}<span class="pill neutral">+{{ policy.banned_groups | length - 6 }}</span>{% endif %}{% if not policy.banned_groups %}<span class="muted">No banned groups</span>{% endif %}</div><details class="policy-editor"><summary>Edit comma-separated list</summary><label><span class="sr-only">Banned release groups for {{ policy.tracker }}</span><textarea name="policy_{{ policy.tracker | lower }}_banned" rows="3">{{ policy.banned }}</textarea></label></details></td><td data-label="Moderation queue"><label class="field-toggle policy-toggle"><span>{{ 'On' if policy.moderation_queue else 'Off' }}</span><input name="policy_{{ policy.tracker | lower }}_moderation_queue" type="checkbox" {% if policy.moderation_queue %}checked{% endif %}><span class="toggle-track" aria-hidden="true"></span></label><small>Skip individual episode uploads</small></td></tr>{% endfor %}
+  </tbody></table></div></section>
+  <div class="settings-savebar"><p>Saving reapplies policy to candidates and moderation-only skipped items.</p><button class="button" type="submit">Save tracker policies</button></div>
+</form>
+{% endblock %}

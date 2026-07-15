@@ -47,7 +47,7 @@ from app.security import get_bound_secret
 from app.srrdb import apply_srrdb_result, verify_srrdb_release
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
 from app.ua_execution import UaExecutionCoordinator
-from app.upload_console import resolve_path_and_args
+from app.upload_console import effective_upload_trackers, resolve_path_and_args, restrict_upload_tracker_args
 
 
 INVENTORY_RECONCILE_INTERVAL_SECONDS = 15 * 60
@@ -736,6 +736,26 @@ class WhackamoleService:
         client = UploadAssistantClient(cfg, get_bound_secret(self.secrets, "ua_bearer_token", cfg.upload_assistant.url))
         self._last_ua_job_started_at = time.time()
         try:
+            item_row = self.db.get_item(item_id)
+            if item_row is not None:
+                item_payload = dict(item_row)
+                tracker_groups = json.loads(item_payload.get("tracker_results") or "{}")
+                arr_results = json.loads(item_payload.get("arr_results") or "{}")
+                check_results = json.loads(item_payload.get("check_results") or "{}")
+                allowed_trackers = effective_upload_trackers(
+                    item_payload,
+                    tracker_groups if isinstance(tracker_groups, dict) else {},
+                    arr_results if isinstance(arr_results, dict) else {},
+                    check_results if isinstance(check_results, dict) else {},
+                    cfg.tracker_policies,
+                )
+                args, policy_error = restrict_upload_tracker_args(args, allowed_trackers)
+                if policy_error:
+                    message = f"Queued import cancelled by tracker policy: {item_name}: {policy_error}"
+                    self.db.mark_import_error(import_id, message, "")
+                    self.db.append_service_error(message)
+                    return
+
             async def consume_stream() -> None:
                 async for chunk in client.execute_upload_stream(path, args, session_id):
                     output_chunks.append(str(chunk))
@@ -1435,6 +1455,7 @@ class WhackamoleService:
                 tracker_policies=cfg.tracker_policies,
                 flags=check_results.get("flags", []),
                 item_name=str(item["name"] or ""),
+                media_type=str(item["inventory_media_type"] or ""),
             )
             verdict = policy_verdict or verdict
             if arr_verdict == "pre_release" and status == "manual_review" and verdict == "manual_review":
@@ -1640,7 +1661,7 @@ class WhackamoleService:
         if self.db.active_import_for_item(item_id) is not None:
             return
         row = {**dict(item), "mapped_path": mapped_path}
-        path, args = resolve_path_and_args(row, tracker_groups, arr_results, check_results)
+        path, args = resolve_path_and_args(row, tracker_groups, arr_results, check_results, cfg.tracker_policies)
         if not path:
             return
         self.db.enqueue_import(

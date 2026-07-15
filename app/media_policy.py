@@ -439,17 +439,58 @@ def apply_release_group_policy(
     tracker_results: Mapping[str, Sequence[str]],
     arr_results: Mapping[str, Any],
     release_group: str,
-    tracker_policies: Mapping[str, Mapping[str, Sequence[str]]],
+    tracker_policies: Mapping[str, Mapping[str, Any]],
     flags: Sequence[Mapping[str, Any]],
     item_name: str,
+    media_type: str = "",
 ) -> Tuple[str, str, str, Dict[str, Any], List[Dict[str, Any]]]:
     existing_flags = [dict(flag) for flag in flags]
     candidate_trackers = _candidate_trackers(tracker_results, arr_results)
-    decisions = []
+    decisions: List[Dict[str, Any]] = []
     allowed: List[str] = []
     blocked: List[str] = []
+    moderation_queue_trackers: List[str] = []
+    normalized_media_type = str(media_type or "").strip().lower()
+    if not normalized_media_type or normalized_media_type == "unknown":
+        traits = parse_release_traits(item_name)
+        normalized_media_type = "episode" if traits.episode is not None else ("tv" if traits.season is not None else "unknown")
+
+    policy_candidates: List[str] = []
+    for tracker in candidate_trackers:
+        policy = tracker_policies.get(tracker) or {}
+        if normalized_media_type == "episode" and bool(policy.get("moderation_queue", False)):
+            moderation_queue_trackers.append(tracker)
+            decisions.append(
+                {
+                    "tracker": tracker,
+                    "status": "skipped",
+                    "reason": "Episode uploads enter this tracker's moderation queue.",
+                    "banned_match": "",
+                }
+            )
+        else:
+            policy_candidates.append(tracker)
+
+    if candidate_trackers and not policy_candidates and moderation_queue_trackers:
+        policy_result = {
+            "version": 2,
+            "release_group": release_group,
+            "media_type": normalized_media_type,
+            "candidate_trackers": [],
+            "blocked_trackers": [],
+            "moderation_queue_trackers": moderation_queue_trackers,
+            "decisions": decisions,
+        }
+        return (
+            "skipped",
+            "moderation_queue_no_targets",
+            f"Episode uploads are skipped on every otherwise valid tracker: {', '.join(moderation_queue_trackers)}.",
+            policy_result,
+            _dedupe_flags(existing_flags),
+        )
+
     normalized_group = _policy_key(release_group)
-    if candidate_trackers and not normalized_group:
+    if policy_candidates and not normalized_group:
         existing_flags.append(
             {
                 "key": "missing_release_group",
@@ -459,19 +500,20 @@ def apply_release_group_policy(
             }
         )
         policy_result = {
-            "version": 1,
+            "version": 2,
             "release_group": release_group,
+            "media_type": normalized_media_type,
             "candidate_trackers": [],
             "blocked_trackers": [],
-            "decisions": [
+            "moderation_queue_trackers": moderation_queue_trackers,
+            "decisions": decisions + [
                 {
                     "tracker": tracker,
                     "status": "manual_review",
                     "reason": "No release group could be confidently parsed.",
                     "banned_match": "",
-                    "rank": None,
                 }
-                for tracker in candidate_trackers
+                for tracker in policy_candidates
             ],
         }
         return (
@@ -482,12 +524,10 @@ def apply_release_group_policy(
             _dedupe_flags(existing_flags),
         )
 
-    for tracker in candidate_trackers:
+    for tracker in policy_candidates:
         policy = tracker_policies.get(tracker) or {}
         banned = [str(item) for item in policy.get("banned_release_groups", []) if str(item).strip()]
-        ranked = [str(item) for item in policy.get("ranked_release_groups", []) if str(item).strip()]
         banned_match = _match_policy_group(release_group, banned)
-        rank = _rank_policy_group(release_group, ranked)
         if normalized_group and banned_match:
             blocked.append(tracker)
             decisions.append(
@@ -496,7 +536,6 @@ def apply_release_group_policy(
                     "status": "blocked",
                     "reason": f"{release_group} is banned on {tracker}.",
                     "banned_match": banned_match,
-                    "rank": rank,
                 }
             )
         else:
@@ -507,7 +546,6 @@ def apply_release_group_policy(
                     "status": "candidate",
                     "reason": "Release group policy allows this tracker.",
                     "banned_match": "",
-                    "rank": rank,
                 }
             )
 
@@ -522,13 +560,15 @@ def apply_release_group_policy(
         )
 
     policy_result = {
-        "version": 1,
+        "version": 2,
         "release_group": release_group,
+        "media_type": normalized_media_type,
         "candidate_trackers": allowed,
         "blocked_trackers": blocked,
+        "moderation_queue_trackers": moderation_queue_trackers,
         "decisions": decisions,
     }
-    if candidate_trackers and not allowed:
+    if policy_candidates and not allowed:
         return (
             "blocked",
             "banned_release_group",
@@ -584,14 +624,6 @@ def _match_policy_group(release_group: str, values: Sequence[str]) -> str:
         if _policy_key(value) == wanted:
             return str(value)
     return ""
-
-
-def _rank_policy_group(release_group: str, ranked: Sequence[str]) -> Optional[int]:
-    wanted = _policy_key(release_group)
-    for index, value in enumerate(ranked, start=1):
-        if _policy_key(value) == wanted:
-            return index
-    return None
 
 
 def _verdict_for_status(status: str) -> str:

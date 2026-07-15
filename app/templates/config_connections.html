@@ -1,0 +1,28 @@
+{% extends "settings_layout.html" %}
+{% block settings_title %}Connections{% endblock %}
+{% block settings_heading %}Connections{% endblock %}
+{% block settings_subtitle %}Connect the services Whackamole uses to discover, compare, and enrich releases.{% endblock %}
+{% block settings_header_actions %}<form method="post" action="/config/probe"><button class="button secondary" type="submit">Probe connections</button></form>{% endblock %}
+{% block settings_content %}
+<form class="settings-form" method="post" action="/config/connections">
+  {% set connections = [
+    ("qui", "QUI", cfg.qui.url, "qui_api_key", secrets.qui_api_key, "qBittorrent UI and arrival source"),
+    ("sonarr", "Sonarr", cfg.sonarr.url, "sonarr_api_key", secrets.sonarr_api_key, "Episode comparison and library state"),
+    ("radarr", "Radarr", cfg.radarr.url, "radarr_api_key", secrets.radarr_api_key, "Movie comparison and library state"),
+    ("easycross", "EasyCross", cfg.easycross.url, "easycross_api_key", secrets.easycross_api_key, "Optional cross-seed enrichment"),
+    ("profilarr", "Profilarr", cfg.profilarr.url, "profilarr_api_key", secrets.profilarr_api_key, "Release profile and regex data")
+  ] %}
+  {% for key, label, url, secret_key, saved, description in connections %}
+    <section class="settings-card connection-card">
+      <div class="settings-card-heading"><div><h2>{{ label }}</h2><p>{{ description }}</p></div><span class="config-state {{ 'configured' if url and saved else '' }}">{{ 'Configured' if url and saved else 'Not configured' }}</span></div>
+      <div class="form-grid">
+        <label class="span-2">Service URL<input name="{{ key }}_url" type="url" inputmode="url" value="{{ url }}" placeholder="http://host:port"></label>
+        {% if key == "qui" %}<label>Instance ID<input name="qui_instance_id" type="number" min="1" value="{{ cfg.qui.instance_id }}"></label><label>Page limit<input name="qui_page_limit" type="number" min="1" value="{{ cfg.qui.page_limit }}"></label>{% endif %}
+        <label class="span-2">API key {% if saved %}<span class="saved">saved</span>{% endif %}<input name="{{ secret_key }}" type="password" autocomplete="new-password" class="{% if saved %}field-success{% endif %}" placeholder="{{ 'Leave blank to keep saved key' if saved else 'Paste key' }}"></label>
+        <label class="filter-option"><input name="clear_{{ secret_key }}" type="checkbox"><span class="filter-option-box" aria-hidden="true"></span><span class="filter-option-label">Clear saved credential</span></label>
+      </div>
+    </section>
+  {% endfor %}
+  <div class="settings-savebar"><p>Changes affect future checks and probes.</p><button class="button" type="submit">Save connections</button></div>
+</form>
+{% endblock %}

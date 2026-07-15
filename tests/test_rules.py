@@ -28,7 +28,7 @@ def test_rule_catalogue_has_unique_valid_entries():
     assert len(ids) == len(set(ids))
     assert all(row["severity"] in {"pass", "info", "warning", "error"} for row in rows)
     assert all(row["effect"] in {"none", "candidate", "review", "block", "skip", "retry", "error"} for row in rows)
-    assert ruleset_changelog()[0]["version"] == 3
+    assert ruleset_changelog()[0]["version"] == 4
 
 
 def test_evaluator_keeps_valid_tracker_candidate():

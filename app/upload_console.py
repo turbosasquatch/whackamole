@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from app.media_identity import parse_release_traits
 from app.media_policy import VIDEO_EXTENSIONS
 from app.path_security import validate_media_path
 from app.source_providers import extract_provider_abbreviation, extract_provider_from_release_title, provider_abbreviation_for_label
@@ -42,7 +44,7 @@ def _valid_for_trackers(
     policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
     policy_candidates = policy.get("candidate_trackers") if isinstance(policy.get("candidate_trackers"), list) else []
     trackers = [str(tracker).upper() for tracker in policy_candidates if str(tracker).strip()]
-    if trackers:
+    if "candidate_trackers" in policy and (trackers or _effective_status(item) != "manual_review"):
         return _dedupe_trackers(trackers)
 
     decisions = arr_result.get("decisions") if isinstance(arr_result.get("decisions"), list) else []
@@ -59,6 +61,71 @@ def _valid_for_trackers(
     if str(item.get("status") or "") == "candidate":
         return _dedupe_trackers([str(tracker).upper() for tracker in tracker_groups.get("passed", [])])
     return []
+
+
+def effective_upload_trackers(
+    item: Mapping[str, Any],
+    tracker_groups: Dict[str, List[str]],
+    arr_result: Dict[str, Any],
+    check_results: Dict[str, Any],
+    tracker_policies: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> List[str]:
+    working = dict(item)
+    candidates = _valid_for_trackers(working, tracker_groups, arr_result, check_results)
+    policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    excluded = {
+        str(tracker).upper()
+        for key in ("blocked_trackers", "moderation_queue_trackers")
+        for tracker in (policy.get(key) if isinstance(policy.get(key), list) else [])
+        if str(tracker).strip()
+    }
+    media_type = str(working.get("inventory_media_type") or "").strip().lower()
+    if not media_type or media_type == "unknown":
+        traits = parse_release_traits(str(working.get("name") or ""))
+        media_type = "episode" if traits.episode is not None else ("tv" if traits.season is not None else "unknown")
+    if media_type == "episode" and tracker_policies:
+        excluded.update(
+            str(tracker).upper()
+            for tracker, tracker_policy in tracker_policies.items()
+            if isinstance(tracker_policy, Mapping) and bool(tracker_policy.get("moderation_queue", False))
+        )
+    return [tracker for tracker in _dedupe_trackers(candidates) if tracker not in excluded]
+
+
+def restrict_upload_tracker_args(args: str, allowed_trackers: Iterable[str]) -> Tuple[str, str]:
+    allowed = _dedupe_trackers(allowed_trackers)
+    if not allowed:
+        return "", "No eligible upload tracker remains after policy filtering."
+    try:
+        tokens = shlex.split(str(args or ""))
+    except ValueError:
+        return "", "Upload Assistant arguments could not be parsed."
+    kept: List[str] = []
+    requested: Optional[List[str]] = None
+    tracker_position: Optional[int] = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--trackers":
+            if index + 1 >= len(tokens):
+                return "", "--trackers requires a comma-separated tracker list."
+            requested = _dedupe_trackers(tokens[index + 1].split(","))
+            tracker_position = len(kept)
+            index += 2
+            continue
+        if token.startswith("--trackers="):
+            requested = _dedupe_trackers(token.split("=", 1)[1].split(","))
+            tracker_position = len(kept)
+            index += 1
+            continue
+        kept.append(token)
+        index += 1
+    selected = [tracker for tracker in allowed if requested is None or tracker in requested]
+    if not selected:
+        return "", "The requested trackers are not eligible after policy filtering."
+    position = tracker_position if tracker_position is not None else 0
+    kept[position:position] = ["--trackers", ",".join(tracker.lower() for tracker in selected)]
+    return shlex.join(kept), ""
 
 
 def _folder_name_check(item: Mapping[str, Any], video_files: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
@@ -324,13 +391,30 @@ def _upload_console_path(item: Dict[str, Any]) -> Dict[str, Any]:
     return {"path": selected, "label": label, "kind": kind, "warnings": warnings, "blocked": False}
 
 
-def _upload_console_context(item: Dict[str, Any]) -> Dict[str, Any]:
-    path_info = _upload_console_path(item)
-    args = _upload_console_args(item)
+def _upload_console_context(
+    item: Dict[str, Any],
+    tracker_policies: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
+    working = dict(item)
+    if tracker_policies is not None:
+        working["valid_for_trackers"] = effective_upload_trackers(
+            working,
+            working.get("tracker_results") if isinstance(working.get("tracker_results"), dict) else {},
+            working.get("arr_result") if isinstance(working.get("arr_result"), dict) else {},
+            working.get("check_results") if isinstance(working.get("check_results"), dict) else {},
+            tracker_policies,
+        )
+    path_info = _upload_console_path(working)
+    args = _upload_console_args(working)
+    if tracker_policies is not None:
+        args, _policy_error = restrict_upload_tracker_args(args, working["valid_for_trackers"])
     warnings = list(path_info.get("warnings") or [])
-    blocked = not bool(item.get("can_upload", _can_upload(item)))
-    if blocked:
+    status_blocked = not bool(working.get("can_upload", _can_upload(working)))
+    blocked = status_blocked or not bool(args)
+    if status_blocked:
         warnings.append("This item is not uploadable in its current status.")
+    elif not args:
+        warnings.append("No eligible upload tracker remains after policy filtering.")
     if _is_web_release(item) and not _source_provider_for_item(item):
         warnings.append("Source Missing: detected WEB-DL/WEBRip but no streaming service provider is known yet.")
     if any(str(flag.get("key") or "").lower() == "possible_renamed_release" for flag in item.get("check_flags") or [] if isinstance(flag, dict)):
@@ -350,6 +434,7 @@ def resolve_path_and_args(
     tracker_groups: Dict[str, List[str]],
     arr_result: Dict[str, Any],
     check_results: Dict[str, Any],
+    tracker_policies: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Tuple[str, str]:
     """Resolve the Upload Assistant path and unattended args for an item mid-pipeline.
 
@@ -363,7 +448,14 @@ def resolve_path_and_args(
     working = dict(item)
     working["check_results"] = check_results
     working["video_files"] = _video_files_for_item(working)
-    working["valid_for_trackers"] = _valid_for_trackers(working, tracker_groups, arr_result, check_results)
+    working["valid_for_trackers"] = effective_upload_trackers(
+        working,
+        tracker_groups,
+        arr_result,
+        check_results,
+        tracker_policies,
+    )
     path_info = _upload_console_path(working)
     args = _upload_console_args(working)
-    return path_info["path"], _with_unattended_arg(args)
+    args, _error = restrict_upload_tracker_args(args, working["valid_for_trackers"])
+    return path_info["path"] if args else "", _with_unattended_arg(args) if args else ""

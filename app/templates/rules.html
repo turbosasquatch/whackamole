@@ -1,26 +1,8 @@
-{% extends "base.html" %}
-{% block title %}Rules - Whackamole{% endblock %}
-{% block page_label %}Settings{% endblock %}
-{% block content %}
-<section class="toolbar">
-  <div>
-    <h1>Rules</h1>
-    <p class="muted">Ruleset {{ changelog[0].version if changelog else 1 }}</p>
-  </div>
-  <div class="button-row">
-    <a class="button secondary" href="/config">Settings</a>
-    <a class="button secondary" href="/">Dashboard</a>
-  </div>
-</section>
-
-<nav class="settings-tabs" aria-label="Settings sections">
-  <a href="/config">Settings</a>
-  <a class="active" href="/config/rules">Rules</a>
-</nav>
-
-{% if message %}
-  <p class="notice">{{ message }}</p>
-{% endif %}
+{% extends "settings_layout.html" %}
+{% block settings_title %}Rules{% endblock %}
+{% block settings_heading %}Rules{% endblock %}
+{% block settings_subtitle %}Ruleset {{ changelog[0].version if changelog else 1 }} · inspect decision vocabulary, checks, and replay stored evidence.{% endblock %}
+{% block settings_content %}
 
 <section class="rules-panel">
   <div class="panel-heading">

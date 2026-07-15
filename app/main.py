@@ -27,6 +27,7 @@ from app.config import (
     AppConfig,
     ConfigManager,
     SecretStore,
+    PathMapping,
     default_tracker_policies,
     format_path_mappings,
     join_csv,
@@ -65,6 +66,7 @@ from app.upload_console import (
     _can_upload,
     _dedupe_trackers,
     _effective_status,
+    effective_upload_trackers,
     _folder_name_check,
     _is_web_release,
     _source_provider_for_item,
@@ -74,6 +76,7 @@ from app.upload_console import (
     _valid_for_trackers,
     _video_files_for_item,
     _with_unattended_arg,
+    restrict_upload_tracker_args,
 )
 
 APP_DIR = Path(__file__).resolve().parent
@@ -316,7 +319,11 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     return item
 
 
-def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+def _row_detail_dict(
+    row: Any,
+    coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    tracker_policies: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
     item = _row_dict(row, coverage)
     item["nfo_info"] = _nfo_info_for_item(item)
     item["discovarr_local_traits"] = _discovarr_local_traits(item, item["check_results"], item["arr_result"], item["nfo_info"])
@@ -335,7 +342,7 @@ def _row_detail_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]
     item["alert_tags"] = _alert_tags(item, item["check_results"], item["arr_result"])
     item["rename_check"] = build_rename_check(_rename_check(item, item["check_results"]))
     item["raw_payloads"] = _raw_payloads(item)
-    item["upload_console"] = _upload_console_context(item)
+    item["upload_console"] = _upload_console_context(item, tracker_policies)
     return item
 
 
@@ -1706,7 +1713,24 @@ def _secret_state(secrets: SecretStore) -> Dict[str, bool]:
     }
 
 
-def _config_context(request: Request, message: str = "", probe_results: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+SETTINGS_NAV = [
+    ("overview", "Overview", "/config"),
+    ("connections", "Connections", "/config/connections"),
+    ("processing", "Processing", "/config/processing"),
+    ("uploading", "Uploading", "/config/uploading"),
+    ("trackers", "Tracker Policies", "/config/trackers"),
+    ("notifications", "Notifications", "/config/notifications"),
+    ("security", "Security", "/config/security"),
+    ("rules", "Rules", "/config/rules"),
+]
+
+
+def _config_context(
+    request: Request,
+    message: str = "",
+    probe_results: Optional[List[Dict[str, str]]] = None,
+    page: str = "overview",
+) -> Dict[str, Any]:
     cfg = request.app.state.config_manager.load()
     secrets = request.app.state.secrets
     tracker_options = _tracker_setting_options(request.app.state.db, cfg)
@@ -1717,6 +1741,7 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
         "cfg": cfg,
         "secrets": _secret_state(secrets),
         "path_mappings": format_path_mappings(cfg.path_mappings),
+        "path_mapping_rows": cfg.path_mappings,
         "exclude_category_terms": join_csv(cfg.watch.exclude_category_terms),
         "exclude_tag_terms": join_csv(cfg.watch.exclude_tag_terms),
         "error_backoff_minutes": join_csv([str(item) for item in cfg.safety.error_backoff_minutes]),
@@ -1726,6 +1751,8 @@ def _config_context(request: Request, message: str = "", probe_results: Optional
         "message": message,
         "probe_results": probe_results or [],
         "admin_username": str(admin["username"]) if admin is not None else "",
+        "settings_page": page,
+        "settings_nav": SETTINGS_NAV,
     }
 
 
@@ -1757,6 +1784,8 @@ def _rules_context(
         ],
         "message": message,
         "replay_result": replay_result,
+        "settings_page": "rules",
+        "settings_nav": SETTINGS_NAV,
     }
 
 
@@ -1865,7 +1894,7 @@ def _dashboard_nav(counts: Dict[str, int], service: Dict[str, Any], view: str = 
     return rows
 
 
-def _tracker_policy_context(cfg: AppConfig) -> List[Dict[str, str]]:
+def _tracker_policy_context(cfg: AppConfig) -> List[Dict[str, Any]]:
     policies = cfg.tracker_policies if isinstance(cfg.tracker_policies, dict) else default_tracker_policies()
     rows = []
     for tracker in default_tracker_policies().keys():
@@ -1874,7 +1903,8 @@ def _tracker_policy_context(cfg: AppConfig) -> List[Dict[str, str]]:
             {
                 "tracker": tracker,
                 "banned": join_csv([str(item) for item in policy.get("banned_release_groups", [])]),
-                "ranked": join_csv([str(item) for item in policy.get("ranked_release_groups", [])]),
+                "banned_groups": [str(item) for item in policy.get("banned_release_groups", [])],
+                "moderation_queue": bool(policy.get("moderation_queue", False)),
             }
         )
     return rows
@@ -2395,7 +2425,7 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             status_code=404,
         )
     cfg = request.app.state.config_manager.load()
-    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row), cfg.tracker_policies)
     active_import = request.app.state.db.active_import_for_item(item_id)
     item["active_import"] = dict(active_import) if active_import is not None else {}
     item["active_reports"] = [_report_payload(report) for report in request.app.state.db.list_reports(item_id=item_id)]
@@ -2651,6 +2681,23 @@ async def delete_report_form(request: Request, report_id: int, return_to: str = 
     )
 
 
+def _effective_upload_args_for_item(
+    item: Dict[str, Any],
+    cfg: AppConfig,
+    payload: Optional[Mapping[str, Any]] = None,
+) -> tuple[str, str]:
+    trackers = effective_upload_trackers(
+        item,
+        item.get("tracker_results") if isinstance(item.get("tracker_results"), dict) else {},
+        item.get("arr_result") if isinstance(item.get("arr_result"), dict) else {},
+        item.get("check_results") if isinstance(item.get("check_results"), dict) else {},
+        cfg.tracker_policies,
+    )
+    console = item.get("upload_console") if isinstance(item.get("upload_console"), dict) else {}
+    args = _upload_payload_args(dict(payload or {}), console)
+    return restrict_upload_tracker_args(args, trackers)
+
+
 @app.post("/items/{item_id}/upload-assistant/queue")
 async def queue_item_upload_assistant_form(request: Request, item_id: int, return_to: str = Form("")) -> RedirectResponse:
     row = request.app.state.db.get_item(item_id)
@@ -2660,17 +2707,20 @@ async def queue_item_upload_assistant_form(request: Request, item_id: int, retur
     if existing is not None:
         return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
     cfg = request.app.state.config_manager.load()
-    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row), cfg.tracker_policies)
     if not item.get("can_upload"):
         return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
     console = item["upload_console"]
     path = str(console.get("path") or "").strip()
+    args, policy_error = _effective_upload_args_for_item(item, cfg)
+    if policy_error:
+        raise HTTPException(status_code=400, detail=policy_error)
     if cfg.upload_assistant.url and get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url) and path:
         request.app.state.db.enqueue_import(
             item_id=item_id,
             item_name=str(item.get("name") or f"Item {item_id}"),
             path=path,
-            args=_with_unattended_arg(str(console.get("args") or "")),
+            args=_with_unattended_arg(args),
         )
     return RedirectResponse(url=_safe_local_redirect(return_to, f"/items/{item_id}"), status_code=status.HTTP_303_SEE_OTHER)
 
@@ -2685,7 +2735,7 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
     if not cfg.upload_assistant.url or not get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url):
         return JSONResponse({"error": "Upload Assistant is not configured.", "success": False}, status_code=400)
 
-    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row), cfg.tracker_policies)
     if not item.get("can_upload"):
         return JSONResponse({"error": "This item is not uploadable in its current status.", "success": False}, status_code=400)
     console = item["upload_console"]
@@ -2696,7 +2746,9 @@ async def execute_item_upload_assistant(request: Request, item_id: int) -> Any:
         payload = await request.json()
     except Exception:
         payload = {}
-    args = _upload_payload_args(payload, console)
+    args, policy_error = _effective_upload_args_for_item(item, cfg, payload)
+    if policy_error:
+        return JSONResponse({"error": policy_error, "success": False}, status_code=400)
 
     session, busy = await request.app.state.upload_console.start(
         item_id=item_id,
@@ -2745,7 +2797,7 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
             }
         )
 
-    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row))
+    item = _row_detail_dict(row, _coverage_for_row(request.app.state.db, row), cfg.tracker_policies)
     if not item.get("can_upload"):
         return JSONResponse({"error": "This item is not uploadable in its current status.", "success": False}, status_code=400)
     console = item["upload_console"]
@@ -2756,7 +2808,9 @@ async def queue_item_upload_assistant(request: Request, item_id: int) -> JSONRes
         payload = await request.json()
     except Exception:
         payload = {}
-    args = _upload_payload_args(payload, console)
+    args, policy_error = _effective_upload_args_for_item(item, cfg, payload)
+    if policy_error:
+        return JSONResponse({"error": policy_error, "success": False}, status_code=400)
     queued_args = _with_unattended_arg(args)
     import_id = request.app.state.db.enqueue_import(
         item_id=item_id,
@@ -2929,7 +2983,198 @@ async def set_auto_upload_setting(request: Request) -> JSONResponse:
 
 @app.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "config.html", _config_context(request))
+    return templates.TemplateResponse(request, "config_overview.html", _config_context(request, page="overview"))
+
+
+def _settings_response(request: Request, page: str, message: str = "", status_code: int = 200) -> HTMLResponse:
+    if not message:
+        notice = str(request.query_params.get("notice") or "")
+        if notice == "saved":
+            message = "Settings saved."
+        elif notice == "rotated":
+            message = "Administrator API token rotated. Active sessions were signed out."
+        elif page == "trackers" and notice.startswith("saved-"):
+            parts = notice.split("-")
+            if len(parts) == 4:
+                message = (
+                    f"Tracker policies saved. Reapplied {parts[1]} item(s); "
+                    f"{parts[2]} tracker decision(s) skipped and {parts[3]} item(s) restored."
+                )
+    return templates.TemplateResponse(
+        request,
+        f"config_{page}.html",
+        _config_context(request, message=message, page=page),
+        status_code=status_code,
+    )
+
+
+@app.get("/config/connections", response_class=HTMLResponse)
+async def config_connections_page(request: Request) -> HTMLResponse:
+    return _settings_response(request, "connections")
+
+
+@app.get("/config/processing", response_class=HTMLResponse)
+async def config_processing_page(request: Request) -> HTMLResponse:
+    return _settings_response(request, "processing")
+
+
+@app.get("/config/uploading", response_class=HTMLResponse)
+async def config_uploading_page(request: Request) -> HTMLResponse:
+    return _settings_response(request, "uploading")
+
+
+@app.get("/config/trackers", response_class=HTMLResponse)
+async def config_trackers_page(request: Request) -> HTMLResponse:
+    return _settings_response(request, "trackers")
+
+
+@app.get("/config/notifications", response_class=HTMLResponse)
+async def config_notifications_page(request: Request) -> HTMLResponse:
+    return _settings_response(request, "notifications")
+
+
+@app.get("/config/security", response_class=HTMLResponse)
+async def config_security_page(request: Request) -> HTMLResponse:
+    return _settings_response(request, "security")
+
+
+@app.post("/config/connections", response_class=HTMLResponse)
+async def save_config_connections(request: Request) -> HTMLResponse:
+    form = await request.form()
+    manager: ConfigManager = request.app.state.config_manager
+    secrets: SecretStore = request.app.state.secrets
+    cfg = manager.load()
+    services = (
+        ("qui", "qui_api_key", "QUI"),
+        ("sonarr", "sonarr_api_key", "Sonarr"),
+        ("radarr", "radarr_api_key", "Radarr"),
+        ("easycross", "easycross_api_key", "EasyCross"),
+        ("profilarr", "profilarr_api_key", "Profilarr"),
+    )
+    try:
+        for attr, secret_name, label in services:
+            endpoint = getattr(cfg, attr)
+            previous_url = endpoint.url
+            endpoint.url = validate_service_url(str(form.get(f"{attr}_url") or ""))
+            value = str(form.get(secret_name) or "")
+            clear = "on" if form.get(f"clear_{secret_name}") else None
+            if value.strip() and not endpoint.url:
+                raise ValueError(f"A service URL is required before saving the {label} credential.")
+            _update_bound_service_secret(secrets, secret_name, value, clear, endpoint.url, previous_url)
+        cfg.qui.instance_id = _as_int(form.get("qui_instance_id"), cfg.qui.instance_id, minimum=1)
+        cfg.qui.page_limit = _as_int(form.get("qui_page_limit"), cfg.qui.page_limit, minimum=1)
+    except ValueError as exc:
+        return _settings_response(request, "connections", str(exc), 400)
+    manager.save(cfg)
+    return RedirectResponse("/config/connections?notice=saved", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/config/processing", response_class=HTMLResponse)
+async def save_config_processing(request: Request) -> RedirectResponse:
+    form = await request.form()
+    manager: ConfigManager = request.app.state.config_manager
+    cfg = manager.load()
+    cfg.mediainfo.enabled = bool(form.get("mediainfo_enabled"))
+    cfg.mediainfo.binary_path = os.getenv("WHACKAMOLE_MEDIAINFO_BINARY", "/usr/bin/mediainfo")
+    cfg.mediainfo.timeout_seconds = _as_int(form.get("mediainfo_timeout_seconds"), cfg.mediainfo.timeout_seconds, 1)
+    cfg.watch.exclude_category_terms = parse_csv(str(form.get("exclude_category_terms") or ""))
+    cfg.watch.exclude_tag_terms = parse_csv(str(form.get("exclude_tag_terms") or ""))
+    cfg.watch.process_existing_on_first_run = bool(form.get("process_existing_on_first_run"))
+    for name, minimum in (
+        ("poll_interval_seconds", 15), ("max_queue_size", 1), ("max_concurrent_ua_jobs", 1),
+        ("min_seconds_between_ua_jobs", 0), ("max_qui_poll_pages", 1),
+        ("max_mediainfo_files_per_check", 1), ("arr_search_timeout_seconds", 5),
+        ("arr_metadata_cache_seconds", 0), ("recheck_cooldown_hours", 1), ("max_error_retries", 0),
+    ):
+        setattr(cfg.safety, name, _as_int(form.get(name), getattr(cfg.safety, name), minimum))
+    cfg.safety.error_backoff_minutes = [
+        _as_int(value, 15, 1) for value in parse_csv(str(form.get("error_backoff_minutes") or ""))
+    ] or [15, 60, 360]
+    cfg.maintenance.enabled = bool(form.get("maintenance_enabled"))
+    cfg.maintenance.timezone = str(form.get("maintenance_timezone") or "Europe/London").strip()
+    cfg.maintenance.start_time = _as_time_value(str(form.get("maintenance_start_time") or ""), cfg.maintenance.start_time)
+    cfg.maintenance.lead_minutes = _as_int(form.get("maintenance_lead_minutes"), cfg.maintenance.lead_minutes, 0)
+    cfg.maintenance.resume_signal = "qui_down_up"
+    manager.save(cfg)
+    return RedirectResponse("/config/processing?notice=saved", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/config/uploading", response_class=HTMLResponse)
+async def save_config_uploading(request: Request) -> HTMLResponse:
+    form = await request.form()
+    manager: ConfigManager = request.app.state.config_manager
+    secrets: SecretStore = request.app.state.secrets
+    cfg = manager.load()
+    previous_url = cfg.upload_assistant.url
+    try:
+        cfg.upload_assistant.url = validate_service_url(str(form.get("ua_url") or ""))
+        token = str(form.get("ua_bearer_token") or "")
+        if token.strip() and not cfg.upload_assistant.url:
+            raise ValueError("An Upload Assistant URL is required before saving its token.")
+        sources = [str(value).strip() for value in form.getlist("path_source")]
+        targets = [str(value).strip() for value in form.getlist("path_target")]
+        if len(sources) != len(targets) or any(not source or not target for source, target in zip(sources, targets)):
+            raise ValueError("Every path mapping requires both a source and destination.")
+        mappings = [PathMapping(source=source, target=target) for source, target in zip(sources, targets)]
+        if not mappings:
+            raise ValueError("At least one path mapping is required.")
+    except ValueError as exc:
+        return _settings_response(request, "uploading", str(exc), 400)
+    cfg.upload_assistant.tmp_path = str(form.get("ua_tmp_path") or "/ua-tmp").strip()
+    cfg.upload_assistant.request_timeout_seconds = _as_int(form.get("ua_timeout"), cfg.upload_assistant.request_timeout_seconds, 60)
+    cfg.path_mappings = mappings
+    cfg.safety.high_quality_trackers = _dedupe_trackers([str(value) for value in form.getlist("high_quality_trackers")])
+    _update_bound_service_secret(
+        secrets, "ua_bearer_token", token, "on" if form.get("clear_ua_bearer_token") else None,
+        cfg.upload_assistant.url, previous_url,
+    )
+    manager.save(cfg)
+    return RedirectResponse("/config/uploading?notice=saved", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/config/trackers", response_class=HTMLResponse)
+async def save_config_trackers(request: Request) -> RedirectResponse:
+    form = await request.form()
+    manager: ConfigManager = request.app.state.config_manager
+    cfg = manager.load()
+    policies = default_tracker_policies()
+    for tracker in policies:
+        slug = tracker.lower()
+        policies[tracker] = {
+            "banned_release_groups": parse_csv(str(form.get(f"policy_{slug}_banned") or "")),
+            "moderation_queue": bool(form.get(f"policy_{slug}_moderation_queue")),
+        }
+    cfg.tracker_policies = policies
+    manager.save(cfg)
+    result = request.app.state.db.reapply_release_group_policy(policies)
+    notice = (
+        f"saved-{result.get('items', 0)}-{result.get('moderation_queue_trackers', 0)}-"
+        f"{result.get('restored_items', 0)}"
+    )
+    return RedirectResponse(f"/config/trackers?notice={notice}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/config/notifications", response_class=HTMLResponse)
+async def save_config_notifications(request: Request) -> RedirectResponse:
+    form = await request.form()
+    _update_secret(
+        request.app.state.secrets,
+        "discord_webhook_url",
+        str(form.get("discord_webhook_url") or ""),
+        "on" if form.get("clear_discord_webhook_url") else None,
+    )
+    return RedirectResponse("/config/notifications?notice=saved", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/config/security/token", response_class=HTMLResponse)
+async def rotate_config_api_token(request: Request) -> HTMLResponse:
+    form = await request.form()
+    token = str(form.get("whackamole_api_token") or "").strip()
+    if len(token) < 32:
+        return _settings_response(request, "security", "The API token must contain at least 32 characters.", 400)
+    request.app.state.secrets.set("whackamole_api_token", token)
+    request.app.state.db.revoke_auth_sessions()
+    return RedirectResponse("/config/security?notice=rotated", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/config/rules", response_class=HTMLResponse)
@@ -3005,13 +3250,13 @@ async def save_config(
     discord_webhook_url: str = Form(""),
     clear_discord_webhook_url: Optional[str] = Form(None),
     policy_dp_banned: Optional[str] = Form(None),
-    policy_dp_ranked: Optional[str] = Form(None),
+    policy_dp_moderation_queue: Optional[str] = Form(None),
     policy_ulcx_banned: Optional[str] = Form(None),
-    policy_ulcx_ranked: Optional[str] = Form(None),
+    policy_ulcx_moderation_queue: Optional[str] = Form(None),
     policy_ihd_banned: Optional[str] = Form(None),
-    policy_ihd_ranked: Optional[str] = Form(None),
+    policy_ihd_moderation_queue: Optional[str] = Form(None),
     policy_lume_banned: Optional[str] = Form(None),
-    policy_lume_ranked: Optional[str] = Form(None),
+    policy_lume_moderation_queue: Optional[str] = Form(None),
 ) -> HTMLResponse:
     manager: ConfigManager = request.app.state.config_manager
     secrets: SecretStore = request.app.state.secrets
@@ -3094,18 +3339,18 @@ async def save_config(
     cfg.maintenance.resume_signal = "qui_down_up"
 
     policy_inputs = {
-        "DP": (policy_dp_banned, policy_dp_ranked),
-        "ULCX": (policy_ulcx_banned, policy_ulcx_ranked),
-        "IHD": (policy_ihd_banned, policy_ihd_ranked),
-        "LUME": (policy_lume_banned, policy_lume_ranked),
+        "DP": (policy_dp_banned, policy_dp_moderation_queue),
+        "ULCX": (policy_ulcx_banned, policy_ulcx_moderation_queue),
+        "IHD": (policy_ihd_banned, policy_ihd_moderation_queue),
+        "LUME": (policy_lume_banned, policy_lume_moderation_queue),
     }
     existing_policies = cfg.tracker_policies if isinstance(cfg.tracker_policies, dict) else default_tracker_policies()
     cfg.tracker_policies = default_tracker_policies()
-    for tracker, (banned, ranked) in policy_inputs.items():
+    for tracker, (banned, moderation_queue) in policy_inputs.items():
         existing = existing_policies.get(tracker) if isinstance(existing_policies.get(tracker), dict) else {}
         cfg.tracker_policies[tracker] = {
             "banned_release_groups": parse_csv(banned) if banned is not None else list(existing.get("banned_release_groups", [])),
-            "ranked_release_groups": parse_csv(ranked) if ranked is not None else list(existing.get("ranked_release_groups", [])),
+            "moderation_queue": moderation_queue == "on" if moderation_queue is not None else bool(existing.get("moderation_queue", False)),
         }
 
     bound_secret_updates = (
@@ -3174,15 +3419,15 @@ async def update_admin_account(
     if not (auth.verify_password(current_username, current_password) or auth.verify_api_token(api_token)):
         return templates.TemplateResponse(
             request,
-            "config.html",
-            _config_context(request, message="Current password or API token is required to change administrator credentials."),
+            "config_security.html",
+            _config_context(request, message="Current password or API token is required to change administrator credentials.", page="security"),
             status_code=403,
         )
     if password != password_confirm:
         return templates.TemplateResponse(
             request,
-            "config.html",
-            _config_context(request, message="Password confirmation does not match."),
+            "config_security.html",
+            _config_context(request, message="Password confirmation does not match.", page="security"),
             status_code=400,
         )
     try:
@@ -3190,8 +3435,8 @@ async def update_admin_account(
     except ValueError as exc:
         return templates.TemplateResponse(
             request,
-            "config.html",
-            _config_context(request, message=str(exc)),
+            "config_security.html",
+            _config_context(request, message=str(exc), page="security"),
             status_code=400,
         )
     response = RedirectResponse("/login?credentials=changed", status_code=status.HTTP_303_SEE_OTHER)
@@ -3271,7 +3516,11 @@ async def probe_config(request: Request) -> HTMLResponse:
     if not results:
         results.append({"name": "Configuration", "state": "idle", "detail": "Add URLs and saved keys before probing."})
 
-    return templates.TemplateResponse(request, "config.html", _config_context(request, probe_results=results))
+    return templates.TemplateResponse(
+        request,
+        "config_connections.html",
+        _config_context(request, probe_results=results, page="connections"),
+    )
 
 
 @app.get("/api/status")
@@ -3360,7 +3609,8 @@ async def api_item_detail(request: Request, item_id: int) -> JSONResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return JSONResponse(_api_item_detail(_row_detail_dict(row, _coverage_for_row(request.app.state.db, row))))
+    cfg = request.app.state.config_manager.load()
+    return JSONResponse(_api_item_detail(_row_detail_dict(row, _coverage_for_row(request.app.state.db, row), cfg.tracker_policies)))
 
 
 @app.post("/api/items/{item_id}/reports")
