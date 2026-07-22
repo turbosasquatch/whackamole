@@ -874,6 +874,74 @@ def test_candidate_dashboard_uses_smaller_page_size(tmp_path, monkeypatch):
         assert row_builds == 75
 
 
+def test_dashboard_row_prep_loads_high_quality_trackers_once_for_100_rows(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        for index in range(100):
+            db.insert_discovered(
+                1,
+                {
+                    "hash": f"inventory-{index}",
+                    "name": f"Inventory.Movie.{index:03d}.1080p.BluRay-GRP",
+                    "category": "movies",
+                    "tags": "",
+                    "content_path": f"/media/torrents/movies/Inventory.Movie.{index:03d}.mkv",
+                    "progress": 1,
+                },
+                status="inventory",
+                baseline=True,
+            )
+
+        original_load = client.app.state.config_manager.load
+        load_count = 0
+
+        def counting_load():
+            nonlocal load_count
+            load_count += 1
+            return original_load()
+
+        monkeypatch.setattr(client.app.state.config_manager, "load", counting_load)
+
+        items, total = main_module._filtered_dashboard_items(db, ["inventory"], limit=100)
+
+        assert total == 100
+        assert len(items) == 100
+        assert load_count == 1
+
+
+def test_preloaded_high_quality_tracker_cross_check_output_parity():
+    coverage = [{"key": "ihd", "label": "IHD", "primary": True}]
+
+    empty = main_module._cross_check_status(coverage, [], ())
+    matching = main_module._cross_check_status(coverage, [], ("ihd", "IHD", ""))
+    nonmatching = main_module._cross_check_status(coverage, [], ("dp", "DP"))
+
+    assert empty == {"state": "not_applicable", "label": "Not Validated", "trackers": [], "selected": []}
+    assert matching == {
+        "state": "pass",
+        "label": "Validated On High Quality Tracker",
+        "trackers": ["IHD"],
+        "selected": ["IHD"],
+    }
+    assert nonmatching == {
+        "state": "warning",
+        "label": "Not Validated",
+        "trackers": [],
+        "selected": ["DP"],
+    }
+
+    item = {"name": "Example.Movie.2026.1080p.BluRay-GRP", "status": "inventory", "check_results": {}}
+    tracker_groups = {"passed": [], "covered": [], "dupe": [], "skipped": [], "error": []}
+
+    def alert_labels(trackers):
+        tags = main_module._dashboard_alert_tags(item, {}, {}, tracker_groups, coverage, [], trackers)
+        return {tag["label"] for tag in tags}
+
+    assert "Cross Check" not in alert_labels(())
+    assert "Cross Check" not in alert_labels(("IHD",))
+    assert "Cross Check" in alert_labels(("DP",))
+
+
 def test_folder_name_normalization_keeps_candidate_without_detail_scan(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

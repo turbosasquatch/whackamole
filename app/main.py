@@ -288,7 +288,11 @@ def _check_results_with_media_display(check_results: Dict[str, Any], item_name: 
     return result
 
 
-def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+def _dashboard_row_dict(
+    row: Any,
+    coverage: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    high_quality_trackers: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
     item = dict(row)
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
     arr_result = _arr_result(item.get("arr_results"))
@@ -305,7 +309,15 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     item["decision_notice"] = _decision_notice(item, check_results)
     item["tracker_coverage"] = _tracker_coverage(item_coverage, missing_trackers, valid_for_trackers)
     item["source_label"] = _source_label(item, tracker_groups)
-    item["alert_tags"] = _dashboard_alert_tags(item, check_results, arr_result, tracker_groups, item_coverage, valid_for_trackers)
+    item["alert_tags"] = _dashboard_alert_tags(
+        item,
+        check_results,
+        arr_result,
+        tracker_groups,
+        item_coverage,
+        valid_for_trackers,
+        high_quality_trackers,
+    )
     return {
         key: item[key]
         for key in ("id", "name", "size", "display_status", "can_upload", "decision_notice", "tracker_coverage", "source_label", "alert_tags")
@@ -619,8 +631,13 @@ def _tracker_coverage(
     return rows
 
 
-def _cross_check_status(coverage: List[Dict[str, Any]], valid_for: List[str]) -> Dict[str, Any]:
-    selected = set(_high_quality_trackers())
+def _cross_check_status(
+    coverage: List[Dict[str, Any]],
+    valid_for: List[str],
+    high_quality_trackers: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    configured = _high_quality_trackers() if high_quality_trackers is None else high_quality_trackers
+    selected = set(_dedupe_trackers([str(tracker).upper() for tracker in configured if str(tracker).strip()]))
     if not selected:
         return {"state": "not_applicable", "label": "Not Validated", "trackers": [], "selected": []}
     coverage_keys = {str(item.get("key") or "").upper() for item in coverage}
@@ -663,6 +680,7 @@ def _dashboard_alert_tags(
     tracker_groups: Dict[str, List[str]],
     coverage: List[Dict[str, Any]],
     valid_for_trackers: List[str],
+    high_quality_trackers: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, str]]:
     """Build dashboard badges without allocating detail-page summary rows."""
     media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
@@ -678,7 +696,10 @@ def _dashboard_alert_tags(
         ("Discovarr", _arr_summary_state(arr_result)[1]),
         ("Release Group", _policy_summary_state(policy)[1]),
         ("srrDB", _srrdb_summary_state(srrdb)[1]),
-        ("Cross Check", _cross_summary_state(_cross_check_status(coverage, valid_for_trackers))[1]),
+        (
+            "Cross Check",
+            _cross_summary_state(_cross_check_status(coverage, valid_for_trackers, high_quality_trackers))[1],
+        ),
     )
     tags: List[Dict[str, str]] = []
     seen: set[str] = set()
@@ -2051,6 +2072,7 @@ def _filtered_dashboard_items(
     due_errors_only: bool = False,
     q: str = "",
 ) -> tuple[List[Dict[str, Any]], int]:
+    high_quality_trackers = tuple(_high_quality_trackers())
     effective_filter = _effective_status_filter_applies(statuses)
     query_statuses = _query_statuses_for_effective_filter(statuses) if effective_filter else list(statuses)
     query_limit = max(limit + offset, 1000) if effective_filter else limit
@@ -2072,9 +2094,9 @@ def _filtered_dashboard_items(
         total = len(filtered_rows)
         page_rows = filtered_rows[offset : offset + limit]
         coverage = _coverage_for_rows(db, page_rows)
-        return [_dashboard_row_dict(row, coverage) for row in page_rows], total
+        return [_dashboard_row_dict(row, coverage, high_quality_trackers) for row in page_rows], total
     coverage = _coverage_for_rows(db, rows)
-    items = [_dashboard_row_dict(row, coverage) for row in rows]
+    items = [_dashboard_row_dict(row, coverage, high_quality_trackers) for row in rows]
     total = db.count_items_filtered(
         query_statuses,
         media=media,
