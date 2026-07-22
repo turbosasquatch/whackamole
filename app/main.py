@@ -293,30 +293,23 @@ def _dashboard_row_dict(row: Any, coverage: Optional[Dict[str, List[Dict[str, An
     tracker_groups = _tracker_result_groups(item.get("tracker_results"), item.get("verdict"))
     arr_result = _arr_result(item.get("arr_results"))
     check_results = _dashboard_check_results(item.get("check_results"))
+    # Dashboard helpers expect parsed checks, but the final list row deliberately omits them.
+    item["check_results"] = check_results
     inventory_meta = item_inventory_meta(item)
     item_coverage = coverage_for_item(item, coverage or {})
-    item["tracker_results"] = tracker_groups
-    item["check_results"] = check_results
-    item["check_flags"] = _check_flags(check_results)
-    item["arr_result"] = arr_result
     item["inventory_meta"] = inventory_meta
-    item["coverage"] = item_coverage
-    item["missing_primary_trackers"] = missing_primary_trackers(item_coverage)
-    item["valid_for_trackers"] = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
-    item["folder_name_check"] = _folder_name_check(item)
-    item["effective_status"] = _effective_status(item)
+    missing_trackers = missing_primary_trackers(item_coverage)
+    valid_for_trackers = _valid_for_trackers(item, tracker_groups, arr_result, check_results)
     item["display_status"] = _display_status(item)
-    item["next_action"] = _next_action(item)
     item["can_upload"] = _can_upload(item)
     item["decision_notice"] = _decision_notice(item, check_results)
-    item["decision_label"] = _decision_label(item)
-    item["cross_check"] = _cross_check_status(item_coverage, item["valid_for_trackers"])
-    item["coverage_status"] = _coverage_status(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
-    item["tracker_coverage"] = _tracker_coverage(item_coverage, item["missing_primary_trackers"], item["valid_for_trackers"])
+    item["tracker_coverage"] = _tracker_coverage(item_coverage, missing_trackers, valid_for_trackers)
     item["source_label"] = _source_label(item, tracker_groups)
-    item["overview_checks"] = _overview_checks(item, check_results, arr_result)
-    item["alert_tags"] = _alert_tags(item, check_results, arr_result)
-    return item
+    item["alert_tags"] = _dashboard_alert_tags(item, check_results, arr_result, tracker_groups, item_coverage, valid_for_trackers)
+    return {
+        key: item[key]
+        for key in ("id", "name", "size", "display_status", "can_upload", "decision_notice", "tracker_coverage", "source_label", "alert_tags")
+    }
 
 
 def _row_detail_dict(
@@ -660,6 +653,43 @@ def _alert_tags(item: Dict[str, Any], check_results: Dict[str, Any], arr_result:
                 "severity": "critical" if group == "error" else "warning",
             }
         )
+    return tags
+
+
+def _dashboard_alert_tags(
+    item: Dict[str, Any],
+    check_results: Dict[str, Any],
+    arr_result: Dict[str, Any],
+    tracker_groups: Dict[str, List[str]],
+    coverage: List[Dict[str, Any]],
+    valid_for_trackers: List[str],
+) -> List[Dict[str, str]]:
+    """Build dashboard badges without allocating detail-page summary rows."""
+    media = check_results.get("media") if isinstance(check_results.get("media"), dict) else {}
+    policy = check_results.get("release_group_policy") if isinstance(check_results.get("release_group_policy"), dict) else {}
+    srrdb = check_results.get("srrdb") if isinstance(check_results.get("srrdb"), dict) else {}
+    rename_detection = _rename_check(item, check_results)
+    states = (
+        ("Media Info", _media_summary_state(media)[1]),
+        ("Source Detection", _source_summary_state(item)[1]),
+        ("Path Mapping", _path_summary_state(item, check_results)[1]),
+        ("Rename Check", _rename_summary_state(rename_detection)[1]),
+        ("Upload Assistant", _ua_summary_state(item, tracker_groups)[1]),
+        ("Discovarr", _arr_summary_state(arr_result)[1]),
+        ("Release Group", _policy_summary_state(policy)[1]),
+        ("srrDB", _srrdb_summary_state(srrdb)[1]),
+        ("Cross Check", _cross_summary_state(_cross_check_status(coverage, valid_for_trackers))[1]),
+    )
+    tags: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for source_label, group in states:
+        if group not in {"error", "warning"}:
+            continue
+        label = _summary_flag_label(source_label)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        tags.append({"key": _summary_flag_key(label), "label": label, "severity": "critical" if group == "error" else "warning"})
     return tags
 
 

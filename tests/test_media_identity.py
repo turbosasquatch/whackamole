@@ -59,6 +59,26 @@ def test_source_provider_title_extraction_avoids_short_title_words():
     assert extract_provider_from_release_title("It.2026.1080p.WEB-DL.DDP5.1.H.264-GRP") == ""
 
 
+def test_source_provider_preserves_longest_alias_precedence_and_boundaries():
+    assert extract_provider_abbreviation("Source: HBO Max") == "HMAX"
+    assert extract_provider_abbreviation("Source: Amazon Prime Video") == "AMZN"
+    assert extract_provider_abbreviation("Source: huluish") == ""
+
+
+def test_source_provider_title_lookup_preserves_short_token_and_false_positive_rules():
+    assert extract_provider_from_release_title("Film.2026.1080p.MA.WEB-DL-GRP") == "MA"
+    assert extract_provider_from_release_title("Film.2026.1080p.HULUISH.WEB-DL-GRP") == ""
+
+
+def test_source_provider_title_lookup_distinguishes_plain_and_plus_services():
+    assert extract_provider_from_release_title("Film.2026.1080p.Disney.WEB-DL-GRP") == "DSNY"
+    assert extract_provider_from_release_title("Film.2026.1080p.Disney+.WEB-DL-GRP") == "DSNP"
+    assert extract_provider_from_release_title("Film.2026.1080p.Canal+.WEB-DL-GRP") == "CNLP"
+    assert extract_provider_from_release_title("Film.2026.1080p.Discovery+.WEB-DL-GRP") == "DSCP"
+    assert extract_provider_from_release_title("Film.2026.1080p.Paramount+.WEB-DL-GRP") == "PMTP"
+    assert extract_provider_from_release_title("Film.2026.1080p.Star+.WEB-DL-GRP") == "STRP"
+
+
 def test_release_identity_parses_symbol_release_group():
     traits = parse_release_traits("1923.S02E01.2160p.WEBRip.DDP5.1.DV.HDR.H.265-R&H")
 

@@ -1088,6 +1088,58 @@ def test_dashboard_list_does_not_build_detail_release_views(tmp_path, monkeypatc
         assert "Example.Show.S01E01" in page.text
 
 
+def test_dashboard_list_uses_lean_rows_without_detail_presentation_builders(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        _seed_item(client)
+
+        def fail_detail_builder(*args, **kwargs):
+            raise AssertionError("detail presentation builders should not run for dashboard rows")
+
+        for name in ("_overview_checks", "_next_action", "_decision_label", "_coverage_status"):
+            monkeypatch.setattr(main_module, name, fail_detail_builder)
+
+        page = client.get("/dashboard?view=candidates")
+        row = main_module._dashboard_row_dict(
+            client.app.state.db.list_dashboard_items_filtered(["candidate"], limit=1)[0]
+        )
+
+        assert page.status_code == 200
+        assert '<span class="pill status-ready">Ready</span>' in page.text
+        assert "Upload" in page.text
+        assert row["decision_notice"] == "Valid upload candidate on: IHD"
+        assert row["source_label"] == "IHD"
+        assert {"key": "IHD", "label": "IHD", "state": "valid"} in row["tracker_coverage"]
+        assert {"key": "source", "label": "Source", "severity": "warning"} in row["alert_tags"]
+        assert {"next_action", "decision_label", "cross_check", "coverage_status", "overview_checks"}.isdisjoint(row)
+
+
+def test_dashboard_lean_row_uses_parsed_decision_for_status_and_upload(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        client.app.state.db.update_check_results(item_id, {"decision": {"status": "blocked"}})
+
+        page = client.get("/dashboard?view=all")
+
+        assert page.status_code == 200
+        assert '<span class="pill status-covered">Blocked</span>' in page.text
+        assert 'title="Upload" aria-label="Upload" disabled' in page.text
+
+
+def test_dashboard_lean_row_uses_mediainfo_provider_for_source_badge(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        client.app.state.db.update_check_results(
+            item_id,
+            {"media": {"mediainfo_files": [{"name": "example.mkv", "traits": {"source_provider": "Netflix"}}]}},
+        )
+
+        row = main_module._dashboard_row_dict(
+            client.app.state.db.list_dashboard_items_filtered(["candidate"], limit=1)[0]
+        )
+
+        assert "Source" not in {tag["label"] for tag in row["alert_tags"]}
+
+
 def test_manual_review_dashboard_includes_filters(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         client.app.state.secrets.set("whackamole_api_token", API_TOKEN)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 
@@ -191,6 +192,46 @@ WEB_TITLE_TOKENS = {"WEB", "WEBDL", "WEBRIP", "WEBHD"}
 PROVIDER_BY_UPPER_ABBREVIATION = {abbreviation.upper(): abbreviation for abbreviation, _name, _aliases in PROVIDERS}
 
 
+def _normalize(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = decomposed.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9+&.!]+", " ", ascii_text.lower()).strip()
+
+
+# Match ordering deliberately follows the legacy longest-alias-first sort, with
+# PROVIDERS order retained for aliases of equal length.
+_NORMALIZED_PROVIDER_ALIASES: Tuple[Tuple[str, str, bool], ...] = tuple(
+    sorted(
+        (
+            (normalized_alias, abbreviation, is_abbreviation)
+            for abbreviation, name, extra_aliases in PROVIDERS
+            for alias, is_abbreviation in (
+                ((abbreviation, True), (name, False), *((value, False) for value in extra_aliases))
+            )
+            if (normalized_alias := _normalize(alias))
+        ),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+)
+_PROVIDER_MATCHERS: Tuple[Tuple[re.Pattern[str], str, bool], ...] = tuple(
+    (re.compile(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"), abbreviation, is_abbreviation and len(alias) < 3)
+    for alias, abbreviation, is_abbreviation in _NORMALIZED_PROVIDER_ALIASES
+)
+
+
+def _build_title_token_lookup() -> dict[str, str]:
+    """Map one-token aliases using the same precedence as _match_provider."""
+    lookup: dict[str, str] = {}
+    for alias, abbreviation, is_abbreviation in _NORMALIZED_PROVIDER_ALIASES:
+        if " " not in alias and (not is_abbreviation or len(alias) >= 3):
+            lookup.setdefault(alias, abbreviation)
+    return lookup
+
+
+PROVIDER_BY_TITLE_TOKEN = _build_title_token_lookup()
+
+
 def extract_provider_abbreviation(*texts: str) -> str:
     candidates = [str(text or "") for text in texts if str(text or "").strip()]
     marker_lines: List[str] = []
@@ -205,6 +246,11 @@ def extract_provider_abbreviation(*texts: str) -> str:
 
 def extract_provider_from_release_title(title: str) -> str:
     """Extract a provider token from common release-title source positions."""
+    return _extract_provider_from_release_title(str(title or ""))
+
+
+@lru_cache(maxsize=2048)
+def _extract_provider_from_release_title(title: str) -> str:
     tokens = re.findall(r"[A-Za-z0-9+]+", str(title or ""))
     if not tokens:
         return ""
@@ -221,7 +267,7 @@ def extract_provider_from_release_title(title: str) -> str:
         provider = PROVIDER_BY_UPPER_ABBREVIATION.get(normalized_tokens[index])
         if provider:
             return provider
-        provider = _match_provider(tokens[index], allow_short_abbreviations=False)
+        provider = PROVIDER_BY_TITLE_TOKEN.get(_normalize(tokens[index]))
         if provider:
             return provider
     return ""
@@ -231,18 +277,10 @@ def _match_provider(text: str, *, allow_short_abbreviations: bool) -> str:
     normalized = _normalize(text)
     if not normalized:
         return ""
-    aliases: List[Tuple[str, str, bool]] = []
-    for abbreviation, name, extra_aliases in PROVIDERS:
-        aliases.append((_normalize(abbreviation), abbreviation, True))
-        aliases.append((_normalize(name), abbreviation, False))
-        aliases.extend((_normalize(alias), abbreviation, False) for alias in extra_aliases)
-    aliases.sort(key=lambda item: len(item[0]), reverse=True)
-    for alias, abbreviation, is_abbreviation in aliases:
-        if not alias:
+    for pattern, abbreviation, is_short_abbreviation in _PROVIDER_MATCHERS:
+        if is_short_abbreviation and not allow_short_abbreviations:
             continue
-        if is_abbreviation and len(alias) < 3 and not allow_short_abbreviations:
-            continue
-        if _contains_alias(normalized, alias):
+        if pattern.search(normalized):
             return abbreviation
     return ""
 
@@ -252,12 +290,6 @@ def _contains_alias(text: str, alias: str) -> bool:
         return False
     pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
     return bool(re.search(pattern, text))
-
-
-def _normalize(value: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", str(value or ""))
-    ascii_text = decomposed.encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9+&.!]+", " ", ascii_text.lower()).strip()
 
 
 def provider_abbreviation_for_label(label: str) -> str:
