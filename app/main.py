@@ -1507,7 +1507,8 @@ def _local_nfo_info_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
         if path.is_file():
             if path.suffix.lower() in NFO_EXTENSIONS:
                 candidates.append(path)
-            candidates.extend(sorted(path.parent.glob("*.nfo")))
+            else:
+                candidates.append(path.with_suffix(".nfo"))
         elif path.is_dir():
             candidates.extend(sorted(path.rglob("*.nfo")))
         else:

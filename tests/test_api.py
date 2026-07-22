@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from starlette.middleware.gzip import GZipMiddleware
@@ -44,6 +45,46 @@ def test_raw_payloads_include_local_mediainfo_json():
     assert payloads["local-mediainfo"]["title"] == "Raw Local MediaInfo"
     assert payloads["mediainfo"]["content"] == [{"source": "qui-column"}]
     assert payloads["local-mediainfo"]["content"] == [{"source": "local-column"}]
+
+
+def test_local_nfo_for_file_uses_same_stem_sidecar(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch):
+        media_path = tmp_path / "Movie.2026.mkv"
+        sidecar = tmp_path / "Movie.2026.nfo"
+        media_path.write_bytes(b"media")
+        sidecar.write_text("Provider: Netflix", encoding="utf-8")
+
+        result = main_module._local_nfo_info_for_item({"mapped_path": str(media_path)})
+
+        assert result["available"] is True
+        assert result["path"] == str(sidecar)
+        assert result["content"] == "Provider: Netflix"
+
+
+def test_local_nfo_for_file_ignores_unrelated_sibling(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch):
+        media_path = tmp_path / "Movie.2026.mkv"
+        media_path.write_bytes(b"media")
+        (tmp_path / "Different.Release.nfo").write_text("unrelated", encoding="utf-8")
+
+        result = main_module._local_nfo_info_for_item({"mapped_path": str(media_path)})
+
+        assert result == {"available": False, "message": "No NFO found at this path."}
+
+
+def test_local_nfo_for_file_never_globs_parent(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch):
+        media_path = tmp_path / "Movie.2026.mkv"
+        media_path.write_bytes(b"media")
+
+        def fail_glob(*args, **kwargs):
+            raise AssertionError("file-backed NFO lookup must not enumerate siblings")
+
+        monkeypatch.setattr(Path, "glob", fail_glob)
+
+        result = main_module._local_nfo_info_for_item({"mapped_path": str(media_path)})
+
+        assert result["available"] is False
 
 
 def test_discovarr_unavailable_summary_is_fail():
