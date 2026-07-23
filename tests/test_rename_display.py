@@ -13,6 +13,16 @@ def test_mobile_rename_css_uses_accordion_cards_and_hides_desktop_table():
     assert ".rename-summary" in css
 
 
+def test_mobile_item_tabs_and_footer_use_tappable_grid_with_scroll_clearance():
+    css = Path("app/static/style.css").read_text()
+
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
+    assert "padding-bottom: calc(150px + env(safe-area-inset-bottom));" in css
+    assert ".tabs-shell > .tab-list" in css
+    assert ".item-mobile-navigation .button.icon" in css
+    assert "height: 48px;" in css
+
+
 def test_rename_display_explains_arr_title_mismatch_with_diff_and_tracker():
     local = "Example.Show.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-HONE"
     remote = "Example.Series.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-HONE"

@@ -5731,23 +5731,89 @@ dd {
 .item-notice-widgets,
 .item-mobile-navigation { display: none; }
 
+.tabs-shell {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.tabs-shell > .tab-list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
 @media (max-width: 860px) {
   .item-summary-navigation,
   .item-notices-table { display: none !important; }
   .item-notice-widgets { display: grid !important; }
   .item-mobile-navigation { display: flex !important; }
   .item-summary-coverage { align-items: center; }
-  .tab-list {
+
+  .content-shell:has(.item-summary-card) {
+    padding-bottom: calc(150px + env(safe-area-inset-bottom));
+  }
+
+  .tabs-shell > .tab-list {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 6px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 6px;
     scrollbar-width: none;
   }
-  .tab-list > button {
+
+  .tabs-shell > .tab-list > button {
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 8px;
     display: inline-flex !important;
-    font-size: 12px;
+    font-size: 13px;
     justify-content: center;
-    min-height: 48px;
+    min-height: 50px;
     min-width: 0;
-    padding: 0 3px;
+    padding: 8px 6px;
+    width: 100%;
+  }
+
+  .tabs-shell > .tab-list > button::after {
+    display: none;
+  }
+
+  .tabs-shell > .tab-list > button.active,
+  .tabs-shell > .tab-list > button[aria-selected="true"] {
+    background: var(--badge-blue-bg);
+    border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent);
+    color: var(--primary-dark);
+  }
+
+  .item-mobile-navigation {
+    box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.12);
+    min-height: 76px;
+  }
+
+  .item-mobile-navigation .button.icon {
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: 0 3px 10px rgba(37, 99, 235, 0.28);
+    color: #fff;
+    height: 48px;
+    width: 48px;
+  }
+
+  .item-mobile-navigation .button.icon:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+    color: #fff;
+  }
+
+  .item-mobile-navigation .button.icon:disabled {
+    background: var(--surface-strong);
+    border-color: var(--line-strong);
+    box-shadow: none;
+    color: var(--muted);
+    opacity: 0.72;
   }
 }
