@@ -43,6 +43,7 @@ def analyze_rename_detection(
 
     evidence.extend(_srrdb_evidence(srrdb))
     evidence.extend(_placeholder_name_evidence(item_name, root_name, mapped_root, primary_files))
+    evidence.extend(_root_name_integrity_evidence(root_name))
     evidence.extend(_folder_evidence(root_name, mapped_root, primary_files))
     evidence.extend(_file_evidence(root_name, primary_files))
     evidence.extend(_sibling_evidence(root_name, primary_files))
@@ -207,6 +208,43 @@ def _placeholder_name_evidence(
             content_name=structured,
         )
     ]
+
+
+def _root_name_integrity_evidence(root_name: str) -> List[Dict[str, Any]]:
+    stem = _stem(root_name)
+    traits = parse_release_traits(stem)
+    if not stem or not traits.is_comparable:
+        return []
+
+    evidence: List[Dict[str, Any]] = []
+    if re.search(r" {2,}", stem):
+        evidence.append(
+            _evidence(
+                kind="repeated_name_separator",
+                scope="folder",
+                confidence="high",
+                source="torrent_root",
+                value=root_name,
+                expected=re.sub(r" {2,}", " ", stem),
+                reason="Structured release name contains repeated whitespace between name tokens.",
+            )
+        )
+
+    group = str(traits.release_group or extract_release_group(stem)).strip()
+    if group and not re.search(rf"-\s*{re.escape(group)}\s*[)\]]?$", stem, flags=re.IGNORECASE):
+        evidence.append(
+            _evidence(
+                kind="missing_release_group_separator",
+                scope="folder",
+                confidence="high",
+                source="torrent_root",
+                value=root_name,
+                expected=f"-{group}",
+                reason=f"Structured release name ends with release group {group} without a hyphen separator.",
+                release_group=group,
+            )
+        )
+    return evidence
 
 
 def _file_evidence(root_name: str, files: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:

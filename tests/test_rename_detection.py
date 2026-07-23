@@ -194,3 +194,71 @@ def test_rename_detection_does_not_treat_legitimate_short_title_as_placeholder()
 
     assert result["status"] == "pass"
     assert not any(item["kind"] == "placeholder_torrent_name_mismatch" for item in result["evidence"])
+
+
+def test_rename_detection_reviews_repeated_whitespace_in_structured_name():
+    release = "The Mummy 2026 2160p UHD BluRay HDR10  DoVi TrueHD 7 1 Atmos x265-SPHD.mkv"
+
+    result = analyze_rename_detection(item_name=release)
+
+    evidence = next(item for item in result["evidence"] if item["kind"] == "repeated_name_separator")
+    assert result["status"] == "manual_review"
+    assert evidence["confidence"] == "high"
+    assert evidence["expected"] == "The Mummy 2026 2160p UHD BluRay HDR10 DoVi TrueHD 7 1 Atmos x265-SPHD"
+
+
+def test_rename_detection_keeps_normal_single_spacing_as_pass():
+    release = "The Mummy 2026 2160p UHD BluRay HDR10 DoVi TrueHD 7 1 Atmos x265-SPHD.mkv"
+
+    result = analyze_rename_detection(item_name=release)
+
+    assert result["status"] == "pass"
+    assert not any(item["kind"] == "repeated_name_separator" for item in result["evidence"])
+
+
+def test_rename_detection_reviews_release_group_without_hyphen_separator():
+    release = "Apollo.11.2019.2160p.UHD.BluRay.TrueHD.7.1.Atmos.HDR10P.x265.RandomBytes.mkv"
+
+    result = analyze_rename_detection(
+        item_name=release,
+        media_result={"torrent_root": release, "video_files": [{"index": 0, "name": release}]},
+    )
+
+    evidence = next(item for item in result["evidence"] if item["kind"] == "missing_release_group_separator")
+    assert result["status"] == "manual_review"
+    assert evidence["confidence"] == "high"
+    assert evidence["release_group"] == "RandomBytes"
+
+
+def test_rename_detection_accepts_supported_release_group_separators():
+    releases = [
+        "Falling.Down.1993.2160p.UHD.BluRay.DTS-HD.MA.4.0.DV.HDR.x265-RandomBytes.mkv",
+        "Example.Movie.2026.2160p.WEB-DL.DDP5.1.H.265- HONE.mkv",
+        "A Complete Unknown (2024) (2160p iT WEB-DL Hybrid H265 DV HDR10+ DDP Atmos 5.1 English - HONE).mkv",
+    ]
+
+    for release in releases:
+        result = analyze_rename_detection(
+            item_name=release,
+            media_result={"torrent_root": release, "video_files": [{"index": 0, "name": release}]},
+        )
+
+        assert result["status"] == "pass", release
+        assert not any(item["kind"] == "missing_release_group_separator" for item in result["evidence"])
+
+
+def test_rename_detection_suppresses_new_root_name_evidence_when_srrdb_verifies():
+    releases = [
+        "The Mummy 2026 2160p UHD BluRay HDR10  DoVi TrueHD 7 1 Atmos x265-SPHD.mkv",
+        "Apollo.11.2019.2160p.UHD.BluRay.TrueHD.7.1.Atmos.HDR10P.x265.RandomBytes.mkv",
+    ]
+
+    for release in releases:
+        result = analyze_rename_detection(
+            item_name=release,
+            media_result={"torrent_root": release, "video_files": [{"index": 0, "name": release}]},
+            srrdb_result={"status": "verified", "local_video_files": [release], "proper_filenames": [release]},
+        )
+
+        assert result["status"] == "pass", release
+        assert [item["kind"] for item in result["evidence"]] == ["srrdb_verified"]
