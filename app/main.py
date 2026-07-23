@@ -10,7 +10,7 @@ from hmac import compare_digest
 from contextlib import asynccontextmanager
 from pathlib import Path
 import ipaddress
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import httpx
@@ -784,6 +784,212 @@ def _overview_checks(item: Dict[str, Any], check_results: Dict[str, Any], arr_re
     return rows
 
 
+_NOTICE_CATEGORY_ORDER = {
+    "Media Info": 0,
+    "Source Detection": 1,
+    "Path Mapping": 2,
+    "Rename": 3,
+    "Upload Assistant": 4,
+    "Discovarr": 5,
+    "Release Group": 6,
+    "srrDB": 7,
+    "Cross Check": 8,
+    "Rules": 9,
+}
+_NOTICE_RESULT_ORDER = {"block": 0, "review": 1, "skip": 2, "info": 3}
+_NOTICE_RULE_BY_KEY = {
+    "bloated_audio": "media.hard_block",
+    "primary_language": "media.hard_block",
+    "mediainfo_unavailable": "system.mediainfo_unavailable",
+    "mediainfo_missing": "system.mediainfo_unavailable",
+    "no_video_files": "system.no_video_files",
+    "pre_release": "arr.pre_release",
+    "arr_no_matching_media": "arr.no_matching_media",
+    "banned_release_group": "policy.all_trackers_banned",
+    "missing_release_group": "review.missing_release_group",
+    "srrdb_filename_mismatch": "review.srrdb_mismatch",
+    "srrdb_mismatch": "review.srrdb_mismatch",
+    "renamed_release_warning": "review.rename_check",
+    "possible_renamed_release": "review.rename_check",
+    "no_uploadable_trackers": "ua.no_uploadable_trackers",
+    "no_tracker_passed": "ua.no_uploadable_trackers",
+    "dupe": "ua.duplicates_no_targets",
+    "tracker_conditions_skipped": "ua.tracker_conditions_no_targets",
+    "not_upgrade": "arr.equal_or_better_no_targets",
+    "moderation_queue": "policy.moderation_queue_no_targets",
+    "no_remaining_valid_targets": "tracker.no_remaining_valid_targets",
+    "path_mapping": "system.terminal_error",
+    "ua_error": "system.terminal_error",
+    "http_error": "system.retry_transient",
+    "ua_interrupted": "system.retry_transient",
+}
+
+
+def _item_notices(item: Mapping[str, Any]) -> List[Dict[str, str]]:
+    checks = item.get("check_results") if isinstance(item.get("check_results"), Mapping) else {}
+    media = checks.get("media") if isinstance(checks.get("media"), Mapping) else {}
+    notices: List[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    represented_categories: set[str] = set()
+
+    def add(category: str, fault: str, severity: str, key: str = "", source: Optional[Mapping[str, Any]] = None) -> None:
+        severity_key = _notice_severity(severity)
+        fault_text = str(fault or "").strip()
+        category_text = str(category or "Rules").strip() or "Rules"
+        if not fault_text or not severity_key:
+            return
+        identity = (category_text.casefold(), re.sub(r"\s+", " ", fault_text).casefold())
+        if identity in seen:
+            return
+        seen.add(identity)
+        represented_categories.add(category_text)
+        result = _notice_result(item, category_text, key, severity_key, source or {})
+        stable_key = _summary_flag_key(f"{category_text}-{key or fault_text}") or f"notice-{len(notices) + 1}"
+        notices.append(
+            {
+                "key": stable_key,
+                "category": category_text,
+                "fault": fault_text,
+                "severity": severity_key,
+                "severity_label": severity_key.title(),
+                "result": result,
+                "result_label": result.title(),
+            }
+        )
+
+    issues = media.get("issues") if isinstance(media.get("issues"), list) else []
+    for issue in issues:
+        if not isinstance(issue, Mapping):
+            continue
+        add(
+            "Media Info",
+            str(issue.get("message") or issue.get("detail") or ""),
+            str(issue.get("severity") or ""),
+            str(issue.get("key") or ""),
+            issue,
+        )
+
+    for flag in item.get("check_flags") or []:
+        if not isinstance(flag, Mapping):
+            continue
+        category = _notice_category(str(flag.get("key") or ""), str(flag.get("label") or ""))
+        add(
+            category,
+            str(flag.get("detail") or flag.get("message") or flag.get("label") or ""),
+            str(flag.get("severity") or ""),
+            str(flag.get("key") or ""),
+            flag,
+        )
+
+    rename_check = item.get("rename_check") if isinstance(item.get("rename_check"), Mapping) else {}
+    for row in rename_check.get("rows") or []:
+        if not isinstance(row, Mapping):
+            continue
+        add(
+            "Rename",
+            str(row.get("difference_summary") or row.get("reason") or row.get("kind_label") or ""),
+            str(row.get("severity") or ""),
+            str(row.get("kind") or ""),
+            row,
+        )
+
+    for check in item.get("overview_checks") or []:
+        if not isinstance(check, Mapping):
+            continue
+        group = str(check.get("group") or "").lower()
+        category = _notice_category("", str(check.get("label") or ""))
+        if group not in {"warning", "error"} or category in represented_categories:
+            continue
+        add(category, str(check.get("notes") or check.get("state") or ""), group, str(check.get("label") or ""), check)
+
+    notices.sort(
+        key=lambda notice: (
+            _NOTICE_RESULT_ORDER.get(notice["result"], 9),
+            0 if notice["severity"] == "error" else 1,
+            _NOTICE_CATEGORY_ORDER.get(notice["category"], 99),
+            notice["fault"].casefold(),
+        )
+    )
+    return notices
+
+
+def _notice_severity(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"error", "failure", "fail", "blocker", "critical"}:
+        return "error"
+    if normalized in {"warning", "warn", "manual_review", "review"}:
+        return "warning"
+    return ""
+
+
+def _notice_category(key: str, label: str) -> str:
+    text = f"{key} {label}".lower()
+    if "media" in text or any(token in text for token in ("audio_", "video_", "subtitle_", "hdr_", "dolby_")):
+        return "Media Info"
+    if "release_group" in text or "release group" in text or "banned" in text:
+        return "Release Group"
+    if "rename" in text or "filename" in text or "folder" in text:
+        return "Rename"
+    if "srrdb" in text:
+        return "srrDB"
+    if "source" in text:
+        return "Source Detection"
+    if "path" in text or "mount" in text:
+        return "Path Mapping"
+    if "upload" in text or text.startswith("ua") or "tracker condition" in text or "dupe" in text:
+        return "Upload Assistant"
+    if "discovarr" in text or "arr" in text or "upgrade" in text or "pre_release" in text:
+        return "Discovarr"
+    if "policy" in text or "banned_release_group" in text or "tracker validation" in text:
+        return "Release Group"
+    if "cross" in text:
+        return "Cross Check"
+    return _summary_flag_label(label) or str(label or "Rules").strip() or "Rules"
+
+
+def _notice_result(
+    item: Mapping[str, Any],
+    category: str,
+    key: str,
+    severity: str,
+    source: Mapping[str, Any],
+) -> str:
+    normalized_key = str(key or "").strip().lower()
+    rule_id = _NOTICE_RULE_BY_KEY.get(normalized_key, "")
+    if not rule_id:
+        if category == "Media Info" and severity == "error":
+            rule_id = "review.evidence_warning"
+        elif category == "Rename":
+            confidence = str(source.get("confidence") or "").lower()
+            if confidence == "high" or str((item.get("rename_check") or {}).get("status") or "") == "manual_review":
+                rule_id = "review.rename_check"
+        elif category == "Path Mapping":
+            rule_id = "system.terminal_error"
+        elif category == "srrDB":
+            rule_id = "review.srrdb_mismatch"
+        elif category == "Discovarr":
+            verdict = str(item.get("verdict") or "").lower()
+            if verdict == "pre_release":
+                rule_id = "arr.pre_release"
+            elif verdict == "not_upgrade":
+                rule_id = "arr.equal_or_better_no_targets"
+            elif severity == "error":
+                rule_id = "arr.no_matching_media"
+        elif category == "Release Group":
+            verdict = str(item.get("verdict") or "").lower()
+            if "banned" in verdict:
+                rule_id = "policy.all_trackers_banned"
+            elif "missing" in verdict:
+                rule_id = "review.missing_release_group"
+        elif category == "Upload Assistant":
+            verdict = str(item.get("verdict") or "").lower()
+            rule_id = _NOTICE_RULE_BY_KEY.get(verdict, "")
+
+    effect_by_rule = {str(rule.get("id") or ""): str(rule.get("effect") or "none") for rule in rule_catalogue()}
+    effect = effect_by_rule.get(rule_id, "none")
+    return {"review": "review", "skip": "skip", "block": "block", "error": "block"}.get(effect, "info")
+
+
 def _item_page_presentation(item: Dict[str, Any]) -> Dict[str, Any]:
     """Build display-only data used by the responsive item detail page."""
     tab_destinations = {
@@ -827,6 +1033,7 @@ def _item_page_presentation(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "checks": checks,
         "check_counts": counts,
+        "notices": _item_notices(item),
         "media_issue_groups": issue_groups,
         "report_counts": {
             "active": len(item.get("active_reports") or []),
@@ -2157,18 +2364,75 @@ def _clamped_imports_url(db: Database, view: str = "queue", page: int = 1) -> st
     return _imports_url(selected, min(max(1, int(page or 1)), max_page))
 
 
-def _next_item_url(db: Database, item: Dict[str, Any]) -> str:
-    status_value = str(item.get("status") or "")
+def _item_return_context(value: str) -> str:
+    parsed = urlsplit(str(value or ""))
+    if parsed.scheme or parsed.netloc or parsed.path != "/dashboard":
+        return ""
+    query = parse_qs(parsed.query, keep_blank_values=False)
+    view = str((query.get("view") or ["active"])[0])
+    if view not in DASHBOARD_VIEWS:
+        return ""
+    try:
+        page = max(1, int((query.get("page") or ["1"])[0]))
+    except (TypeError, ValueError):
+        page = 1
+    media = _selected_media_filter(query.get("media") or [])
+    missing = [value.upper() for value in query.get("missing") or [] if value.strip()]
+    valid_for = [value.upper() for value in query.get("valid_for") or [] if value.strip()]
+    reasons = [value.strip().lower() for value in query.get("reason") or [] if value.strip()]
+    hide_any = str((query.get("hide_any_primary") or [""])[0]).lower() in {"1", "true", "yes", "on"}
+    q = str((query.get("q") or [""])[0]).strip()
+    if view not in FILTERABLE_VIEWS:
+        media, missing, valid_for, reasons, hide_any = [], [], [], [], False
+    return _dashboard_url(view, page, media, missing, valid_for, reasons, hide_any, q=q)
+
+
+def _natural_item_return(item: Mapping[str, Any]) -> str:
+    status_value = _effective_status(item)
     view = next((key for key, _label, statuses in DASHBOARD_TABS if status_value in statuses), "all")
-    rows = db.list_items(DASHBOARD_VIEWS.get(view, [status_value]), limit=500)
+    return _dashboard_url(view)
+
+
+def _item_navigation(db: Database, item: Dict[str, Any], return_value: str) -> Dict[str, str]:
+    return_to = _item_return_context(return_value) or _natural_item_return(item)
+    query = parse_qs(urlsplit(return_to).query)
+    view = str((query.get("view") or ["active"])[0])
+    media = query.get("media") or []
+    missing = query.get("missing") or []
+    valid_for = query.get("valid_for") or []
+    reasons = query.get("reason") or []
+    hide_any = str((query.get("hide_any_primary") or [""])[0]).lower() == "true"
+    q = str((query.get("q") or [""])[0])
+    statuses = DASHBOARD_VIEWS[view]
+    effective_filter = _effective_status_filter_applies(statuses)
+    query_statuses = _query_statuses_for_effective_filter(statuses) if effective_filter else statuses
+    rows = db.list_item_navigation_filtered(
+        query_statuses,
+        media=media,
+        missing=missing,
+        valid_for=valid_for,
+        reasons=reasons,
+        hide_any_primary=hide_any,
+        due_errors_only=view == "active",
+        q=q,
+    )
+    if effective_filter:
+        rows = [row for row in rows if _row_matches_effective_status(row, statuses)]
     ids = [int(row["id"]) for row in rows]
     try:
         index = ids.index(int(item["id"]))
     except (ValueError, KeyError, TypeError):
-        return _dashboard_url(view)
-    if index + 1 < len(ids):
-        return f"/items/{ids[index + 1]}"
-    return _dashboard_url(view)
+        index = -1
+
+    def item_url(target_id: int) -> str:
+        return f"/items/{target_id}?{urlencode({'from': return_to})}"
+
+    return {
+        "return_to": return_to,
+        "current_url": item_url(int(item["id"])),
+        "previous_url": item_url(ids[index - 1]) if index > 0 else "",
+        "next_url": item_url(ids[index + 1]) if index >= 0 and index + 1 < len(ids) else "",
+    }
 
 
 def _safe_local_redirect(value: str, fallback: str) -> str:
@@ -2409,6 +2673,11 @@ async def dashboard(
         filter_reasons,
         filter_hide_any,
     )
+    current_url = _dashboard_url(
+        selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query
+    )
+    for item in items:
+        item["detail_url"] = f"/items/{item['id']}?{urlencode({'from': current_url})}"
     context = {
         **_shell_context(request, section="dashboard", view=selected, q=search_query, service_snapshot=service_snapshot, counts=counts),
         "request": request,
@@ -2460,7 +2729,7 @@ async def dashboard(
             if offset + len(items) < filtered_total
             else "",
         },
-        "current_url": _dashboard_url(selected, page, filter_media, filter_missing, filter_valid_for, filter_reasons, filter_hide_any, q=search_query),
+        "current_url": current_url,
         "clear_search_url": clear_search_url,
         "problem_view": selected in {"blocked", "manual", "rejected", "errors"},
     }
@@ -2468,7 +2737,7 @@ async def dashboard(
 
 
 @app.get("/items/{item_id}", response_class=HTMLResponse)
-async def item_detail(request: Request, item_id: int) -> HTMLResponse:
+async def item_detail(request: Request, item_id: int, from_url: str = Query("", alias="from")) -> HTMLResponse:
     row = request.app.state.db.get_item(item_id)
     if row is None:
         return templates.TemplateResponse(
@@ -2489,6 +2758,7 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
         _report_payload(report) for report in request.app.state.db.list_reports(state="resolved", item_id=item_id, limit=50)
     ]
     item["item_page"] = _item_page_presentation(item)
+    navigation = _item_navigation(request.app.state.db, item, from_url)
     return templates.TemplateResponse(
         request,
         "item.html",
@@ -2497,7 +2767,10 @@ async def item_detail(request: Request, item_id: int) -> HTMLResponse:
             "request": request,
             "item": item,
             "reporting_stages": REPORTING_STAGES,
-            "next_item_url": _next_item_url(request.app.state.db, item),
+            "return_to": navigation["return_to"],
+            "item_current_url": navigation["current_url"],
+            "previous_item_url": navigation["previous_url"],
+            "next_item_url": navigation["next_url"],
             "upload_console_configured": bool(cfg.upload_assistant.url and get_bound_secret(request.app.state.secrets, "ua_bearer_token", cfg.upload_assistant.url)),
             "upload_console_session": request.app.state.upload_console.snapshot(),
         },

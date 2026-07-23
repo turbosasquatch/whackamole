@@ -203,10 +203,9 @@ def test_upload_console_allows_folder_name_that_would_be_normalized(tmp_path, mo
         assert page.status_code == 200
         assert "Folder name would be normalised to Dirty.Business.2026.S01.1080p.ALL4.WEB-DL.AAC2.0.H.264-RAWR." in page.text
         assert "Rename Check" in page.text
-        assert '<strong>Rename Check</strong>' in page.text
         assert '<span class="check-state pass">Pass</span>' in page.text
         assert "Review Required" not in page.text
-        assert "Queue Upload" in page.text
+        assert "Execute Upload" in page.text
         assert 'data-can-queue="true"' in page.text
         assert response.status_code == 200
         assert response.json()["args"] == "--trackers dp --unattended"

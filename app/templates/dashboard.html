@@ -221,7 +221,7 @@
             {% set active_import = item.active_import or {} %}
             <tr>
               <td data-label="Title">
-                <a class="item-title" href="/items/{{ item.id }}">{{ item.name }}</a>
+                <a class="item-title" href="{{ item.detail_url }}">{{ item.name }}</a>
               </td>
               <td data-label="Flags">
                 <div class="flag-stack">

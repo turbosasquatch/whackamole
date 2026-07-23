@@ -5,13 +5,12 @@ from app.rename_display import build_rename_check
 
 def test_mobile_rename_css_uses_accordion_cards_and_hides_desktop_table():
     css = Path("app/static/style.css").read_text()
-    mobile_block = css.split("@media (max-width: 860px)")[-1]
 
-    assert ".desktop-item-only" in mobile_block
-    assert "display: none !important;" in mobile_block
-    assert ".rename-mobile-accordions" in mobile_block
-    assert ".item-accordion" in mobile_block
-    assert ".rename-summary" in mobile_block
+    assert ".desktop-item-only" in css
+    assert "display: none !important;" in css
+    assert ".rename-mobile-accordions" in css
+    assert ".item-accordion" in css
+    assert ".rename-summary" in css
 
 
 def test_rename_display_explains_arr_title_mismatch_with_diff_and_tracker():

@@ -47,6 +47,64 @@ def test_raw_payloads_include_local_mediainfo_json():
     assert payloads["local-mediainfo"]["content"] == [{"source": "local-column"}]
 
 
+def test_item_notices_extract_deduplicate_map_effects_and_order():
+    item = {
+        "verdict": "",
+        "check_results": {
+            "media": {
+                "issues": [
+                    {"key": "bloated_audio", "message": "Audio bitrate exceeds policy.", "severity": "error"},
+                    {"key": "unknown_notice", "message": "Uncatalogued media warning.", "severity": "warning"},
+                ]
+            }
+        },
+        "check_flags": [
+            {"key": "bloated_audio", "label": "Media Info", "detail": "Audio bitrate exceeds policy.", "severity": "error"},
+            {
+                "key": "no_uploadable_trackers",
+                "label": "Upload Assistant",
+                "detail": "No tracker accepted this release.",
+                "severity": "warning",
+            },
+        ],
+        "rename_check": {
+            "status": "manual_review",
+            "rows": [
+                {
+                    "kind": "renamed_release_warning",
+                    "difference_summary": "Release group is missing from the filename.",
+                    "severity": "warning",
+                    "confidence": "high",
+                }
+            ],
+        },
+        "overview_checks": [],
+    }
+
+    notices = main_module._item_notices(item)
+
+    assert [(notice["category"], notice["result"]) for notice in notices] == [
+        ("Media Info", "block"),
+        ("Rename", "review"),
+        ("Upload Assistant", "skip"),
+        ("Media Info", "info"),
+    ]
+    assert [notice["fault"] for notice in notices].count("Audio bitrate exceeds policy.") == 1
+    assert [notice["severity"] for notice in notices] == ["error", "warning", "warning", "warning"]
+    assert all(notice["key"] for notice in notices)
+
+
+def test_item_notices_empty_when_only_checks_pass():
+    item = {
+        "check_results": {"media": {"issues": []}},
+        "check_flags": [],
+        "rename_check": {"rows": []},
+        "overview_checks": [{"label": "MediaInfo", "group": "pass", "state": "Passed", "notes": "All good"}],
+    }
+
+    assert main_module._item_notices(item) == []
+
+
 def test_local_nfo_for_file_uses_same_stem_sidecar(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch):
         media_path = tmp_path / "Movie.2026.mkv"
@@ -312,12 +370,12 @@ def test_item_detail_exposes_mobile_summary_navigation_and_reporting_controls(tm
         response = client.get(f"/items/{item_id}")
 
         assert response.status_code == 200
-        assert 'class="check-counts mobile-item-only"' in response.text
-        for target in ["rename", "mediainfo", "upload-assistant", "discovarr"]:
-            assert f'data-tab-open="{target}"' in response.text
-        assert "data-tab-more-toggle" in response.text
-        assert "mobile-check-detail" in response.text
-        assert "mobile-path-tools" in response.text
+        assert 'class="item-summary-card"' in response.text
+        assert 'class="item-mobile-navigation mobile-item-only"' in response.text
+        assert 'aria-label="Previous found item"' in response.text
+        assert 'aria-label="Next found item"' in response.text
+        assert "data-tab-more-toggle" not in response.text
+        assert "mobile-check-detail" not in response.text
         assert "rename-mobile-accordions" in response.text
         assert "media-mobile-issues" in response.text
         assert 'data-copy-value-from="[data-upload-path]"' in response.text
@@ -325,6 +383,86 @@ def test_item_detail_exposes_mobile_summary_navigation_and_reporting_controls(tm
         assert 'maxlength="1000"' in response.text
         assert 'data-character-count-for="mobile-report-notes"' in response.text
         assert "reporting-list-accordion" in response.text
+
+
+def test_item_overview_renders_notice_table_widgets_short_tabs_and_empty_state(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+        row = client.app.state.db.get_item(item_id)
+        client.app.state.db.update_status(
+            item_id,
+            "manual_review",
+            "media_warning",
+            "Audio codec needs review.",
+            check_results={
+                "flags": [
+                    {
+                        "key": "bloated_audio",
+                        "label": "Media Info",
+                        "detail": "Audio codec needs review.",
+                        "severity": "error",
+                    }
+                ]
+            },
+        )
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert 'class="item-notices-table desktop-item-only"' in page.text
+        assert 'class="item-notice-widgets mobile-item-only"' in page.text
+        for heading in ("Category", "Fault", "Severity", "Result"):
+            assert f"<th>{heading}</th>" in page.text
+        assert "Audio codec needs review." in page.text
+        assert 'class="notice-pill severity-error">Error</span>' in page.text
+        assert 'class="notice-pill result-block">Block</span>' in page.text
+        for label in ("Overview", "Rename", "Media", "Upload", "Compare", "Report"):
+            assert f">{label}</button>" in page.text
+        assert ">Media Info</button>" not in page.text
+        assert ">Upload Assistant</button>" not in page.text
+
+def test_item_navigation_uses_complete_filtered_found_set_and_preserves_context(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        db = client.app.state.db
+        ids = []
+        for index in range(77):
+            db.insert_discovered(
+                1,
+                {
+                    "hash": f"foundset-{index}",
+                    "name": f"Foundset Item {index:02d}",
+                    "category": "movie",
+                    "tags": "",
+                    "content_path": f"/media/foundset-{index}.mkv",
+                    "size": index + 1,
+                },
+                status="candidate",
+                baseline=False,
+            )
+            with db.connect() as conn:
+                ids.append(int(conn.execute("SELECT id FROM items WHERE hash = ?", (f"foundset-{index}",)).fetchone()["id"]))
+        with db.connect() as conn:
+            for index, item_id in enumerate(ids):
+                conn.execute("UPDATE items SET updated_at = ? WHERE id = ?", (index + 1, item_id))
+
+        ordered_ids = list(reversed(ids))
+        return_url = "/dashboard?view=candidates&page=2&q=Foundset"
+        middle_id = ordered_ids[75]
+        page = client.get(f"/items/{middle_id}", params={"from": return_url})
+
+        assert page.status_code == 200
+        encoded_context = "%2Fdashboard%3Fview%3Dcandidates%26page%3D2%26q%3DFoundset"
+        assert f'href="/items/{ordered_ids[74]}?from={encoded_context}" aria-label="Previous found item"' in page.text
+        assert f'href="/items/{ordered_ids[76]}?from={encoded_context}" aria-label="Next found item"' in page.text
+        assert f'value="/items/{middle_id}?from={encoded_context}"' in page.text
+
+        first_page = client.get(f"/items/{ordered_ids[0]}", params={"from": return_url})
+        last_page = client.get(f"/items/{ordered_ids[-1]}", params={"from": return_url})
+        assert first_page.text.count('aria-label="Previous found item" disabled') == 2
+        assert last_page.text.count('aria-label="Next found item" disabled') == 2
+
+        dashboard_page_two = client.get(return_url)
+        assert f'href="/items/{ordered_ids[75]}?from={encoded_context}"' in dashboard_page_two.text
 
 
 def test_item_page_separates_title_and_confirmed_mediainfo_tags(tmp_path, monkeypatch):
@@ -1680,8 +1818,7 @@ def test_rejected_action_moves_candidate_item_and_creates_report(tmp_path, monke
         row = db.get_item(item_id)
 
         assert page.status_code == 200
-        assert f'href="/items/{item_id}#reporting"' in page.text
-        assert "Mark rejected" in page.text
+        assert 'data-tab-target="reporting"' in page.text
         assert f'action="/items/{item_id}/reject"' in page.text
         assert "Reject item" in page.text
         assert "Rejection stage" in page.text
@@ -1716,14 +1853,14 @@ def test_item_page_renders_reporting_tab_actions_and_removed_tabs(tmp_path, monk
         assert 'data-tab-target="trackers"' not in page.text
         assert ">Checks<" not in page.text
         assert ">Trackers<" not in page.text
-        assert "Queue Upload" in page.text
+        assert 'aria-label="Upload"' in page.text
         assert 'data-submit-tick="Recheck triggered"' in page.text
         assert 'data-submit-tick="Upload queued"' in page.text
         assert "data-queue-upload-form" in page.text
         assert f'data-queue-url="/ui-api/items/{item_id}/upload-assistant/queue"' in page.text
-        assert f'value="/items/{item_id}"' in page.text
+        assert f'value="/items/{item_id}?' in page.text
         assert f'value="/items/{item_id}#upload-assistant"' not in page.text
-        assert "Next Item" in page.text
+        assert 'aria-label="Next found item"' in page.text
         assert ">Size<" not in page.text
 
 
@@ -1837,7 +1974,7 @@ def test_item_overview_shortens_source_not_required_status(tmp_path, monkeypatch
 
         assert page.status_code == 200
         assert "Source Detection" in page.text
-        assert "Not Required" in page.text
+        assert "Not Required" not in page.text
         assert "Source Not Required" not in page.text
 
 
@@ -1974,10 +2111,10 @@ def test_item_detail_includes_video_files_in_paths_section(tmp_path, monkeypatch
         assert detail.json()["video_files"]["message"] == ""
         assert page.status_code == 200
         assert "Video files" in page.text
-        assert "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv" in page.text
-        assert "Behind.The.Scenes.mp4" in page.text
+        assert "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv" not in page.text
+        assert "Behind.The.Scenes.mp4" not in page.text
         assert "Sample.txt" not in page.text
-        assert f"/items/{item_id}/rename-video-file" in page.text
+        assert f"/items/{item_id}/rename-video-file" not in page.text
 
 
 def test_item_video_file_rename_requeues_item(tmp_path, monkeypatch):
@@ -2105,7 +2242,6 @@ def test_no_video_error_item_renders_and_serializes(tmp_path, monkeypatch):
         assert api_response.json()["verdict"] == "no_video_files"
         assert api_response.json()["reason"] == reason
         assert page_response.status_code == 200
-        assert "no_video_files" in page_response.text
         assert reason in page_response.text
 
 

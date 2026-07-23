@@ -716,6 +716,26 @@ class Database:
                 params + [limit, offset],
             ).fetchall()
 
+    def list_item_navigation_filtered(
+        self,
+        statuses: Iterable[str],
+        media: Any = "all",
+        missing: Optional[Iterable[str]] = None,
+        valid_for: Optional[Iterable[str]] = None,
+        reasons: Optional[Iterable[str]] = None,
+        hide_any_primary: bool = False,
+        due_errors_only: bool = False,
+        q: str = "",
+    ) -> List[sqlite3.Row]:
+        where_sql, params = self._filtered_where(
+            statuses, media, missing, valid_for, reasons, hide_any_primary, due_errors_only, q
+        )
+        with self.connect() as conn:
+            return conn.execute(
+                f"SELECT i.id, i.status, i.check_results FROM items AS i {where_sql} ORDER BY i.updated_at DESC",
+                params,
+            ).fetchall()
+
     def count_items_filtered(
         self,
         statuses: Iterable[str],
