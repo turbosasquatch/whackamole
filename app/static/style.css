@@ -76,10 +76,19 @@
     "meta actions"
     "notice actions"
     "flags actions"
+    "divider divider"
     "coverage navigation";
   grid-template-columns: minmax(0, 1fr) auto;
   margin-bottom: 22px;
   padding: 20px 24px;
+}
+
+.item-summary-card::after {
+  background: var(--line);
+  content: "";
+  grid-area: divider;
+  height: 1px;
+  width: 100%;
 }
 
 .item-summary-card h1 {
@@ -120,10 +129,12 @@
 
 .item-summary-actions {
   align-items: center;
+  border-left: 1px solid var(--line);
   display: flex;
   gap: 10px;
   grid-area: actions;
   justify-content: flex-end;
+  padding-left: 12px;
 }
 
 .item-summary-actions .button.icon,
@@ -134,10 +145,10 @@
   border-color: var(--line);
   color: var(--primary);
   display: inline-flex;
-  height: 44px;
+  height: 38px;
   justify-content: center;
   padding: 0;
-  width: 44px;
+  width: 38px;
 }
 
 .item-summary-actions .block {
@@ -156,18 +167,14 @@
 }
 
 .item-summary-coverage {
-  border-top: 1px solid var(--line);
   grid-area: coverage;
-  padding-top: 14px;
 }
 
 .item-summary-navigation {
-  border-top: 1px solid var(--line);
   display: flex;
   gap: 10px;
   grid-area: navigation;
   justify-content: flex-end;
-  padding-top: 14px;
 }
 
 .tabs-shell {
@@ -284,6 +291,7 @@
       "meta meta"
       "notice notice"
       "flags flags"
+      "divider divider"
       "coverage actions";
     grid-template-columns: minmax(0, 1fr) auto;
     margin-bottom: 16px;
@@ -317,19 +325,23 @@
     line-height: 1.45;
   }
 
-  .item-summary-coverage,
-  .item-summary-actions {
-    border-top: 1px solid var(--line);
-    padding-top: 14px;
-  }
-
   .item-summary-actions {
     gap: 8px;
   }
 
   .item-summary-actions .button.icon {
-    height: 44px;
-    width: 44px;
+    height: 40px;
+    width: 40px;
+  }
+
+  .item-summary-actions .button.icon svg {
+    height: 20px;
+    width: 20px;
+  }
+
+  .item-summary-coverage .coverage-badge {
+    font-size: 12px;
+    padding: 6px 10px;
   }
 
   .tabs-shell {

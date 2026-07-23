@@ -385,6 +385,20 @@ def test_item_detail_exposes_mobile_summary_navigation_and_reporting_controls(tm
         assert "reporting-list-accordion" in response.text
 
 
+def test_item_summary_reuses_list_action_icons_and_dividers(tmp_path, monkeypatch):
+    with _client(tmp_path, monkeypatch) as client:
+        item_id = _seed_item(client)
+
+        page = client.get(f"/items/{item_id}")
+
+        assert page.status_code == 200
+        assert 'class="item-summary-actions row-actions"' in page.text
+        assert 'class="row-actions-divider"' in page.text
+        assert '<path d="M16 16l-4-4-4 4" />' in page.text
+        assert '<circle cx="12" cy="12" r="10" />' in page.text
+        assert '<polyline points="23 4 23 10 17 10" />' in page.text
+
+
 def test_item_overview_renders_notice_table_widgets_short_tabs_and_empty_state(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         item_id = _seed_item(client)

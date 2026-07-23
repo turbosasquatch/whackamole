@@ -23,6 +23,16 @@ def test_mobile_item_tabs_and_footer_use_tappable_grid_with_scroll_clearance():
     assert "height: 48px;" in css
 
 
+def test_item_summary_matches_list_tracker_and_action_dimensions():
+    css = Path("app/static/style.css").read_text()
+
+    assert ".item-summary-card::after" in css
+    assert ".item-summary-actions .button.icon svg" in css
+    assert ".item-summary-coverage .coverage-badge" in css
+    assert "font-size: 12px;" in css
+    assert "padding: 6px 10px;" in css
+
+
 def test_rename_display_explains_arr_title_mismatch_with_diff_and_tracker():
     local = "Example.Show.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-HONE"
     remote = "Example.Series.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-HONE"

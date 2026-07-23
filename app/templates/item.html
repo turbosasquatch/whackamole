@@ -107,18 +107,25 @@
         <span class="flag-badge {{ flag.severity }}">{{ flag.label }}</span>
       {% endfor %}
     </div>
-    <div class="item-summary-actions" aria-label="Item actions">
+    <div class="item-summary-actions row-actions" aria-label="Item actions">
       <form method="post" action="/items/{{ item.id }}/upload-assistant/queue" data-submit-tick="Upload queued" data-submit-error-label="Retry" data-queue-upload-form data-queue-url="/ui-api/items/{{ item.id }}/upload-assistant/queue" data-queued-import-id="{{ active_import.id or '' }}">
         <input type="hidden" name="return_to" value="{{ item_current_url }}">
-        <button class="button icon upload" type="submit" data-submit-tick-button title="Upload" aria-label="{% if active_import %}Upload queued{% else %}Upload{% endif %}" {% if active_import or not item.can_upload %}disabled{% endif %}>{{ icon("upload") }}</button>
+        <button class="button icon upload" type="submit" data-submit-tick-button title="Upload" aria-label="{% if active_import %}Upload queued{% else %}Upload{% endif %}" {% if active_import or not item.can_upload %}disabled{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 16l-4-4-4 4" /><path d="M12 12v9" /><path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3" /></svg>
+        </button>
       </form>
       <form method="post" action="/items/{{ item.id }}/ignore" data-ignore-item-form data-submit-tick="Ignored" data-submit-error-label="Retry">
         <input type="hidden" name="return_to" value="{{ item_current_url }}">
-        <button class="button icon block" type="submit" data-submit-tick-button title="Ignore" aria-label="Ignore">{{ icon("ban") }}</button>
+        <button class="button icon block" type="submit" data-submit-tick-button title="Ignore" aria-label="Ignore">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" /></svg>
+        </button>
       </form>
+      <span class="row-actions-divider" aria-hidden="true"></span>
       <form method="post" action="/items/{{ item.id }}/recheck" data-recheck-item-form data-submit-tick="Recheck triggered" data-submit-error-label="Retry">
         <input type="hidden" name="return_to" value="{{ item_current_url }}">
-        <button class="button icon recheck" type="submit" data-submit-tick-button title="Recheck" aria-label="Recheck">{{ icon("refresh") }}</button>
+        <button class="button icon recheck" type="submit" data-submit-tick-button title="Recheck" aria-label="Recheck">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></svg>
+        </button>
       </form>
     </div>
     <div class="item-summary-coverage coverage-badges">
